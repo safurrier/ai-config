@@ -278,3 +278,5 @@ class TestWatchCLI:
         assert "When to use:" in result.output
         assert "What you'll see:" in result.output
         assert "How it works:" in result.output
+        assert "Important limitation:" in result.output
+        assert "claude --resume" in result.output

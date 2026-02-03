@@ -92,7 +92,9 @@ ai-config watch
 
 **Options:**
 
-- `--debounce SECONDS` - Wait time before syncing (default: 1.0)
+- `--debounce SECONDS` - Wait time before syncing (default: 1.5)
+- `--dry-run` - Show changes without syncing
+- `--verbose` - Show all file events
 
 Useful during plugin development. Watches:
 
@@ -100,6 +102,18 @@ Useful during plugin development. Watches:
 - Plugin directories
 
 Press Ctrl+C to stop.
+
+**Important limitation:**
+
+Claude Code only loads plugins at session start. After `watch` syncs your changes, you must restart Claude Code for them to take effect.
+
+To continue your previous session after restarting:
+
+```bash
+claude --resume
+```
+
+This resumes your last conversation with the updated plugins loaded.
 
 ## update
 

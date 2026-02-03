@@ -77,6 +77,8 @@ ai-config watch
 
 Auto-syncs when you edit config or plugin files. Press Ctrl+C to stop.
 
+**Note:** Claude Code loads plugins at session start. After changes sync, restart Claude Code to apply them. Use `claude --resume` to continue your previous session.
+
 **4. Troubleshoot with doctor**
 
 ```bash

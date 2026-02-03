@@ -604,6 +604,12 @@ def watch(
       3. Changes are batched (1.5s debounce)
       4. Sync runs automatically
       5. Press Ctrl+C to stop
+
+    \b
+    Important limitation:
+      Claude Code only loads plugins at session start. After syncing,
+      you must restart Claude Code for changes to take effect.
+      Use: claude --resume to continue your previous session.
     """
     from ai_config.watch import FileChange, collect_watch_paths, run_watch_loop
 
@@ -633,6 +639,12 @@ def watch(
     if dry_run:
         console.print("[warning]Dry run: true[/warning]")
     console.print("[info]Press Ctrl+C to stop[/info]")
+    console.print()
+    console.print(
+        "[dim]Note: Claude Code loads plugins at session start. "
+        "After changes sync, restart Claude Code to apply them.[/dim]"
+    )
+    console.print("[dim]Tip: Use 'claude --resume' to continue your previous session.[/dim]")
     console.print()
 
     # Track sync count
