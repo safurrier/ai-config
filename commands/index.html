@@ -824,7 +824,9 @@
 </code></pre></div>
 <p><strong>Options:</strong></p>
 <ul>
-<li><code>--debounce SECONDS</code> - Wait time before syncing (default: 1.0)</li>
+<li><code>--debounce SECONDS</code> - Wait time before syncing (default: 1.5)</li>
+<li><code>--dry-run</code> - Show changes without syncing</li>
+<li><code>--verbose</code> - Show all file events</li>
 </ul>
 <p>Useful during plugin development. Watches:</p>
 <ul>
@@ -832,9 +834,15 @@
 <li>Plugin directories</li>
 </ul>
 <p>Press Ctrl+C to stop.</p>
+<p><strong>Important limitation:</strong></p>
+<p>Claude Code only loads plugins at session start. After <code>watch</code> syncs your changes, you must restart Claude Code for them to take effect.</p>
+<p>To continue your previous session after restarting:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>claude<span class="w"> </span>--resume
+</code></pre></div>
+<p>This resumes your last conversation with the updated plugins loaded.</p>
 <h2 id="update">update<a class="headerlink" href="#update" title="Permanent link">&para;</a></h2>
 <p>Update all plugins to their latest versions.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-config<span class="w"> </span>update
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config<span class="w"> </span>update
 </code></pre></div>
 <p><strong>Options:</strong></p>
 <ul>
@@ -842,7 +850,7 @@
 </ul>
 <h2 id="doctor">doctor<a class="headerlink" href="#doctor" title="Permanent link">&para;</a></h2>
 <p>Validate your setup and find problems.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config<span class="w"> </span>doctor
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ai-config<span class="w"> </span>doctor
 </code></pre></div>
 <p><strong>Options:</strong></p>
 <ul>
@@ -859,7 +867,7 @@
 </ul>
 <h2 id="plugin-create">plugin create<a class="headerlink" href="#plugin-create" title="Permanent link">&para;</a></h2>
 <p>Scaffold a new plugin.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ai-config<span class="w"> </span>plugin<span class="w"> </span>create<span class="w"> </span>NAME
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ai-config<span class="w"> </span>plugin<span class="w"> </span>create<span class="w"> </span>NAME
 </code></pre></div>
 <p><strong>Options:</strong></p>
 <ul>
@@ -873,7 +881,7 @@
 </ul>
 <h2 id="cache-clear">cache clear<a class="headerlink" href="#cache-clear" title="Permanent link">&para;</a></h2>
 <p>Clear the plugin cache.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ai-config<span class="w"> </span>cache<span class="w"> </span>clear
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ai-config<span class="w"> </span>cache<span class="w"> </span>clear
 </code></pre></div>
 <p>Forces fresh downloads on next sync. Use when plugins seem stale.</p>
 
