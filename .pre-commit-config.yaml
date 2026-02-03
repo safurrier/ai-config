@@ -1,0 +1,27 @@
+repos:
+-   repo: local
+    hooks:
+    -   id: lint
+        name: Run Linter
+        entry: uv run ruff check src/
+        language: system
+        always_run: true
+        pass_filenames: false
+    -   id: format
+        name: Run Formatter
+        entry: uv run ruff format --check src/
+        language: system
+        always_run: true
+        pass_filenames: false
+    -   id: ty
+        name: Run Type Checker
+        entry: uv run ty check src/
+        language: system
+        always_run: true
+        pass_filenames: false
+    -   id: test
+        name: Run Tests
+        entry: uv run pytest tests/ -q
+        language: system
+        always_run: true
+        pass_filenames: false
