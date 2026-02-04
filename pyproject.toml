@@ -1,5 +1,5 @@
 [project]
-name = "ai-config"
+name = "ai-config-cli"
 version = "0.1.0"
 description = "Declarative plugin manager for Claude Code"
 authors = [
@@ -8,6 +8,25 @@ authors = [
 requires-python = ">=3.9"
 readme = "README.md"
 license = { text = "MIT" }
+
+keywords = ["claude", "claude-code", "plugin", "ai", "configuration"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
@@ -35,6 +54,13 @@ docs = [
     "mkdocs-material>=9.6.14",
     "mkdocstrings[python]>=0.26.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/safurrier/ai-config"
+Documentation = "https://safurrier.github.io/ai-config/"
+Repository = "https://github.com/safurrier/ai-config"
+Issues = "https://github.com/safurrier/ai-config/issues"
+Changelog = "https://github.com/safurrier/ai-config/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
