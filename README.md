@@ -30,11 +30,21 @@ It's a config file and some commands. That's it.
 
 ## Installation
 
+> **Alpha software**: This project is in active development. APIs and config formats may change between versions.
+
 ```bash
-uv tool install git+https://github.com/safurrier/ai-config
+pip install ai-config-cli
+# or
+uv tool install ai-config-cli
 ```
 
 This installs `ai-config` globally. Run `ai-config --help` to verify.
+
+### From source (latest)
+
+```bash
+uv tool install git+https://github.com/safurrier/ai-config
+```
 
 ### For development
 

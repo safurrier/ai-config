@@ -45,7 +45,7 @@ class OrderedGroup(click.Group):
 
 
 @click.group(cls=OrderedGroup)
-@click.version_option()
+@click.version_option(package_name="ai-config-cli")
 def main() -> None:
     """ai-config: Declarative plugin manager for Claude Code."""
     pass
