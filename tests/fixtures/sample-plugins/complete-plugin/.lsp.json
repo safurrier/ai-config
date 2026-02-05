@@ -1,0 +1,18 @@
+{
+  "custom-python": {
+    "command": "pylsp",
+    "args": ["--log-file", "/tmp/pylsp.log"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    },
+    "initializationOptions": {
+      "pylsp": {
+        "plugins": {
+          "pycodestyle": {"enabled": true},
+          "pylint": {"enabled": false}
+        }
+      }
+    }
+  }
+}

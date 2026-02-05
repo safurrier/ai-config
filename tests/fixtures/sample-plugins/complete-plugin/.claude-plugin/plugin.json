@@ -1,0 +1,16 @@
+{
+  "name": "dev-tools",
+  "version": "1.0.0",
+  "description": "Development productivity tools for Claude Code",
+  "author": {
+    "name": "Test Author",
+    "email": "test@example.com"
+  },
+  "license": "MIT",
+  "skills": "./skills",
+  "commands": "./commands",
+  "agents": "./agents",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "lspServers": "./.lsp.json"
+}
