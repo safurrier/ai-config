@@ -1,13 +1,14 @@
 """Emitters for converting IR to target tool formats.
 
 Each emitter takes a PluginIR and produces files for a specific tool.
+Emitters follow the Protocol pattern (structural typing) - any class with
+the right shape satisfies the Emitter interface.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -189,66 +190,69 @@ class EmitResult:
         return any(d.severity == Severity.ERROR for d in self.diagnostics)
 
 
-class BaseEmitter(ABC):
-    """Base class for tool-specific emitters."""
+# Module-level helper function (extracted from BaseEmitter for Protocol pattern)
+def skill_to_markdown(skill: Skill, strip_claude_fields: bool = True) -> str:
+    """Convert a skill to SKILL.md format.
 
-    target: TargetTool
+    Args:
+        skill: The skill to convert.
+        strip_claude_fields: If True, remove Claude-specific fields like
+            allowed-tools, model, context, agent, etc.
+
+    Returns:
+        Markdown string with YAML frontmatter.
+    """
+    # Build frontmatter
+    meta: dict[str, Any] = {
+        "name": skill.name,
+    }
+    if skill.description:
+        meta["description"] = skill.description
+
+    # Include portable fields only when not stripping
+    if not strip_claude_fields:
+        if skill.allowed_tools:
+            meta["allowed-tools"] = skill.allowed_tools
+        if skill.model:
+            meta["model"] = skill.model
+        if skill.context:
+            meta["context"] = skill.context
+        if skill.agent:
+            meta["agent"] = skill.agent
+        if not skill.user_invocable:
+            meta["user-invocable"] = False
+        if skill.disable_model_invocation:
+            meta["disable-model-invocation"] = True
+
+    # Find SKILL.md content
+    body = ""
+    for f in skill.files:
+        if f.relpath == "SKILL.md" and isinstance(f, TextFile):
+            # Extract body from content (TextFile only)
+            file_content = f.content
+            if file_content.startswith("---"):
+                parts = file_content.split("---", 2)
+                if len(parts) >= 3:
+                    body = parts[2].strip()
+            else:
+                body = file_content
+            break
+
+    # Build markdown
+    frontmatter = yaml.dump(meta, default_flow_style=False, sort_keys=False)
+    return f"---\n{frontmatter}---\n\n{body}"
+
+
+class CodexEmitter:
+    """Emit plugins in Codex format.
+
+    Satisfies the Emitter protocol with target, scope, and emit() method.
+    """
+
+    target = TargetTool.CODEX
 
     def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
         self.scope = scope
-
-    @abstractmethod
-    def emit(self, ir: PluginIR) -> EmitResult:
-        """Emit the IR to target format."""
-        pass
-
-    def _skill_to_markdown(self, skill: Skill, strip_claude_fields: bool = True) -> str:
-        """Convert a skill to SKILL.md format."""
-        # Build frontmatter
-        meta: dict[str, Any] = {
-            "name": skill.name,
-        }
-        if skill.description:
-            meta["description"] = skill.description
-
-        # Include portable fields
-        if not strip_claude_fields:
-            if skill.allowed_tools:
-                meta["allowed-tools"] = skill.allowed_tools
-            if skill.model:
-                meta["model"] = skill.model
-            if skill.context:
-                meta["context"] = skill.context
-            if skill.agent:
-                meta["agent"] = skill.agent
-            if not skill.user_invocable:
-                meta["user-invocable"] = False
-            if skill.disable_model_invocation:
-                meta["disable-model-invocation"] = True
-
-        # Find SKILL.md content
-        body = ""
-        for f in skill.files:
-            if f.relpath == "SKILL.md" and isinstance(f, TextFile):
-                # Extract body from content (TextFile only)
-                file_content = f.content
-                if file_content.startswith("---"):
-                    parts = file_content.split("---", 2)
-                    if len(parts) >= 3:
-                        body = parts[2].strip()
-                else:
-                    body = file_content
-                break
-
-        # Build markdown
-        frontmatter = yaml.dump(meta, default_flow_style=False, sort_keys=False)
-        return f"---\n{frontmatter}---\n\n{body}"
-
-
-class CodexEmitter(BaseEmitter):
-    """Emit plugins in Codex format."""
-
-    target = TargetTool.CODEX
 
     def emit(self, ir: PluginIR) -> EmitResult:
         """Emit IR to Codex format."""
@@ -309,7 +313,7 @@ class CodexEmitter(BaseEmitter):
         skill_path = skill_dir / "SKILL.md"
 
         # Convert to markdown, stripping Claude-specific fields
-        content = self._skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True)
 
         result.add_file(skill_path, content)
 
@@ -406,10 +410,16 @@ class CodexEmitter(BaseEmitter):
         )
 
 
-class CursorEmitter(BaseEmitter):
-    """Emit plugins in Cursor format."""
+class CursorEmitter:
+    """Emit plugins in Cursor format.
+
+    Satisfies the Emitter protocol with target, scope, and emit() method.
+    """
 
     target = TargetTool.CURSOR
+
+    def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
+        self.scope = scope
 
     def emit(self, ir: PluginIR) -> EmitResult:
         """Emit IR to Cursor format."""
@@ -459,7 +469,7 @@ class CursorEmitter(BaseEmitter):
         skill_dir = Path(".cursor") / "skills" / f"{plugin_id}-{skill.name}"
         skill_path = skill_dir / "SKILL.md"
 
-        content = self._skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True)
         result.add_file(skill_path, content)
 
         for f in skill.files:
@@ -602,10 +612,16 @@ class CursorEmitter(BaseEmitter):
         result.add_file(mcp_path, json.dumps({"mcpServers": mcp_servers}, indent=2))
 
 
-class OpenCodeEmitter(BaseEmitter):
-    """Emit plugins in OpenCode format."""
+class OpenCodeEmitter:
+    """Emit plugins in OpenCode format.
+
+    Satisfies the Emitter protocol with target, scope, and emit() method.
+    """
 
     target = TargetTool.OPENCODE
+
+    def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
+        self.scope = scope
 
     def emit(self, ir: PluginIR) -> EmitResult:
         """Emit IR to OpenCode format."""
@@ -659,7 +675,7 @@ class OpenCodeEmitter(BaseEmitter):
         skill_dir = Path(".opencode") / "skills" / f"{plugin_id}-{skill.name}"
         skill_path = skill_dir / "SKILL.md"
 
-        content = self._skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True)
         result.add_file(skill_path, content)
 
         for f in skill.files:
@@ -774,7 +790,9 @@ class OpenCodeEmitter(BaseEmitter):
 
 
 # Factory function
-def get_emitter(target: TargetTool, scope: InstallScope = InstallScope.PROJECT) -> BaseEmitter:
+def get_emitter(
+    target: TargetTool, scope: InstallScope = InstallScope.PROJECT
+) -> CodexEmitter | CursorEmitter | OpenCodeEmitter:
     """Get an emitter for the specified target tool."""
     emitters = {
         TargetTool.CODEX: CodexEmitter,
