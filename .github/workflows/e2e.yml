@@ -1,0 +1,70 @@
+# E2E tests using Docker containers
+# Validates ai-config with all supported AI coding tools (Claude, Codex, OpenCode, Cursor)
+
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/e2e.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/e2e.yml'
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # all-tools image takes longer to build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (all-tools)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tests/docker/Dockerfile.all-tools
+          tags: ai-config-test:all-tools
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run E2E tests
+        run: |
+          # Run all E2E tests (all-tools image is a superset of claude-only)
+          uv run pytest tests/e2e/ -m "e2e and docker" -v --tb=long
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Docker images ==="
+          docker images
+          echo "=== Docker containers ==="
+          docker ps -a
+          echo "=== System info ==="
+          uname -a
+          docker info

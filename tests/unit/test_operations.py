@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+
 from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
 from ai_config.operations import (
     get_status,

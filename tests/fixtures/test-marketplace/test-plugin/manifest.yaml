@@ -1,0 +1,4 @@
+name: test-plugin
+description: Test plugin for E2E validation
+version: 0.1.0
+author: ai-config-test

@@ -18,7 +18,6 @@ from ai_config.types import (
     TargetConfig,
 )
 from ai_config.validators.marketplace.validators import (
-    RESERVED_MARKETPLACE_NAMES,
     MarketplaceManifestValidator,
     MarketplacePathValidator,
     PathDriftValidator,

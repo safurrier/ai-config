@@ -1,8 +1,7 @@
 """Tests for ai_config.validators.base module."""
 
-import pytest
 
-from ai_config.validators.base import ValidationResult, ValidationReport
+from ai_config.validators.base import ValidationReport, ValidationResult
 
 
 class TestValidationResult:

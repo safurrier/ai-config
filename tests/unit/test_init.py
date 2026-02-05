@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from click.testing import CliRunner
+
 from ai_config.cli import main
 from ai_config.init import (
     InitConfig,
@@ -15,7 +17,6 @@ from ai_config.init import (
     generate_config_yaml,
     write_config,
 )
-from click.testing import CliRunner
 
 
 @pytest.fixture
@@ -618,7 +619,7 @@ class TestScopeChoices:
         """Each scope has a description."""
         from ai_config.init import SCOPE_CHOICES
 
-        for scope, description in SCOPE_CHOICES.items():
+        for _scope, description in SCOPE_CHOICES.items():
             assert isinstance(description, str)
             assert len(description) > 0
 

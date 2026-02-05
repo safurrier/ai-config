@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Docker-based E2E testing infrastructure
+  - `tests/docker/Dockerfile.all-tools` - Full image with Claude Code, OpenAI Codex, OpenCode, Cursor CLI
+  - `tests/docker/Dockerfile.claude-only` - Fast image with Claude Code only
+  - `tests/docker/test_in_docker.py` - CLI for local Docker testing
+  - `tests/e2e/` - E2E test suite validating ai-config with real AI tools
+  - `.github/workflows/e2e.yml` - CI workflow for automated E2E testing
+- Multi-tool validation for 4 AI coding tools:
+  - Claude Code (`npm install -g @anthropic-ai/claude-code`)
+  - OpenAI Codex (`npm install -g @openai/codex`)
+  - OpenCode (`npm install -g opencode-ai`)
+  - Cursor CLI (`curl -fsSL https://cursor.com/install | bash`)
+- New pytest markers: `@pytest.mark.e2e`, `@pytest.mark.docker`, `@pytest.mark.slow`
+
 ## [0.1.0] - 2025-02-03
 
 ### Added
