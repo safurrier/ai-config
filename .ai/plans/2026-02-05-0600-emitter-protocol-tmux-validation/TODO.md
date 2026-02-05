@@ -1,27 +1,27 @@
 # TODO: Emitter Protocol Refactor & Tmux Validation
 
-## Phase 1: Emitter Protocol Refactor
+## Phase 1: Emitter Protocol Refactor ✅
 
-- [ ] **1.1 Create Emitter Protocol**
-  - [ ] Add `src/ai_config/converters/protocol.py` with `Emitter` Protocol
-  - [ ] Match pattern from `src/ai_config/validators/base.py`
-  - [ ] Use `@runtime_checkable` decorator
+- [x] **1.1 Create Emitter Protocol**
+  - [x] Add Protocol pattern in `src/ai_config/converters/emitters.py`
+  - [x] Match pattern from `src/ai_config/validators/base.py`
+  - [x] Use `@runtime_checkable` decorator
 
-- [ ] **1.2 Extract Shared Helpers**
-  - [ ] Move `_skill_to_markdown()` to module-level `skill_to_markdown()`
-  - [ ] Update all emitters to use the module-level function
-  - [ ] Remove ABC inheritance from emitter classes
+- [x] **1.2 Extract Shared Helpers**
+  - [x] Move `_skill_to_markdown()` to module-level `skill_to_markdown()`
+  - [x] Update all emitters to use the module-level function
+  - [x] Remove ABC inheritance from emitter classes
 
-- [ ] **1.3 Update Emitter Classes**
-  - [ ] Refactor `CodexEmitter` to satisfy Protocol
-  - [ ] Refactor `CursorEmitter` to satisfy Protocol
-  - [ ] Refactor `OpenCodeEmitter` to satisfy Protocol
-  - [ ] Update type hints in `get_emitter()` factory
+- [x] **1.3 Update Emitter Classes**
+  - [x] Refactor `CodexEmitter` to satisfy Protocol
+  - [x] Refactor `CursorEmitter` to satisfy Protocol
+  - [x] Refactor `OpenCodeEmitter` to satisfy Protocol
+  - [x] Update type hints in `get_emitter()` factory
 
-- [ ] **1.4 Update Tests**
-  - [ ] Add Protocol conformance tests
-  - [ ] Verify existing tests still pass
-  - [ ] Add test for structural typing (duck typing works)
+- [x] **1.4 Update Tests**
+  - [x] Add Protocol conformance tests (18 new tests)
+  - [x] Verify existing tests still pass (476 total)
+  - [x] Add test for structural typing (duck typing works)
 
 ## Phase 2: Tool Introspection Research
 
@@ -66,19 +66,19 @@
   - [ ] Document error messages for invalid config
   - [ ] Note which validations require API keys
 
-## Phase 3: Tmux Test Infrastructure
+## Phase 3: Tmux Test Infrastructure ✅
 
-- [ ] **3.1 Port TmuxTestSession**
-  - [ ] Create `tests/e2e/tmux_helper.py`
-  - [ ] Implement `create_session()`, `send_keys()`, `capture_pane()`
-  - [ ] Implement `wait_for_output()` with timeout
-  - [ ] Add `cleanup()` for teardown
-  - [ ] Reference: `dots/tests/e2e/ai_tools/test_ai_tools_e2e.py`
+- [x] **3.1 Port TmuxTestSession**
+  - [x] Create `tests/e2e/tmux_helper.py`
+  - [x] Implement `create_session()`, `send_keys()`, `capture_pane()`
+  - [x] Implement `wait_for_output()` with timeout
+  - [x] Add `cleanup()` for teardown
+  - [x] Reference: `dots/tests/e2e/ai_tools/test_ai_tools_e2e.py`
 
-- [ ] **3.2 Create Fixtures**
-  - [ ] `@pytest.fixture` for tmux session with cleanup
-  - [ ] `@pytest.mark.requires_tmux` marker
-  - [ ] Skip logic when tmux not available
+- [x] **3.2 Create Fixtures**
+  - [x] `@pytest.fixture` for tmux session with cleanup
+  - [x] `@pytest.mark.requires_tmux` marker
+  - [x] Skip logic when tmux not available
 
 - [ ] **3.3 Update Docker Images**
   - [ ] Add `tmux` to `Dockerfile.claude-only`
@@ -114,10 +114,10 @@
 
 ### 4.2 Create Test Classes
 
-- [ ] `TestCodexValidation` - Codex tool integration
-- [ ] `TestCursorValidation` - Cursor tool integration
-- [ ] `TestOpenCodeValidation` - OpenCode tool integration
-- [ ] `TestCrossToolValidation` - Same plugin works across tools
+- [x] `TestCodexValidation` - Codex tool integration (scaffold created)
+- [x] `TestCursorValidation` - Cursor tool integration (scaffold created)
+- [x] `TestOpenCodeValidation` - OpenCode tool integration (scaffold created)
+- [x] `TestCrossToolValidation` - Same plugin works across tools (scaffold created)
 
 ## Phase 5: Gap Analysis & Fixes
 
@@ -145,10 +145,10 @@
 
 ## Phase 6: Documentation & CI
 
-- [ ] **6.1 Update PR description**
-  - [ ] Add validation coverage matrix
-  - [ ] Document tmux test requirements
-  - [ ] Note known limitations per tool
+- [x] **6.1 Update PR description**
+  - [x] Add validation coverage matrix
+  - [x] Document tmux test requirements
+  - [x] Note known limitations per tool
 
 - [ ] **6.2 Update CLAUDE.md**
   - [ ] Add E2E tmux test instructions

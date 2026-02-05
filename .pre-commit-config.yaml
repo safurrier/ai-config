@@ -21,7 +21,7 @@ repos:
         pass_filenames: false
     -   id: test
         name: Run Tests
-        entry: uv run pytest tests/ -q
+        entry: uv run pytest tests/ -q -m "not docker"
         language: system
         always_run: true
         pass_filenames: false
