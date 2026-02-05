@@ -20,17 +20,26 @@ if TYPE_CHECKING:
     from docker.models.containers import Container
 
 
-# Skip all tests if tmux not available
+# Tmux is required for these tests - fail loudly if not available
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.docker,
-    pytest.mark.skipif(not is_tmux_available(), reason="tmux not available"),
 ]
+
+
+def _require_tmux() -> None:
+    """Fail loudly if tmux is not available."""
+    if not is_tmux_available():
+        raise RuntimeError(
+            "tmux is required for tool validation tests but is not installed. "
+            "Install tmux or run these tests in a Docker container with tmux."
+        )
 
 
 @pytest.fixture
 def tmux_session():
     """Provides a tmux session for testing."""
+    _require_tmux()
     session_name = f"test-ai-config-{int(time.time())}"
     session = TmuxTestSession(session_name)
 
