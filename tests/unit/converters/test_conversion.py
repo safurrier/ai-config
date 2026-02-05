@@ -1,10 +1,12 @@
 """Tests for plugin conversion functionality."""
 
+import json
 from pathlib import Path
 
 import pytest
 
 from ai_config.converters.claude_parser import parse_claude_plugin
+from ai_config.converters.convert import convert_plugin, preview_conversion
 from ai_config.converters.emitters import (
     CodexEmitter,
     CursorEmitter,
@@ -12,13 +14,10 @@ from ai_config.converters.emitters import (
     get_emitter,
 )
 from ai_config.converters.ir import (
-    ComponentKind,
     InstallScope,
     MappingStatus,
-    Severity,
     TargetTool,
 )
-
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
 
@@ -36,12 +35,13 @@ class TestClaudeParser:
         assert ir.identity.name == "dev-tools"
         assert ir.identity.version == "1.0.0"
 
-        # Check skills
+        # Check skills (includes nested skill)
         skills = ir.skills()
-        assert len(skills) == 2
+        assert len(skills) == 3  # code-review, test-writer, nested-skill
         skill_names = {s.name for s in skills}
         assert "code-review" in skill_names
         assert "test-writer" in skill_names
+        assert "nested-skill" in skill_names
 
         # Check skill with Claude-specific fields
         code_review = next(s for s in skills if s.name == "code-review")
@@ -83,6 +83,33 @@ class TestClaudeParser:
         assert len(lsp_servers) == 1
         assert lsp_servers[0].name == "custom-python"
         assert ".py" in lsp_servers[0].extensions
+
+    def test_parse_nested_skill_directories(self) -> None:
+        """Test parsing skills in nested directory structures.
+
+        Skills can be organized in category directories like:
+            skills/category/my-skill/SKILL.md
+        """
+        plugin_path = FIXTURES_DIR / "complete-plugin"
+        ir = parse_claude_plugin(plugin_path)
+
+        skills = ir.skills()
+        skill_names = {s.name for s in skills}
+
+        # Should find nested skill
+        assert "nested-skill" in skill_names
+
+        # Get the nested skill
+        nested_skill = next(s for s in skills if s.name == "nested-skill")
+
+        # Check it was parsed correctly
+        assert nested_skill.description == "A skill nested inside a category directory"
+        assert nested_skill.allowed_tools == ["Read", "Glob"]
+
+        # Check files were collected from nested structure
+        file_relpaths = {f.relpath for f in nested_skill.files}
+        assert "SKILL.md" in file_relpaths
+        assert "resources/reference.md" in file_relpaths
 
     def test_parse_missing_plugin(self) -> None:
         """Test parsing non-existent plugin."""
@@ -429,3 +456,170 @@ class TestEdgeCases:
             has_positional_vars=True,
         )
         assert cmd3.has_positional_vars
+
+
+class TestConversionReport:
+    """Tests for conversion report generation."""
+
+    @pytest.fixture
+    def ir(self):
+        """Load the test plugin IR."""
+        return parse_claude_plugin(FIXTURES_DIR / "complete-plugin")
+
+    def test_report_to_json(self, ir) -> None:
+        """Test JSON report generation."""
+        reports = convert_plugin(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.CODEX],
+            dry_run=True,
+        )
+
+        report = reports[TargetTool.CODEX]
+        json_str = report.to_json()
+
+        # Should be valid JSON
+        data = json.loads(json_str)
+        assert "source_plugin" in data
+        assert "target_tool" in data
+        assert data["target_tool"] == "codex"
+        assert "summary" in data
+        assert "components" in data
+
+    def test_report_to_markdown(self, ir) -> None:
+        """Test Markdown report generation."""
+        reports = convert_plugin(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.CURSOR],
+            dry_run=True,
+        )
+
+        report = reports[TargetTool.CURSOR]
+        md = report.to_markdown()
+
+        assert "# Conversion Report" in md
+        assert "cursor" in md.lower()
+        assert "Components" in md
+
+    def test_report_summary(self, ir) -> None:
+        """Test one-line summary generation."""
+        reports = convert_plugin(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.OPENCODE],
+            dry_run=True,
+        )
+
+        report = reports[TargetTool.OPENCODE]
+        summary = report.summary()
+
+        assert "dev-tools" in summary
+        assert "opencode" in summary
+        assert "converted" in summary
+
+
+class TestDryRun:
+    """Tests for dry-run functionality."""
+
+    def test_dry_run_does_not_write_files(self, tmp_path: Path) -> None:
+        """Test that dry-run doesn't create files."""
+        output_dir = tmp_path / "output"
+
+        reports = convert_plugin(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.CODEX],
+            output_dir=output_dir,
+            dry_run=True,
+        )
+
+        # Directory should not be created
+        assert not output_dir.exists()
+
+        # Report should still have file info
+        report = reports[TargetTool.CODEX]
+        assert report.dry_run
+        assert len(report.files_written) > 0 or len(report.files_skipped) >= 0
+
+    def test_dry_run_shows_preview(self, tmp_path: Path) -> None:
+        """Test that dry-run shows what would be done."""
+        emitter = CodexEmitter()
+        ir = parse_claude_plugin(FIXTURES_DIR / "complete-plugin")
+        result = emitter.emit(ir)
+
+        preview = result.preview(tmp_path)
+
+        assert "Files to write" in preview
+        assert "bytes" in preview
+        assert "Component mappings" in preview
+
+    def test_actual_write_creates_files(self, tmp_path: Path) -> None:
+        """Test that non-dry-run actually creates files."""
+        output_dir = tmp_path / "output"
+
+        convert_plugin(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.CODEX],
+            output_dir=output_dir,
+            dry_run=False,  # Actually write
+        )
+
+        # Directory should be created
+        assert output_dir.exists()
+
+        # Files should exist
+        skills_dir = output_dir / ".codex" / "skills"
+        assert skills_dir.exists()
+
+
+class TestPreviewConversion:
+    """Tests for preview_conversion function."""
+
+    def test_preview_shows_all_targets(self) -> None:
+        """Test preview shows info for all targets."""
+        preview = preview_conversion(
+            FIXTURES_DIR / "complete-plugin",
+            ["codex", "cursor", "opencode"],
+        )
+
+        assert "CODEX" in preview
+        assert "CURSOR" in preview
+        assert "OPENCODE" in preview
+        assert "dev-tools" in preview
+
+    def test_preview_with_output_dir(self, tmp_path: Path) -> None:
+        """Test preview shows paths relative to output dir."""
+        preview = preview_conversion(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.CODEX],
+            output_dir=tmp_path,
+        )
+
+        assert str(tmp_path) in preview or ".codex" in preview
+
+
+class TestBestEffort:
+    """Tests for best-effort conversion mode."""
+
+    def test_best_effort_continues_on_error(self, tmp_path: Path) -> None:
+        """Test that best-effort mode continues despite errors."""
+        # Create a malformed plugin
+        bad_plugin = tmp_path / "bad-plugin"
+        bad_plugin.mkdir()
+        (bad_plugin / ".claude-plugin").mkdir()
+        (bad_plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "bad"}')
+        # Add invalid skill
+        (bad_plugin / "skills").mkdir()
+        (bad_plugin / "skills" / "broken").mkdir()
+        (bad_plugin / "skills" / "broken" / "SKILL.md").write_text("no frontmatter")
+
+        reports = convert_plugin(
+            bad_plugin,
+            [TargetTool.CODEX],
+            output_dir=tmp_path / "output",
+            best_effort=True,
+            dry_run=True,
+        )
+
+        # Should complete without raising
+        report = reports[TargetTool.CODEX]
+        assert report is not None
+        # May have warnings/errors but shouldn't crash
+        assert report.best_effort

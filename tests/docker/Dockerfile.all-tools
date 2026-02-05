@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     gnupg2 \
     jq \
+    tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20 LTS

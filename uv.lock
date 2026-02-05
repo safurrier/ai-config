@@ -18,6 +18,7 @@ dependencies = [
     { name = "questionary" },
     { name = "requests" },
     { name = "rich" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "watchdog" },
 ]
 
@@ -58,6 +59,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.28" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.0.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.2" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.28" },

@@ -31,7 +31,17 @@ console = create_console()
 error_console = create_console(stderr=True)
 
 # Command order for --help display (logical workflow order)
-COMMAND_ORDER = ["init", "sync", "status", "watch", "update", "doctor", "plugin", "cache"]
+COMMAND_ORDER = [
+    "init",
+    "sync",
+    "status",
+    "watch",
+    "update",
+    "doctor",
+    "plugin",
+    "convert",
+    "cache",
+]
 
 
 class OrderedGroup(click.Group):
@@ -467,11 +477,20 @@ def init(output: Path | None, non_interactive: bool) -> None:
     multiple=True,
     help="Run only specific validation categories",
 )
+@click.option(
+    "--target",
+    "-t",
+    type=click.Choice(["codex", "cursor", "opencode", "all"]),
+    help="Validate converted output for a target tool",
+)
+@click.argument("output_dir", type=click.Path(exists=True, path_type=Path), required=False)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--verbose", "-v", is_flag=True, help="Show all checks including passed")
 def doctor(
     config_path: Path | None,
     category: tuple[str, ...],
+    target: str | None,
+    output_dir: Path | None,
     as_json: bool,
     verbose: bool,
 ) -> None:
@@ -482,6 +501,7 @@ def doctor(
       - Verify setup after sync or update
       - Debug why a plugin or skill isn't working
       - Check for configuration drift or missing dependencies
+      - Validate converted output (with --target)
 
     \b
     What you'll see:
@@ -491,7 +511,7 @@ def doctor(
       - Use --json for machine-readable output
 
     \b
-    Checks performed:
+    Checks performed (default mode):
       - Marketplace registration and accessibility
       - Plugin installation and enabled state
       - Skill file validity and frontmatter
@@ -499,12 +519,29 @@ def doctor(
       - MCP server configuration
 
     \b
+    Checks performed (with --target):
+      - Target-specific output directory structure
+      - SKILL.md files and frontmatter
+      - MCP/hooks/LSP configuration validity
+
+    \b
     Typical workflow:
       1. Run: ai-config doctor          (check health)
       2. Read fix_hint for any failures
       3. Run suggested commands to fix issues
       4. Re-run: ai-config doctor       (verify fixes)
+
+    \b
+    For converted output validation:
+      ai-config doctor --target codex ./output-dir
+      ai-config doctor --target all ./output-dir
     """
+    # Handle target validation mode
+    if target:
+        _doctor_target_mode(target, output_dir, as_json, verbose)
+        return
+
+    # Original config validation mode
     from ai_config.cli_render import render_doctor_output
 
     try:
@@ -550,6 +587,293 @@ def doctor(
 
     if total_fail > 0:
         sys.exit(1)
+
+
+def _doctor_target_mode(
+    target: str,
+    output_dir: Path | None,
+    as_json: bool,
+    verbose: bool,
+) -> None:
+    """Run doctor in target validation mode.
+
+    Args:
+        target: Target tool to validate (codex, cursor, opencode, all)
+        output_dir: Directory containing converted output
+        as_json: Output as JSON
+        verbose: Show all checks including passed
+    """
+    from ai_config.validators.base import ValidationResult
+    from ai_config.validators.target import get_output_validator
+
+    if output_dir is None:
+        output_dir = Path.cwd()
+
+    # Determine which targets to validate
+    if target == "all":
+        targets = ["codex", "cursor", "opencode"]
+    else:
+        targets = [target]
+
+    # Collect all results
+    all_results: dict[str, list[ValidationResult]] = {}
+    total_pass = 0
+    total_warn = 0
+    total_fail = 0
+
+    for t in targets:
+        validator = get_output_validator(t)
+        results = validator.validate_all(output_dir)
+        all_results[t] = results
+
+        for r in results:
+            if r.status == "pass":
+                total_pass += 1
+            elif r.status == "warn":
+                total_warn += 1
+            else:
+                total_fail += 1
+
+    # Output as JSON
+    if as_json:
+        output = {
+            "reports": {
+                t: {
+                    "target": t,
+                    "passed": all(r.status != "fail" for r in results),
+                    "has_warnings": any(r.status == "warn" for r in results),
+                    "results": [
+                        {
+                            "check_name": r.check_name,
+                            "status": r.status,
+                            "message": r.message,
+                            "details": r.details,
+                            "fix_hint": r.fix_hint,
+                        }
+                        for r in results
+                    ],
+                }
+                for t, results in all_results.items()
+            }
+        }
+        console.print_json(json.dumps(output))
+        if total_fail > 0:
+            sys.exit(1)
+        return
+
+    # Render output
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[header]ai-config doctor --target {target}[/header]",
+            border_style="cyan",
+        )
+    )
+    console.print()
+    console.print(f"[subheader]Validating: {output_dir}[/subheader]")
+    console.print()
+
+    for t, results in all_results.items():
+        console.print(f"[header]{t.upper()} Validation[/header]")
+        console.print()
+
+        for r in results:
+            if r.status == "pass" and not verbose:
+                continue
+
+            if r.status == "pass":
+                icon = SYMBOLS["pass"]
+                style = "success"
+            elif r.status == "warn":
+                icon = SYMBOLS["warn"]
+                style = "warning"
+            else:
+                icon = SYMBOLS["fail"]
+                style = "error"
+
+            console.print(f"  [{style}]{icon} {r.message}[/{style}]")
+
+            if r.details and (r.status != "pass" or verbose):
+                console.print(f"    [dim]{r.details}[/dim]")
+            if r.fix_hint and r.status == "fail":
+                console.print(f"    [hint]Fix: {r.fix_hint}[/hint]")
+
+        console.print()
+
+    # Summary
+    console.print("[subheader]Summary:[/subheader]")
+    console.print(f"  [success]{SYMBOLS['pass']} Passed: {total_pass}[/success]")
+    if total_warn > 0:
+        console.print(f"  [warning]{SYMBOLS['warn']} Warnings: {total_warn}[/warning]")
+    if total_fail > 0:
+        console.print(f"  [error]{SYMBOLS['fail']} Failed: {total_fail}[/error]")
+
+    if total_fail > 0:
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("plugin_path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--target",
+    "-t",
+    "targets",
+    multiple=True,
+    type=click.Choice(["codex", "cursor", "opencode", "all"]),
+    default=["all"],
+    help="Target tool(s) to convert to",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    type=click.Path(path_type=Path),
+    help="Output directory (default: current directory)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview changes without writing files",
+)
+@click.option(
+    "--best-effort",
+    is_flag=True,
+    help="Continue conversion even if some components fail",
+)
+@click.option(
+    "--format",
+    "report_format",
+    type=click.Choice(["summary", "markdown", "json"]),
+    default="summary",
+    help="Output format for conversion report",
+)
+def convert(
+    plugin_path: Path,
+    targets: tuple[str, ...],
+    output_dir: Path | None,
+    dry_run: bool,
+    best_effort: bool,
+    report_format: str,
+) -> None:
+    """Convert a Claude Code plugin to other AI coding tools.
+
+    \b
+    Supported targets:
+      - codex     OpenAI Codex (skills, prompts, MCP as TOML)
+      - cursor    Cursor (skills, commands, hooks, MCP)
+      - opencode  OpenCode (skills, commands, MCP, LSP)
+      - all       All supported tools (default)
+
+    \b
+    When to use:
+      - Share your Claude Code plugins with users of other tools
+      - Maintain plugins that work across multiple AI coding assistants
+      - Migrate plugin development to a different tool
+
+    \b
+    What you'll see:
+      - Component mappings showing how each part converted
+      - Warnings for features that couldn't be converted
+      - Files created/updated in the output directory
+
+    \b
+    Example usage:
+      ai-config convert ./my-plugin --target codex
+      ai-config convert ./my-plugin -t cursor -t opencode -o ./converted
+      ai-config convert ./my-plugin --dry-run  # Preview without writing
+    """
+    from ai_config.converters import TargetTool, convert_plugin, preview_conversion
+
+    # Resolve targets
+    if "all" in targets:
+        target_list = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE]
+    else:
+        target_list = [TargetTool(t) for t in targets]
+
+    # Use current directory if no output specified
+    if output_dir is None:
+        output_dir = Path.cwd()
+
+    if dry_run:
+        # Just preview
+        console.print()
+        console.print(
+            Panel.fit("[header]ai-config convert (preview)[/header]", border_style="cyan")
+        )
+        console.print()
+        preview = preview_conversion(plugin_path, target_list, output_dir)
+        console.print(preview)
+        return
+
+    # Perform conversion
+    console.print()
+    console.print(Panel.fit("[header]ai-config convert[/header]", border_style="cyan"))
+    console.print()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Converting plugin...", total=None)
+        reports = convert_plugin(
+            plugin_path=plugin_path,
+            targets=target_list,
+            output_dir=output_dir,
+            dry_run=False,
+            best_effort=best_effort,
+        )
+
+    # Display results
+    any_errors = False
+    for target, report in reports.items():
+        console.print(f"\n[subheader]═══ {target.value.upper()} ═══[/subheader]")
+
+        if report_format == "json":
+            console.print_json(report.to_json())
+        elif report_format == "markdown":
+            console.print(report.to_markdown())
+        else:
+            # Summary format
+            console.print(report.summary())
+
+            # Show component details
+            if report.components_converted:
+                console.print(
+                    f"\n[success]Converted ({len(report.components_converted)}):[/success]"
+                )
+                for comp in report.components_converted:
+                    notes = f" - {comp.notes}" if comp.notes else ""
+                    console.print(f"  {SYMBOLS['pass']} {comp.kind}:{comp.name}{notes}")
+
+            if report.components_degraded:
+                console.print(f"\n[warning]Degraded ({len(report.components_degraded)}):[/warning]")
+                for comp in report.components_degraded:
+                    notes = f" - {comp.notes}" if comp.notes else ""
+                    console.print(f"  {SYMBOLS['warn']} {comp.kind}:{comp.name}{notes}")
+
+            if report.components_skipped:
+                console.print(f"\n[error]Skipped ({len(report.components_skipped)}):[/error]")
+                for comp in report.components_skipped:
+                    notes = f" - {comp.notes}" if comp.notes else ""
+                    console.print(f"  {SYMBOLS['fail']} {comp.kind}:{comp.name}{notes}")
+
+            # Show files
+            if report.files_written:
+                console.print(f"\n[info]Files created ({len(report.files_written)}):[/info]")
+                for f in report.files_written:
+                    console.print(f"  {SYMBOLS['arrow']} {f.path}")
+
+        if report.has_errors():
+            any_errors = True
+
+    console.print()
+    if any_errors and not best_effort:
+        console.print("[error]Conversion completed with errors[/error]")
+        sys.exit(1)
+    else:
+        console.print(f"[success]{SYMBOLS['pass']} Conversion complete![/success]")
 
 
 @main.command()

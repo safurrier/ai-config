@@ -1,1 +1,52 @@
-"""Target validators for ai-config."""
+"""Target validators for ai-config.
+
+Provides validators for converted plugin output for each target tool.
+"""
+
+from __future__ import annotations
+
+from typing import Union
+
+from ai_config.validators.target.codex import CodexOutputValidator
+from ai_config.validators.target.cursor import CursorOutputValidator
+from ai_config.validators.target.opencode import OpenCodeOutputValidator
+
+# Type alias for any output validator
+OutputValidator = Union[CodexOutputValidator, CursorOutputValidator, OpenCodeOutputValidator]
+
+
+def get_output_validator(
+    target: str,
+) -> CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator:
+    """Get the appropriate output validator for a target tool.
+
+    Args:
+        target: Target tool name ("codex", "cursor", "opencode")
+
+    Returns:
+        The appropriate validator instance.
+
+    Raises:
+        ValueError: If target is not recognized.
+    """
+    validators = {
+        "codex": CodexOutputValidator,
+        "cursor": CursorOutputValidator,
+        "opencode": OpenCodeOutputValidator,
+    }
+
+    target_lower = target.lower()
+    if target_lower not in validators:
+        valid_targets = ", ".join(sorted(validators.keys()))
+        raise ValueError(f"Unknown target '{target}'. Valid targets: {valid_targets}")
+
+    return validators[target_lower]()
+
+
+__all__ = [
+    "CodexOutputValidator",
+    "CursorOutputValidator",
+    "OpenCodeOutputValidator",
+    "get_output_validator",
+    "OutputValidator",
+]

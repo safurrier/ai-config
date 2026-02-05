@@ -98,20 +98,95 @@ class EmitResult:
             )
         )
 
-    def write_to(self, output_dir: Path) -> list[Path]:
+    def write_to(self, output_dir: Path, dry_run: bool = False) -> list[Path]:
         """Write all files to the output directory.
 
-        Returns list of written file paths.
+        Args:
+            output_dir: Directory to write files to
+            dry_run: If True, don't actually write files
+
+        Returns list of file paths that were/would be written.
         """
         written = []
         for f in self.files:
             full_path = output_dir / f.path
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(f.content)
-            if f.executable:
-                full_path.chmod(full_path.stat().st_mode | 0o111)
+            if not dry_run:
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(f.content)
+                if f.executable:
+                    full_path.chmod(full_path.stat().st_mode | 0o111)
             written.append(full_path)
         return written
+
+    def preview(self, output_dir: Path | None = None) -> str:
+        """Generate preview of what would be written.
+
+        Args:
+            output_dir: Optional base directory for path display
+
+        Returns formatted string showing files and sizes.
+        """
+        lines = [f"Files to write ({len(self.files)} total):"]
+        lines.append("")
+
+        total_bytes = 0
+        for f in self.files:
+            size = len(f.content.encode("utf-8"))
+            total_bytes += size
+
+            if output_dir:
+                display_path = output_dir / f.path
+            else:
+                display_path = f.path
+
+            action = "[CREATE]"
+            if output_dir and (output_dir / f.path).exists():
+                action = "[UPDATE]"
+
+            exec_flag = " (exec)" if f.executable else ""
+            lines.append(f"  {action} {display_path}{exec_flag}")
+            lines.append(f"         {size:,} bytes")
+
+        lines.append("")
+        lines.append(f"Total: {total_bytes:,} bytes")
+
+        # Add mapping summary
+        if self.mappings:
+            lines.append("")
+            lines.append("Component mappings:")
+            for m in self.mappings:
+                status_icon = {
+                    MappingStatus.NATIVE: "✓",
+                    MappingStatus.TRANSFORM: "~",
+                    MappingStatus.FALLBACK: "↓",
+                    MappingStatus.EMULATE: "≈",
+                    MappingStatus.UNSUPPORTED: "✗",
+                }.get(m.status, "?")
+                lines.append(
+                    f"  {status_icon} {m.component_kind}:{m.component_name} → {m.status.value}"
+                )
+
+        # Add diagnostics
+        errors = [d for d in self.diagnostics if d.severity == Severity.ERROR]
+        warnings = [d for d in self.diagnostics if d.severity == Severity.WARN]
+
+        if errors:
+            lines.append("")
+            lines.append(f"Errors ({len(errors)}):")
+            for e in errors:
+                lines.append(f"  ✗ {e.message}")
+
+        if warnings:
+            lines.append("")
+            lines.append(f"Warnings ({len(warnings)}):")
+            for w in warnings:
+                lines.append(f"  ⚠ {w.message}")
+
+        return "\n".join(lines)
+
+    def has_errors(self) -> bool:
+        """Check if any error-level diagnostics exist."""
+        return any(d.severity == Severity.ERROR for d in self.diagnostics)
 
 
 class BaseEmitter(ABC):

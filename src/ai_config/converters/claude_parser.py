@@ -142,23 +142,22 @@ class ClaudePluginParser:
         return resolved
 
     def _parse_skills(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
-        """Parse skill directories."""
+        """Parse skill directories.
+
+        Recursively searches for SKILL.md files at any depth.
+        Supports nested directory structures like:
+            skills/category/my-skill/SKILL.md
+            skills/my-skill/SKILL.md
+            skills/SKILL.md
+        """
         skill_paths = self._resolve_paths(manifest, "skills")
 
         for skill_path in skill_paths:
             if skill_path.is_dir():
-                # If it's a directory, look for subdirectories with SKILL.md
-                for subdir in skill_path.iterdir():
-                    if subdir.is_dir():
-                        skill_md = subdir / "SKILL.md"
-                        if skill_md.exists():
-                            skill = self._parse_skill(subdir, skill_md)
-                            if skill:
-                                ir.components.append(skill)
-                # Also check if this directory itself has SKILL.md
-                skill_md = skill_path / "SKILL.md"
-                if skill_md.exists():
-                    skill = self._parse_skill(skill_path, skill_md)
+                # Recursively find all SKILL.md files
+                for skill_md in skill_path.rglob("SKILL.md"):
+                    skill_dir = skill_md.parent
+                    skill = self._parse_skill(skill_dir, skill_md)
                     if skill:
                         ir.components.append(skill)
 

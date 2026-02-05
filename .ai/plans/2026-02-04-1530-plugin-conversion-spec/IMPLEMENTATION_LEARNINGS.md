@@ -248,16 +248,23 @@ src/ai_config/converters/
 ├── __init__.py        # Module exports
 ├── ir.py              # Pydantic IR models (618 lines)
 ├── claude_parser.py   # Claude plugin parser (520 lines)
-└── emitters.py        # Target emitters (650 lines)
+├── emitters.py        # Target emitters (650 lines)
+├── report.py          # Conversion reports (371 lines)
+└── convert.py         # High-level API (250 lines)
 
 tests/unit/converters/
 ├── __init__.py
-└── test_conversion.py # 24 tests, all passing
+└── test_conversion.py # 34 tests, all passing
+
+tests/e2e/
+└── test_conversion.py # E2E tests for CLI (157 lines)
 
 tests/fixtures/sample-plugins/complete-plugin/
 ├── .claude-plugin/plugin.json
 ├── skills/code-review/SKILL.md
 ├── skills/test-writer/SKILL.md
+├── skills/category/nested-skill/SKILL.md  # Nested skill
+├── skills/category/nested-skill/resources/reference.md
 ├── commands/commit.md
 ├── agents/security-reviewer.md
 ├── hooks/hooks.json
@@ -266,11 +273,68 @@ tests/fixtures/sample-plugins/complete-plugin/
 └── scripts/check-dangerous-commands.sh
 ```
 
-**Total new code**: ~1,800 lines of implementation + ~400 lines of tests
+**Total new code**: ~2,400 lines of implementation + ~600 lines of tests
+
+## 8. What Was Implemented (Beyond Initial Spike)
+
+### 8.1 Dry-Run Support
+
+Added `--dry-run` flag to the CLI and `dry_run` parameter to `convert_plugin()`:
+- Preview mode shows what files would be created
+- No files written in dry-run mode
+- Full report still generated
+
+### 8.2 Conversion Reports
+
+Created `ConversionReport` class with:
+- Component tracking (converted/degraded/skipped)
+- File tracking (written/skipped)
+- Diagnostic aggregation (errors/warnings/info)
+- Multiple output formats:
+  - `to_json()` - Machine-readable JSON
+  - `to_markdown()` - Human-readable Markdown
+  - `summary()` - One-line summary
+
+### 8.3 Nested Skill Directory Support
+
+Updated `ClaudePluginParser._parse_skills()` to recursively discover skills:
+```python
+# Now supports:
+skills/my-skill/SKILL.md           # Direct child
+skills/category/my-skill/SKILL.md  # Nested in category
+skills/a/b/c/skill/SKILL.md        # Arbitrary depth
+```
+
+### 8.4 CLI Convert Command
+
+Added `ai-config convert` command with options:
+- `--target / -t` - Target tools (codex, cursor, opencode, all)
+- `--output / -o` - Output directory
+- `--dry-run` - Preview without writing
+- `--best-effort` - Continue on errors
+- `--format` - Report format (summary, markdown, json)
+
+### 8.5 Best-Effort Mode
+
+Added `best_effort` parameter that:
+- Continues conversion even if components fail
+- Aggregates all errors into the report
+- Allows partial conversions
+
+### 8.6 E2E Test Infrastructure
+
+- Added tmux to Docker images for future TUI testing
+- Created E2E tests for conversion CLI
+- Tests validate:
+  - CLI help and options
+  - Dry-run mode
+  - Multi-target conversion
+  - Output file structure
+  - Report formats
 
 ---
 
-## 7. Conclusion
+## 9. Conclusion
 
 The prototype validates that the spec is **implementable** and the conversion approach is **sound**. The main surprises were:
 
@@ -278,9 +342,23 @@ The prototype validates that the spec is **implementable** and the conversion ap
 2. Greater variance in command variable support than expected
 3. Env var syntax differences not called out in spec
 
-The core value proposition - **skills are highly portable** - is confirmed. A production implementation should prioritize:
+The core value proposition - **skills are highly portable** - is confirmed.
 
-1. Skills + MCP conversion (highest value)
-2. Commands with proper variable handling
-3. Hooks for Claude ↔ Cursor
-4. Comprehensive diagnostics for users
+### What's Done
+
+1. ✅ Core IR with Pydantic models
+2. ✅ Claude plugin parser (with nested skill support)
+3. ✅ Emitters for Codex, Cursor, OpenCode
+4. ✅ Conversion reports (JSON, Markdown, summary)
+5. ✅ Dry-run support
+6. ✅ Best-effort mode
+7. ✅ CLI `convert` command
+8. ✅ Unit tests (34 tests)
+9. ✅ E2E test infrastructure
+
+### What's Remaining
+
+1. ⏳ Env var syntax transformation (known gap)
+2. ⏳ Binary file handling
+3. ⏳ Interactive wizard integration
+4. ⏳ `ai-config sync` integration (auto-convert on sync)
