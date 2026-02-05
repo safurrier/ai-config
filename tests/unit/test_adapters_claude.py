@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from ai_config.adapters.claude import (
     add_marketplace,
     clear_cache,

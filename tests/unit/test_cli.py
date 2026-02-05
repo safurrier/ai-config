@@ -5,10 +5,11 @@ from textwrap import dedent
 from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
+
 from ai_config.adapters.claude import CommandResult
 from ai_config.cli import main
 from ai_config.types import PluginStatus, StatusResult, SyncAction, SyncResult
-from click.testing import CliRunner
 
 
 @pytest.fixture

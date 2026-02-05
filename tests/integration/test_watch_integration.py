@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from textwrap import dedent
 from threading import Event, Thread
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -221,7 +221,7 @@ class TestWatchCLI:
         runner = CliRunner()
 
         # Mock run_watch_loop to avoid blocking
-        with patch("ai_config.watch.run_watch_loop") as mock_loop:
+        with patch("ai_config.watch.run_watch_loop"):
             result = runner.invoke(
                 main, ["watch", "-c", str(config_path)], catch_exceptions=False
             )

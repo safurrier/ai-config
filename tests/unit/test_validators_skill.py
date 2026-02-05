@@ -6,7 +6,6 @@ from textwrap import dedent
 import pytest
 
 from ai_config.validators.component.skill import (
-    SkillValidator,
     validate_description,
     validate_name,
     validate_skill_directory,

@@ -20,8 +20,18 @@ src/ai_config/
 ├── adapters/        # Tool-specific adapters (claude.py)
 └── validators/      # Validation (plugins, skills, hooks, MCP)
 tests/
-├── unit/            # Fast unit tests
-└── integration/     # Integration tests (marked)
+├── unit/            # Fast unit tests (374 tests)
+├── integration/     # Integration tests (marked)
+├── e2e/             # Docker-based E2E tests
+│   ├── conftest.py      # Docker fixtures
+│   ├── test_fresh_install.py  # Claude-only sync tests
+│   └── test_multi_tool.py     # Multi-tool installation tests
+├── docker/          # Docker test infrastructure
+│   ├── Dockerfile.claude-only  # Fast image with Claude Code only
+│   ├── Dockerfile.all-tools    # Full image with 4 AI tools
+│   └── test_in_docker.py       # CLI for local Docker testing
+└── fixtures/        # Test data
+    └── test-marketplace/       # Local marketplace for E2E tests
 ```
 
 ## How to Work Here
@@ -47,6 +57,10 @@ All commands use `uv run` (or `just` if installed).
 | Single test | `uv run pytest tests/unit/test_foo.py -v` |
 | Coverage | `uv run pytest tests/ -v --cov=src/ai_config --cov-report=term-missing` |
 | Docs serve | `uv run mkdocs serve` |
+| E2E tests (Claude) | `uv run pytest tests/e2e/ -m "e2e and docker" -v` |
+| E2E tests (all tools) | `uv run pytest tests/e2e/ -m "e2e and docker and slow" -v` |
+| Docker shell | `python tests/docker/test_in_docker.py --shell` |
+| Docker build | `python tests/docker/test_in_docker.py --build-only` |
 
 If `just` is available, use `just check` (runs lint + ty + test).
 
@@ -67,7 +81,51 @@ Conventions:
 
 - Unit tests in `tests/unit/` - fast, no external deps
 - Integration tests marked with `@pytest.mark.integration`
+- E2E tests in `tests/e2e/` - Docker-based, validates real tool interactions
 - Run single test: `uv run pytest tests/unit/test_config.py::test_name -v`
+
+### E2E Testing with Docker
+
+E2E tests run in Docker containers to validate ai-config works with real AI coding tools.
+
+**Two Docker images available:**
+
+| Image | Tools | Use Case |
+|-------|-------|----------|
+| `claude-only` | Claude Code | Fast CI, basic sync validation |
+| `all-tools` | Claude, Codex, OpenCode, Cursor | Full multi-tool validation |
+
+**Running E2E tests locally:**
+
+```bash
+# Quick: Claude-only tests (default)
+python tests/docker/test_in_docker.py
+
+# Full: All tools tests (slower)
+python tests/docker/test_in_docker.py --all-tools
+
+# Debug: Interactive shell
+python tests/docker/test_in_docker.py --shell
+
+# Rebuild image from scratch
+python tests/docker/test_in_docker.py --rebuild
+```
+
+**Pytest markers:**
+- `@pytest.mark.e2e` - All E2E tests
+- `@pytest.mark.docker` - Tests requiring Docker
+- `@pytest.mark.slow` - Slow tests (all-tools image)
+
+**Multi-tool support:**
+
+ai-config is designed to support multiple AI coding tools. Current installation methods:
+
+| Tool | Install Command | Binary |
+|------|-----------------|--------|
+| Claude Code | `npm install -g @anthropic-ai/claude-code` | `claude` |
+| OpenAI Codex | `npm install -g @openai/codex` | `codex` |
+| OpenCode | `npm install -g opencode-ai` | `opencode` |
+| Cursor CLI | `curl -fsSL https://cursor.com/install \| bash` | `cursor-agent` |
 
 ## Releases
 
@@ -105,3 +163,6 @@ Publishing is automated via GitHub Actions (`.github/workflows/publish.yml`):
 - **Claude Code reloads plugins at session start** - after `ai-config sync`, restart Claude Code (use `claude --resume` to continue)
 - **Config locations**: `.ai-config/config.yaml` (project) or `~/.ai-config/config.yaml` (global)
 - **Scopes**: `user` scope installs to `~/.claude/plugins/`, `project` scope to `.claude/plugins/`
+- **Docker E2E tests require Docker** - use `docker info` to verify Docker is running
+- **Cursor CLI binary is `cursor-agent`** - not `cursor` (the desktop app uses `cursor`)
+- **E2E tests are class-scoped** - tests in the same class share a container, different classes get fresh containers

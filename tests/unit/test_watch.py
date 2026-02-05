@@ -1,12 +1,17 @@
 """Tests for ai_config.watch module."""
 
 from pathlib import Path
-from threading import Event
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from ai_config.types import AIConfig, ClaudeTargetConfig, MarketplaceConfig, PluginSource, TargetConfig
+from ai_config.types import (
+    AIConfig,
+    ClaudeTargetConfig,
+    MarketplaceConfig,
+    PluginSource,
+    TargetConfig,
+)
 from ai_config.watch import (
     ChangeCollector,
     FileChange,

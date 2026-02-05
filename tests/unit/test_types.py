@@ -1,6 +1,7 @@
 """Tests for ai_config.types module."""
 
 import pytest
+
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
