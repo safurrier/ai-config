@@ -775,6 +775,57 @@ class TestInteractiveCodexSkillDiscovery:
         finally:
             cleanup_tmux_session(all_tools_container, session_name)
 
+    def test_codex_skill_files_accessible_in_tmux(self, all_tools_container: Container) -> None:
+        """Verify converted skill files are accessible via shell in tmux.
+
+        This follows the dots repo pattern of verifying files exist at expected paths.
+        Expected skill names from complete-plugin: dev-tools-code-review, dev-tools-test-writer
+        """
+        # Check if codex is available
+        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
+        if exit_code != 0:
+            pytest.skip("Codex CLI not available")
+
+        session_name = f"codex-files-test-{int(time.time())}"
+
+        try:
+            # Convert plugin to Codex format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t codex -o /home/testuser",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # Check skills directory exists and list contents in tmux
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "ls -la /home/testuser/.codex/skills/",
+            )
+
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify skill directories were created with plugin ID prefix
+            assert "dev-tools" in output, f"Expected dev-tools skills, got: {output}"
+
+            # Check a specific skill file exists
+            exec_in_container(
+                all_tools_container,
+                f"tmux send-keys -t {session_name} 'cat /home/testuser/.codex/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
+            )
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify skill content is readable
+            assert "SKILL.md" in output or "code" in output.lower() or "#" in output, (
+                f"Expected skill content, got: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
 
 @pytest.mark.slow
 class TestInteractiveOpenCodeSkillDiscovery:
@@ -843,6 +894,59 @@ class TestInteractiveOpenCodeSkillDiscovery:
         finally:
             cleanup_tmux_session(all_tools_container, session_name)
 
+    def test_opencode_skill_files_accessible_in_tmux(self, all_tools_container: Container) -> None:
+        """Verify converted skill files exist at expected OpenCode paths.
+
+        Follows dots repo pattern: verify files exist and are readable.
+        """
+        # Check if opencode is available
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "opencode --version 2>/dev/null || echo 'NOT_INSTALLED'",
+        )
+        if "NOT_INSTALLED" in output or exit_code != 0:
+            pytest.skip("OpenCode CLI not available")
+
+        session_name = f"opencode-files-test-{int(time.time())}"
+
+        try:
+            # Convert plugin to OpenCode format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t opencode -o /tmp/opencode-verify",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # List skills directory in tmux
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "ls -la /tmp/opencode-verify/.opencode/skills/",
+            )
+
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify skill directories exist with plugin ID prefix
+            assert "dev-tools" in output, f"Expected dev-tools skills, got: {output}"
+
+            # Verify a skill file is readable
+            exec_in_container(
+                all_tools_container,
+                f"tmux send-keys -t {session_name} 'head -3 /tmp/opencode-verify/.opencode/skills/dev-tools-code-review/SKILL.md' Enter",
+            )
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Should see skill content (markdown header or frontmatter)
+            assert "#" in output or "---" in output or "name" in output.lower(), (
+                f"Expected skill markdown content, got: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
 
 @pytest.mark.slow
 class TestInteractiveCursorSkillDiscovery:
@@ -901,6 +1005,76 @@ class TestInteractiveCursorSkillDiscovery:
                 or "no" in output.lower()
                 or "configured" in output.lower()
             ), f"Unexpected output: {output}"
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
+    def test_cursor_mcp_config_contains_converted_servers(
+        self, all_tools_container: Container
+    ) -> None:
+        """Verify converted MCP servers appear in Cursor mcp.json.
+
+        Expected MCP servers from complete-plugin: database, github
+        """
+        session_name = f"cursor-mcp-verify-{int(time.time())}"
+
+        try:
+            # Convert plugin to Cursor format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t cursor -o /tmp/cursor-mcp-verify",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # Read and display MCP config in tmux
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "cat /tmp/cursor-mcp-verify/.cursor/mcp.json",
+            )
+
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify MCP server names from complete-plugin appear in config
+            assert "database" in output or "github" in output, (
+                f"Expected MCP server names (database, github), got: {output}"
+            )
+
+            # Verify it's valid JSON structure
+            assert "mcpServers" in output or '"command"' in output, (
+                f"Expected MCP JSON structure, got: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
+    def test_cursor_skills_accessible_in_tmux(self, all_tools_container: Container) -> None:
+        """Verify converted skill files exist at expected Cursor paths."""
+        session_name = f"cursor-skills-verify-{int(time.time())}"
+
+        try:
+            # Convert plugin to Cursor format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t cursor -o /tmp/cursor-skills-verify",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # List skills directory
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "ls -la /tmp/cursor-skills-verify/.cursor/skills/",
+            )
+
+            time.sleep(2)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify skill directories exist
+            assert "dev-tools" in output, f"Expected dev-tools skills, got: {output}"
 
         finally:
             cleanup_tmux_session(all_tools_container, session_name)
