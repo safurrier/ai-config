@@ -55,7 +55,8 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          uv run pytest tests/e2e/ -m "e2e and docker" -v --tb=long
+          # Exclude slow tests that require all-tools image (only claude-only image is built)
+          uv run pytest tests/e2e/ -m "e2e and docker and not slow" -v --tb=long
 
       - name: Debug on failure
         if: failure()
