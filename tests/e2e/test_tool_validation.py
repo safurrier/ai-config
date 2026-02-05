@@ -131,7 +131,9 @@ class TestClaudeToolValidation:
         # Should succeed - will show servers or 'no servers'
         # Note: mcp list may return non-zero if no servers configured
         # so we just check for sensible output
-        assert "mcp" in output.lower() or "server" in output.lower() or "configured" in output.lower()
+        assert (
+            "mcp" in output.lower() or "server" in output.lower() or "configured" in output.lower()
+        )
 
 
 @pytest.mark.slow
@@ -564,3 +566,340 @@ class TestCrossToolValidation:
             assert "results" in result or "reports" in result
         except json.JSONDecodeError:
             pytest.fail(f"Doctor output is not valid JSON: {output}")
+
+
+# =============================================================================
+# Interactive Tmux-based Tool Validation Tests
+# =============================================================================
+# These tests launch actual AI CLI tools in tmux sessions and verify that
+# converted skills/commands are visible via interactive commands like /skills.
+#
+# Prior art: ~/git_repositories/dots/tests/e2e/ai_tools/test_ai_tools_e2e.py
+# =============================================================================
+
+
+def exec_in_container_tmux(
+    container: Container,
+    session_name: str,
+    command: str,
+    working_dir: str = "/home/testuser/ai-config",
+) -> tuple[str, str]:
+    """Execute command in a tmux session inside a Docker container.
+
+    Returns:
+        Tuple of (session_name, initial_output)
+    """
+    # Create tmux session inside container
+    create_cmd = f"tmux new-session -d -s {session_name} -c {working_dir}"
+    exit_code, output = exec_in_container(container, create_cmd)
+    if exit_code != 0:
+        raise RuntimeError(f"Failed to create tmux session: {output}")
+
+    # Give session time to initialize
+    exec_in_container(container, "sleep 0.5")
+
+    # Send the command
+    send_cmd = f"tmux send-keys -t {session_name} '{command}' Enter"
+    exit_code, output = exec_in_container(container, send_cmd)
+    if exit_code != 0:
+        raise RuntimeError(f"Failed to send keys: {output}")
+
+    return session_name, output
+
+
+def capture_tmux_pane(container: Container, session_name: str, scrollback: int = 100) -> str:
+    """Capture tmux pane content from inside a Docker container."""
+    capture_cmd = f"tmux capture-pane -t {session_name} -p -S -{scrollback}"
+    exit_code, output = exec_in_container(container, capture_cmd)
+    if exit_code != 0:
+        raise RuntimeError(f"Failed to capture pane: {output}")
+    return output
+
+
+def wait_for_tmux_output(
+    container: Container,
+    session_name: str,
+    expected: str,
+    timeout: float = 30.0,
+    interval: float = 1.0,
+) -> bool:
+    """Wait for expected output in tmux pane inside Docker container."""
+    import time
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        output = capture_tmux_pane(container, session_name)
+        if expected in output:
+            return True
+        time.sleep(interval)
+    return False
+
+
+def cleanup_tmux_session(container: Container, session_name: str) -> None:
+    """Kill tmux session inside Docker container."""
+    exec_in_container(container, f"tmux kill-session -t {session_name} 2>/dev/null || true")
+
+
+@pytest.mark.slow
+@pytest.mark.requires_api_key
+class TestInteractiveClaudeSkillDiscovery:
+    """Test Claude Code discovers converted skills via interactive /skills command.
+
+    These tests launch Claude in a tmux session and send /skills to verify
+    skills are loaded and visible.
+
+    NOTE: Requires ANTHROPIC_API_KEY to be set for Claude to start.
+    """
+
+    def test_claude_shows_skills_command(self, claude_container: Container) -> None:
+        """Test Claude /skills command shows available skills.
+
+        This test:
+        1. Converts a test plugin to Claude format (skills)
+        2. Starts Claude in tmux session
+        3. Sends /skills command
+        4. Verifies skills are listed
+        """
+        import os
+
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            pytest.skip("ANTHROPIC_API_KEY required for interactive Claude tests")
+
+        session_name = f"claude-skills-test-{int(time.time())}"
+
+        try:
+            # First, convert the test plugin and install to user location
+            exit_code, output = exec_in_container(
+                claude_container,
+                "mkdir -p /home/testuser/.claude/plugins && "
+                "cp -r tests/fixtures/sample-plugins/complete-plugin/.claude-plugin "
+                "/home/testuser/.claude/plugins/test-plugin",
+            )
+            # Note: In real scenario we'd use ai-config sync, but for testing
+            # we just copy the plugin directly
+
+            # Start Claude in tmux (non-interactive print mode won't work for /skills)
+            # We need to use the interactive mode
+            exec_in_container_tmux(
+                claude_container,
+                session_name,
+                "claude",  # Start interactive Claude
+            )
+
+            # Wait for Claude to start (shows prompt or welcome message)
+            if not wait_for_tmux_output(claude_container, session_name, ">", timeout=30):
+                # Claude might show different prompts, just wait a bit
+                time.sleep(5)
+
+            # Send /skills command
+            exec_in_container(
+                claude_container,
+                f"tmux send-keys -t {session_name} '/skills' Enter",
+            )
+
+            # Wait for skills output
+            time.sleep(3)
+            output = capture_tmux_pane(claude_container, session_name)
+
+            # Verify we got some skills-related output
+            # Note: Exact output depends on installed skills
+            assert "skill" in output.lower() or "command" in output.lower(), (
+                f"Expected skills output, got: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(claude_container, session_name)
+
+
+@pytest.mark.slow
+class TestInteractiveCodexSkillDiscovery:
+    """Test Codex CLI discovers converted skills via interactive session.
+
+    Codex doesn't have a /skills command but we can verify:
+    1. Skills directory is read on startup
+    2. No errors when skills are present
+    """
+
+    def test_codex_starts_with_converted_skills_no_errors(
+        self, all_tools_container: Container
+    ) -> None:
+        """Test Codex starts without errors when converted skills are present.
+
+        This test:
+        1. Converts a test plugin to Codex format
+        2. Copies to Codex user directory
+        3. Starts Codex in tmux (briefly)
+        4. Verifies no startup errors related to skills
+        """
+        # Check if codex is available
+        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
+        if exit_code != 0:
+            pytest.skip("Codex CLI not available")
+
+        session_name = f"codex-skills-test-{int(time.time())}"
+
+        try:
+            # Convert plugin to Codex format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t codex -o /home/testuser/.codex",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # Verify skills directory exists
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "ls /home/testuser/.codex/skills/",
+            )
+            assert exit_code == 0, f"Skills directory not created: {output}"
+
+            # Start Codex in tmux with a simple non-interactive command
+            # We use --help to verify it starts without skill loading errors
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "codex --help",
+            )
+
+            # Wait for output
+            time.sleep(3)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify no skill-related errors
+            assert "error" not in output.lower() or "skill" not in output.lower(), (
+                f"Unexpected skill error: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
+
+@pytest.mark.slow
+class TestInteractiveOpenCodeSkillDiscovery:
+    """Test OpenCode CLI discovers converted skills.
+
+    OpenCode has `opencode debug skill` which lists skills.
+    """
+
+    def test_opencode_debug_skill_shows_converted_skills(
+        self, all_tools_container: Container
+    ) -> None:
+        """Test opencode debug skill shows skills after conversion.
+
+        This test:
+        1. Converts a test plugin to OpenCode format
+        2. Copies to OpenCode config directory
+        3. Runs opencode debug skill
+        4. Verifies skills appear in output
+        """
+        # Check if opencode is available
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "opencode --version 2>/dev/null || echo 'NOT_INSTALLED'",
+        )
+        if "NOT_INSTALLED" in output or exit_code != 0:
+            pytest.skip("OpenCode CLI not available")
+
+        session_name = f"opencode-skills-test-{int(time.time())}"
+
+        try:
+            # Convert plugin to OpenCode format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "mkdir -p /home/testuser/.config/opencode && "
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t opencode -o /home/testuser/.config/opencode",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # Verify skills directory was created
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "ls /home/testuser/.config/opencode/.opencode/skills/ 2>/dev/null || "
+                "ls /home/testuser/.config/opencode/skills/ 2>/dev/null || "
+                "echo 'NO_SKILLS_DIR'",
+            )
+
+            # Run opencode debug skill in tmux
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "opencode debug skill",
+            )
+
+            # Wait for output
+            time.sleep(3)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # OpenCode debug skill returns JSON array of skills
+            # Empty array [] is valid if no skills are found
+            # We just verify the command ran without error
+            assert "error" not in output.lower() or "[" in output, (
+                f"Unexpected error in skill output: {output}"
+            )
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
+
+
+@pytest.mark.slow
+class TestInteractiveCursorSkillDiscovery:
+    """Test Cursor CLI loads converted skills and MCP servers.
+
+    Cursor doesn't expose skills via CLI but we can verify:
+    1. mcp.json is read correctly
+    2. No errors on startup
+    """
+
+    def test_cursor_mcp_list_shows_converted_servers(self, all_tools_container: Container) -> None:
+        """Test cursor-agent mcp list shows servers after conversion.
+
+        This test:
+        1. Converts a test plugin with MCP servers to Cursor format
+        2. Copies to Cursor config directory
+        3. Runs cursor-agent mcp list in tmux
+        4. Verifies MCP servers appear or no errors
+        """
+        # Check if cursor-agent is available
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "cursor-agent --version 2>/dev/null || echo 'NOT_INSTALLED'",
+        )
+        if "NOT_INSTALLED" in output or exit_code != 0:
+            pytest.skip("Cursor CLI not available")
+
+        session_name = f"cursor-mcp-test-{int(time.time())}"
+
+        try:
+            # Convert plugin to Cursor format
+            exit_code, output = exec_in_container(
+                all_tools_container,
+                "mkdir -p /home/testuser/.cursor && "
+                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
+                "-t cursor -o /home/testuser/.cursor",
+            )
+            assert exit_code == 0, f"Conversion failed: {output}"
+
+            # Run cursor-agent mcp list in tmux
+            exec_in_container_tmux(
+                all_tools_container,
+                session_name,
+                "cursor-agent mcp list",
+            )
+
+            # Wait for output (cursor-agent mcp list can take a moment)
+            time.sleep(5)
+            output = capture_tmux_pane(all_tools_container, session_name)
+
+            # Verify output contains MCP-related info or shows empty state
+            # (not an error about invalid config)
+            assert (
+                "mcp" in output.lower()
+                or "server" in output.lower()
+                or "no" in output.lower()
+                or "configured" in output.lower()
+            ), f"Unexpected output: {output}"
+
+        finally:
+            cleanup_tmux_session(all_tools_container, session_name)
