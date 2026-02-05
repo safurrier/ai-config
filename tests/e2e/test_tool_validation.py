@@ -740,14 +740,15 @@ class TestInteractiveCodexSkillDiscovery:
 
         try:
             # Convert plugin to Codex format
+            # Output to /home/testuser so .codex/skills/ gets created at the right location
             exit_code, output = exec_in_container(
                 all_tools_container,
                 "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-                "-t codex -o /home/testuser/.codex",
+                "-t codex -o /home/testuser",
             )
             assert exit_code == 0, f"Conversion failed: {output}"
 
-            # Verify skills directory exists
+            # Verify skills directory exists (emitter creates .codex/skills/ in output dir)
             exit_code, output = exec_in_container(
                 all_tools_container,
                 "ls /home/testuser/.codex/skills/",
