@@ -157,9 +157,33 @@ class TestCodexEmitter:
         assert "model:" not in content
         assert "context:" not in content
 
-    def test_emit_commands_as_skills(self, ir, tmp_path: Path) -> None:
-        """Test that commands emit as skills (recommended over deprecated prompts)."""
-        emitter = CodexEmitter()
+    def test_emit_commands_as_prompts_default(self, ir, tmp_path: Path) -> None:
+        """Test that commands emit as prompts by default (1:1 with Claude)."""
+        emitter = CodexEmitter()  # Default: commands_as_skills=False
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        # Commands should be emitted with FALLBACK status (uses deprecated prompts)
+        cmd_mappings = [m for m in result.mappings if m.component_kind == "command"]
+        assert len(cmd_mappings) == 1
+        assert cmd_mappings[0].status == MappingStatus.FALLBACK
+        assert "prompts" in (cmd_mappings[0].notes or "").lower()
+
+        # Should have info diagnostic about prompts conversion
+        cmd_diags = [d for d in result.diagnostics if "command" in (d.component_ref or "")]
+        assert any("/prompts:" in d.message for d in cmd_diags)
+
+        # Verify prompt file was created in .codex/prompts/
+        prompt_file = tmp_path / ".codex" / "prompts" / "dev-tools-commit.md"
+        assert prompt_file.exists(), "Command should be emitted as prompt file"
+
+        content = prompt_file.read_text()
+        assert "---" in content  # Should have frontmatter
+        assert "Create a git commit" in content  # Should have command content
+
+    def test_emit_commands_as_skills_opt_in(self, ir, tmp_path: Path) -> None:
+        """Test that commands emit as skills with --commands-as-skills flag."""
+        emitter = CodexEmitter(commands_as_skills=True)
         result = emitter.emit(ir)
         result.write_to(tmp_path)
 
@@ -363,6 +387,27 @@ class TestEmitterFactory:
         """Test emitter respects scope parameter."""
         emitter = get_emitter(TargetTool.CODEX, scope=InstallScope.USER)
         assert emitter.scope == InstallScope.USER
+
+    def test_get_emitter_codex_commands_as_skills(self) -> None:
+        """Test Codex emitter respects commands_as_skills parameter."""
+        # Default: prompts
+        emitter_default = get_emitter(TargetTool.CODEX)
+        assert isinstance(emitter_default, CodexEmitter)
+        assert emitter_default.commands_as_skills is False
+
+        # Opt-in: skills
+        emitter_skills = get_emitter(TargetTool.CODEX, commands_as_skills=True)
+        assert isinstance(emitter_skills, CodexEmitter)
+        assert emitter_skills.commands_as_skills is True
+
+    def test_get_emitter_non_codex_ignores_commands_as_skills(self) -> None:
+        """Test that non-Codex emitters ignore commands_as_skills parameter."""
+        # commands_as_skills should be ignored for Cursor and OpenCode
+        cursor_emitter = get_emitter(TargetTool.CURSOR, commands_as_skills=True)
+        assert isinstance(cursor_emitter, CursorEmitter)
+
+        opencode_emitter = get_emitter(TargetTool.OPENCODE, commands_as_skills=True)
+        assert isinstance(opencode_emitter, OpenCodeEmitter)
 
 
 class TestEdgeCases:

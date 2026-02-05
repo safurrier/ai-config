@@ -747,6 +747,11 @@ def _doctor_target_mode(
     default="summary",
     help="Output format for conversion report",
 )
+@click.option(
+    "--commands-as-skills",
+    is_flag=True,
+    help="[Codex] Convert commands to skills (default: prompts for 1:1 behavior)",
+)
 def convert(
     plugin_path: Path,
     targets: tuple[str, ...],
@@ -754,6 +759,7 @@ def convert(
     dry_run: bool,
     best_effort: bool,
     report_format: str,
+    commands_as_skills: bool,
 ) -> None:
     """Convert a Claude Code plugin to other AI coding tools.
 
@@ -801,7 +807,9 @@ def convert(
             Panel.fit("[header]ai-config convert (preview)[/header]", border_style="cyan")
         )
         console.print()
-        preview = preview_conversion(plugin_path, target_list, output_dir)
+        preview = preview_conversion(
+            plugin_path, target_list, output_dir, commands_as_skills=commands_as_skills
+        )
         console.print(preview)
         return
 
@@ -823,6 +831,7 @@ def convert(
             output_dir=output_dir,
             dry_run=False,
             best_effort=best_effort,
+            commands_as_skills=commands_as_skills,
         )
 
     # Display results

@@ -21,6 +21,7 @@ def convert_plugin(
     scope: InstallScope = InstallScope.PROJECT,
     dry_run: bool = False,
     best_effort: bool = False,
+    commands_as_skills: bool = False,
 ) -> dict[TargetTool, ConversionReport]:
     """Convert a Claude Code plugin to one or more target tool formats.
 
@@ -31,6 +32,8 @@ def convert_plugin(
         scope: Installation scope (user or project)
         dry_run: If True, don't write files, just generate report
         best_effort: If True, continue conversion even on errors
+        commands_as_skills: If True, convert commands to skills (Codex only).
+            Default False emits commands as prompts for 1:1 behavior with Claude.
 
     Returns:
         Dictionary mapping target tools to their conversion reports
@@ -64,6 +67,7 @@ def convert_plugin(
             scope=scope,
             dry_run=dry_run,
             best_effort=best_effort,
+            commands_as_skills=commands_as_skills,
         )
         reports[target] = report
 
@@ -77,6 +81,7 @@ def _convert_to_target(
     scope: InstallScope,
     dry_run: bool,
     best_effort: bool,
+    commands_as_skills: bool = False,
 ) -> ConversionReport:
     """Convert IR to a single target format."""
     report = ConversionReport(
@@ -94,7 +99,7 @@ def _convert_to_target(
 
     # Get emitter and emit
     try:
-        emitter = get_emitter(target, scope)
+        emitter = get_emitter(target, scope, commands_as_skills=commands_as_skills)
         result = emitter.emit(ir)
     except Exception as e:
         if best_effort:
@@ -196,6 +201,7 @@ def preview_conversion(
     plugin_path: Path | str,
     targets: list[str] | list[TargetTool],
     output_dir: Path | str | None = None,
+    commands_as_skills: bool = False,
 ) -> str:
     """Preview what conversion would produce without writing files.
 
@@ -203,6 +209,7 @@ def preview_conversion(
         plugin_path: Path to the Claude plugin directory
         targets: List of target tools
         output_dir: Optional output directory for path display
+        commands_as_skills: For Codex, convert commands to skills instead of prompts.
 
     Returns:
         Formatted preview string
@@ -237,7 +244,7 @@ def preview_conversion(
         lines.append("")
 
         try:
-            emitter = get_emitter(target)
+            emitter = get_emitter(target, commands_as_skills=commands_as_skills)
             result = emitter.emit(ir)
             lines.append(result.preview(output_dir if output_dir is None else Path(output_dir)))
         except Exception as e:

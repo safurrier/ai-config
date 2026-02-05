@@ -251,8 +251,11 @@ class CodexEmitter:
 
     target = TargetTool.CODEX
 
-    def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
+    def __init__(
+        self, scope: InstallScope = InstallScope.PROJECT, commands_as_skills: bool = False
+    ) -> None:
         self.scope = scope
+        self.commands_as_skills = commands_as_skills
 
     def emit(self, ir: PluginIR) -> EmitResult:
         """Emit IR to Codex format."""
@@ -330,13 +333,64 @@ class CodexEmitter:
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command as a skill (recommended over deprecated prompts).
+        """Emit a command to Codex format.
 
-        Codex recommends skills over custom prompts:
-        - Skills are auto-discoverable and can be implicitly invoked
-        - Prompts are deprecated and require explicit /prompts:<name> invocation
+        By default, commands are emitted as prompts (deprecated but 1:1 with Claude commands).
+        With commands_as_skills=True, they're emitted as skills (auto-discoverable).
+        """
+        if self.commands_as_skills:
+            self._emit_command_as_skill(result, cmd, plugin_id)
+        else:
+            self._emit_command_as_prompt(result, cmd, plugin_id)
 
-        Commands are converted to skills with the command content as instructions.
+    def _emit_command_as_prompt(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
+        """Emit a command as a deprecated custom prompt (default, 1:1 with Claude).
+
+        Prompts provide explicit invocation via /prompts:<name>, matching Claude's
+        /command behavior. This is deprecated in Codex but preserves user expectations.
+        """
+        # Codex custom prompts go to ~/.codex/prompts/<name>.md
+        # For project scope, we'll use .codex/prompts/
+        prompt_name = f"{plugin_id}-{cmd.name}"
+        if self.scope == InstallScope.USER:
+            prompt_path = Path("prompts") / f"{prompt_name}.md"
+        else:
+            prompt_path = Path(".codex") / "prompts" / f"{prompt_name}.md"
+
+        # Build frontmatter
+        meta: dict[str, Any] = {}
+        if cmd.description:
+            meta["description"] = cmd.description
+        if cmd.argument_hint:
+            meta["argument-hint"] = cmd.argument_hint
+
+        if meta:
+            frontmatter = yaml.dump(meta, default_flow_style=False)
+            content = f"---\n{frontmatter}---\n\n{cmd.markdown}"
+        else:
+            content = cmd.markdown
+
+        result.add_file(prompt_path, content)
+
+        result.add_mapping(
+            "command",
+            cmd.name,
+            MappingStatus.FALLBACK,
+            target_path=prompt_path,
+            notes=f"Invoke with /prompts:{prompt_name} (prompts are deprecated in Codex)",
+        )
+
+        result.add_diagnostic(
+            Severity.INFO,
+            f"Command '{cmd.name}' → /prompts:{prompt_name} (use --commands-as-skills for auto-discovery)",
+            component_ref=f"command:{cmd.name}",
+        )
+
+    def _emit_command_as_skill(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
+        """Emit a command as a skill (opt-in, auto-discoverable).
+
+        Skills are auto-discoverable and can be implicitly invoked by Codex.
+        Use --commands-as-skills flag to enable this mode.
         """
         # Emit as a skill directory with SKILL.md
         skill_name = f"{plugin_id}-cmd-{cmd.name}"
@@ -348,9 +402,6 @@ class CodexEmitter:
         if cmd.description:
             meta["description"] = cmd.description
 
-        # Convert $ARGUMENTS and $N to Codex skill format
-        # Codex skills don't have direct variable substitution like Claude commands
-        # but we preserve the instructions for the model to understand
         content = cmd.markdown
 
         # Add argument hint as part of the skill description if present
@@ -380,7 +431,7 @@ class CodexEmitter:
 
         result.add_diagnostic(
             Severity.INFO,
-            f"Command '{cmd.name}' converted to skill '{skill_name}' (skills are recommended over deprecated prompts)",
+            f"Command '{cmd.name}' converted to skill '{skill_name}' (auto-discoverable)",
             component_ref=f"command:{cmd.name}",
         )
 
@@ -832,15 +883,23 @@ class OpenCodeEmitter:
 
 # Factory function
 def get_emitter(
-    target: TargetTool, scope: InstallScope = InstallScope.PROJECT
+    target: TargetTool,
+    scope: InstallScope = InstallScope.PROJECT,
+    commands_as_skills: bool = False,
 ) -> CodexEmitter | CursorEmitter | OpenCodeEmitter:
-    """Get an emitter for the specified target tool."""
-    emitters = {
-        TargetTool.CODEX: CodexEmitter,
-        TargetTool.CURSOR: CursorEmitter,
-        TargetTool.OPENCODE: OpenCodeEmitter,
-    }
-    emitter_class = emitters.get(target)
-    if not emitter_class:
+    """Get an emitter for the specified target tool.
+
+    Args:
+        target: Target tool to emit for
+        scope: Installation scope (user or project)
+        commands_as_skills: For Codex, convert commands to skills instead of prompts.
+            Default False emits commands as prompts for 1:1 behavior with Claude.
+    """
+    if target == TargetTool.CODEX:
+        return CodexEmitter(scope, commands_as_skills=commands_as_skills)
+    elif target == TargetTool.CURSOR:
+        return CursorEmitter(scope)
+    elif target == TargetTool.OPENCODE:
+        return OpenCodeEmitter(scope)
+    else:
         raise ValueError(f"No emitter for target: {target}")
-    return emitter_class(scope)
