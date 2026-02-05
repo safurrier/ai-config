@@ -67,33 +67,69 @@ Create test scripts that exercise each tool to discover:
 | LSP | ✗ | ✗ | ✗ (internal) | ✓ `opencode.lsp.json` |
 | Agents | ✓ | ✗ | ✗ | ✗ |
 
-### 2.3 Known Introspection Commands
+### 2.3 Introspection Commands (Researched 2026-02-05)
 
 **Claude Code:**
 ```bash
 claude --version                    # Verify installed
-claude mcp list                     # List MCP servers (if available)
+claude plugin list                  # List installed plugins with status
+claude mcp list                     # List MCP servers with health check
+claude plugin validate <path>       # Validate plugin manifest
 # Skills/commands visible via /skills, /commands in session
 ```
+- Config: `~/.claude/` (plugins, settings.json, mcp.json)
+- MCP: `mcp.json` or per-plugin MCP servers
+- No direct skill listing CLI (file-based discovery)
 
 **Codex:**
 ```bash
 codex --version                     # Verify installed
-codex config show                   # Show config (if available)
-# May need to check ~/.codex/skills/ directly
+codex mcp list                      # List configured MCP servers
+codex features list                 # List feature flags and status
+# No config show command - uses ~/.codex/config.toml
 ```
+- Config: `~/.codex/config.toml` (TOML format)
+- MCP: configured via `codex mcp add`
+- Skills: `~/.codex/skills/` directory (symlink supported)
+- Prompts: `~/.codex/prompts/` directory (deprecated but still works)
 
 **Cursor:**
 ```bash
 cursor-agent --version              # Verify installed
-# Limited CLI introspection - mostly file-based validation
+cursor-agent mcp list               # List MCP servers from mcp.json
+cursor-agent mcp list-tools <name>  # List tools for specific MCP
+cursor-agent status                 # Check authentication status
+# Limited introspection - mostly file-based validation
 ```
+- Config: `~/.cursor/` or `.cursor/`
+- MCP: `mcp.json` (project or user level)
+- Skills: No dedicated skill discovery CLI
+- Hooks: `hooks.json` (file-based only)
+- Note: `cursor-agent ls` requires interactive terminal
 
 **OpenCode:**
 ```bash
 opencode --version                  # Verify installed
-opencode config                     # Show config (if available)
+opencode mcp list                   # List MCP servers with status
+opencode agent list                 # List all agents with permissions
+opencode debug skill                # List available skills (returns [])
+opencode debug config               # Show resolved configuration (JSON)
+opencode debug paths                # Show global paths (data, config, cache)
 ```
+- Config: `~/.config/opencode/opencode.json` (JSON format)
+- MCP: configured in opencode.json or via `opencode mcp add`
+- Skills: `~/.config/opencode/skills/` (symlink supported)
+- Commands: `~/.config/opencode/command/` (symlink supported)
+- Agents: `~/.config/opencode/agent/` (symlink supported)
+
+### 2.4 Key Validation Strategies
+
+| Tool | MCP Validation | Skill Validation | Config Validation |
+|------|----------------|------------------|-------------------|
+| Claude | `claude mcp list` | File check + plugin list | `claude plugin validate` |
+| Codex | `codex mcp list` | File check | TOML parse check |
+| Cursor | `cursor-agent mcp list` | File check | JSON parse check |
+| OpenCode | `opencode mcp list` | `opencode debug skill` | `opencode debug config` |
 
 ## Phase 3: Tmux Test Infrastructure
 
