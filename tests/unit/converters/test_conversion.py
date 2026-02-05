@@ -157,20 +157,31 @@ class TestCodexEmitter:
         assert "model:" not in content
         assert "context:" not in content
 
-    def test_emit_commands_deprecated(self, ir) -> None:
-        """Test that commands emit with deprecation warning."""
+    def test_emit_commands_as_skills(self, ir, tmp_path: Path) -> None:
+        """Test that commands emit as skills (recommended over deprecated prompts)."""
         emitter = CodexEmitter()
         result = emitter.emit(ir)
+        result.write_to(tmp_path)
 
-        # Commands should be marked as fallback
+        # Commands should be emitted as skills (transform status due to variables)
         cmd_mappings = [m for m in result.mappings if m.component_kind == "command"]
         assert len(cmd_mappings) == 1
-        assert cmd_mappings[0].status == MappingStatus.FALLBACK
-        assert "deprecated" in (cmd_mappings[0].notes or "").lower()
+        # Commands with variables are transformed
+        assert cmd_mappings[0].status in (MappingStatus.NATIVE, MappingStatus.TRANSFORM)
 
-        # Should have info diagnostic about deprecation
+        # Should have info diagnostic about skill conversion
         cmd_diags = [d for d in result.diagnostics if "command" in (d.component_ref or "")]
-        assert any("deprecated" in d.message.lower() for d in cmd_diags)
+        assert any("skill" in d.message.lower() for d in cmd_diags)
+
+        # Verify skill file was created (not deprecated prompts)
+        skill_dir = tmp_path / ".codex" / "skills" / "dev-tools-cmd-commit"
+        assert skill_dir.exists(), "Command should be emitted as skill directory"
+        skill_file = skill_dir / "SKILL.md"
+        assert skill_file.exists(), "SKILL.md should exist in skill directory"
+
+        content = skill_file.read_text()
+        assert "name:" in content  # Should have frontmatter
+        assert "Create a git commit" in content  # Should have command content
 
     def test_emit_hooks_unsupported(self, ir) -> None:
         """Test that hooks are marked unsupported."""
@@ -281,7 +292,7 @@ class TestOpenCodeEmitter:
         assert skill_md.exists()
 
     def test_emit_commands_with_variables(self, ir, tmp_path: Path) -> None:
-        """Test commands preserve variables (OpenCode supports them)."""
+        """Test commands transform variables to OpenCode format."""
         emitter = OpenCodeEmitter()
         result = emitter.emit(ir)
         result.write_to(tmp_path)
@@ -290,8 +301,12 @@ class TestOpenCodeEmitter:
         assert cmd_path.exists()
 
         content = cmd_path.read_text()
-        # OpenCode supports $ARGUMENTS
-        assert "$ARGUMENTS" in content
+        # OpenCode uses uppercase placeholders: $ARGUMENTS -> $ARGS, $2 -> $ARG2
+        assert "$ARGS" in content, "Claude's $ARGUMENTS should be transformed to $ARGS"
+        assert "$ARG2" in content, "Claude's $2 should be transformed to $ARG2"
+        # Original variables should be replaced
+        assert "$ARGUMENTS" not in content
+        assert "$2" not in content or "$ARG2" in content  # $2 might still be in description
 
     def test_emit_hooks_emulate(self, ir) -> None:
         """Test hooks are marked for emulation."""

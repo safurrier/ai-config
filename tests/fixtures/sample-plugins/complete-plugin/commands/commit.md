@@ -1,6 +1,6 @@
 ---
 description: Create a well-formatted git commit with conventional commit style
-argument-hint: [type] [scope]
+argument-hint: "[type] [scope]"
 ---
 
 Create a git commit for the current staged changes.

@@ -330,40 +330,57 @@ class CodexEmitter:
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command as a deprecated custom prompt."""
-        # Codex custom prompts go to ~/.codex/prompts/<name>.md
-        # For project scope, we'll use .codex/prompts/
-        if self.scope == InstallScope.USER:
-            prompt_path = Path("prompts") / f"{plugin_id}-{cmd.name}.md"
-        else:
-            prompt_path = Path(".codex") / "prompts" / f"{plugin_id}-{cmd.name}.md"
+        """Emit a command as a skill (recommended over deprecated prompts).
 
-        # Build frontmatter
-        meta: dict[str, Any] = {}
+        Codex recommends skills over custom prompts:
+        - Skills are auto-discoverable and can be implicitly invoked
+        - Prompts are deprecated and require explicit /prompts:<name> invocation
+
+        Commands are converted to skills with the command content as instructions.
+        """
+        # Emit as a skill directory with SKILL.md
+        skill_name = f"{plugin_id}-cmd-{cmd.name}"
+        skill_dir = Path(".codex") / "skills" / skill_name
+        skill_path = skill_dir / "SKILL.md"
+
+        # Build SKILL.md with frontmatter
+        meta: dict[str, Any] = {"name": skill_name}
         if cmd.description:
             meta["description"] = cmd.description
+
+        # Convert $ARGUMENTS and $N to Codex skill format
+        # Codex skills don't have direct variable substitution like Claude commands
+        # but we preserve the instructions for the model to understand
+        content = cmd.markdown
+
+        # Add argument hint as part of the skill description if present
         if cmd.argument_hint:
-            meta["argument-hint"] = cmd.argument_hint
+            meta["description"] = f"{cmd.description or ''} Arguments: {cmd.argument_hint}".strip()
 
-        if meta:
-            frontmatter = yaml.dump(meta, default_flow_style=False)
-            content = f"---\n{frontmatter}---\n\n{cmd.markdown}"
+        frontmatter = yaml.dump(meta, default_flow_style=False)
+        skill_content = f"---\n{frontmatter}---\n\n{content}"
+
+        result.add_file(skill_path, skill_content)
+
+        # Determine mapping status based on variable usage
+        if cmd.has_arguments_var or cmd.has_positional_vars:
+            status = MappingStatus.TRANSFORM
+            notes = "Command variables ($ARGUMENTS, $N) preserved in skill instructions"
         else:
-            content = cmd.markdown
-
-        result.add_file(prompt_path, content)
+            status = MappingStatus.NATIVE
+            notes = None
 
         result.add_mapping(
             "command",
             cmd.name,
-            MappingStatus.FALLBACK,
-            target_path=prompt_path,
-            notes="Emitted as deprecated custom prompt",
+            status,
+            target_path=skill_path,
+            notes=notes,
         )
 
         result.add_diagnostic(
             Severity.INFO,
-            f"Command '{cmd.name}' emitted as custom prompt (deprecated in Codex)",
+            f"Command '{cmd.name}' converted to skill '{skill_name}' (skills are recommended over deprecated prompts)",
             component_ref=f"command:{cmd.name}",
         )
 
@@ -690,7 +707,13 @@ class OpenCodeEmitter:
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command to OpenCode format."""
+        """Emit a command to OpenCode format.
+
+        OpenCode commands support:
+        - Markdown with YAML frontmatter (description, agent, model)
+        - Placeholders using $NAME syntax (uppercase)
+        - Located in .opencode/commands/ (project) or ~/.config/opencode/commands/ (user)
+        """
         cmd_path = Path(".opencode") / "commands" / f"{plugin_id}-{cmd.name}.md"
 
         # Build frontmatter
@@ -698,19 +721,37 @@ class OpenCodeEmitter:
         if cmd.description:
             meta["description"] = cmd.description
 
+        # Transform Claude's $ARGUMENTS to OpenCode's $ARGS placeholder
+        # and $1, $2 etc to $ARG1, $ARG2 (OpenCode uses uppercase)
+        content = cmd.markdown
+        if cmd.has_arguments_var:
+            content = re.sub(r"\$ARGUMENTS|\$\{ARGUMENTS\}", "$ARGS", content)
+        if cmd.has_positional_vars:
+            # Convert $1 to $ARG1, $2 to $ARG2, etc.
+            content = re.sub(r"\$([1-9])|\$\{([1-9])\}", r"$ARG\1\2", content)
+
         if meta:
             frontmatter = yaml.dump(meta, default_flow_style=False)
-            content = f"---\n{frontmatter}---\n\n{cmd.markdown}"
+            full_content = f"---\n{frontmatter}---\n\n{content}"
         else:
-            content = cmd.markdown
+            full_content = content
 
-        result.add_file(cmd_path, content)
+        result.add_file(cmd_path, full_content)
+
+        # Determine mapping status
+        if cmd.has_arguments_var or cmd.has_positional_vars:
+            status = MappingStatus.TRANSFORM
+            notes = "Variables transformed: $ARGUMENTS→$ARGS, $N→$ARGN"
+        else:
+            status = MappingStatus.NATIVE
+            notes = None
 
         result.add_mapping(
             "command",
             cmd.name,
-            MappingStatus.NATIVE,
+            status,
             target_path=cmd_path,
+            notes=notes,
         )
 
     def _emit_mcp_config(
