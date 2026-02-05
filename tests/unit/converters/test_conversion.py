@@ -406,9 +406,13 @@ class TestEdgeCases:
             emitter = emitter_class()
             result = emitter.emit(ir)
 
-            # Find MCP-related file
-            mcp_files = [f for f in result.files if "mcp" in str(f.path).lower()]
-            assert len(mcp_files) >= 1
+            # Find MCP-related file (varies by emitter: mcp-config.toml, mcp.json, opencode.json)
+            mcp_files = [
+                f
+                for f in result.files
+                if "mcp" in str(f.path).lower() or f.path.name == "opencode.json"
+            ]
+            assert len(mcp_files) >= 1, f"No MCP file found for {emitter_class.__name__}"
 
             # Env var should be in the output (syntax transformation is a TODO)
             content = mcp_files[0].content

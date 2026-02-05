@@ -734,14 +734,14 @@ class OpenCodeEmitter(BaseEmitter):
                 notes="Converted to OpenCode MCP format",
             )
 
-        # Emit as part of opencode.json
+        # Emit to opencode.json at output root
         opencode_config = {"mcp": mcp_config}
-        config_path = Path("opencode.mcp.json")
+        config_path = Path("opencode.json")
         result.add_file(config_path, json.dumps(opencode_config, indent=2))
 
         result.add_diagnostic(
             Severity.INFO,
-            f"MCP config written to {config_path} - merge into opencode.json",
+            f"MCP config written to {config_path}",
             component_ref="mcp:*",
         )
 
