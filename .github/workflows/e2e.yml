@@ -1,5 +1,5 @@
 # E2E tests using Docker containers
-# Validates ai-config sync functionality with Claude Code from fresh installation
+# Validates ai-config with all supported AI coding tools (Claude, Codex, OpenCode, Cursor)
 
 name: E2E Tests
 
@@ -21,7 +21,7 @@ on:
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45  # all-tools image takes longer to build
 
     steps:
       - name: Checkout code
@@ -43,20 +43,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Build Docker image (all-tools)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: tests/docker/Dockerfile.claude-only
-          tags: ai-config-test:claude-only
+          file: tests/docker/Dockerfile.all-tools
+          tags: ai-config-test:all-tools
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run E2E tests
         run: |
-          # Exclude slow tests that require all-tools image (only claude-only image is built)
-          uv run pytest tests/e2e/ -m "e2e and docker and not slow" -v --tb=long
+          # Run all E2E tests (all-tools image is a superset of claude-only)
+          uv run pytest tests/e2e/ -m "e2e and docker" -v --tb=long
 
       - name: Debug on failure
         if: failure()

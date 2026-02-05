@@ -5,12 +5,12 @@ This script provides convenient commands for building Docker images,
 running tests, and debugging test failures interactively.
 
 Supports two Docker images:
-- claude-only (default): Fast image with just Claude Code
-- all-tools: Full image with all AI coding tools (Claude, Codex, OpenCode, Cursor)
+- all-tools (default): Full image with all AI coding tools (Claude, Codex, OpenCode, Cursor)
+- claude-only: Fast image with just Claude Code (use --claude-only flag)
 
 Usage:
-    python tests/docker/test_in_docker.py              # Run claude-only tests
-    python tests/docker/test_in_docker.py --all-tools  # Run with all tools
+    python tests/docker/test_in_docker.py              # Run all-tools tests (default)
+    python tests/docker/test_in_docker.py --claude-only  # Run claude-only tests (faster)
     python tests/docker/test_in_docker.py --rebuild    # Rebuild image first
     python tests/docker/test_in_docker.py --shell      # Drop into shell
     python tests/docker/test_in_docker.py -k "fresh"   # Run tests matching pattern
@@ -183,11 +183,11 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    %(prog)s                    # Run claude-only tests (fast)
-    %(prog)s --all-tools        # Run all tests with all tools
+    %(prog)s                    # Run all-tools tests (default)
+    %(prog)s --claude-only      # Run claude-only tests (faster)
     %(prog)s --rebuild          # Rebuild image and run tests
     %(prog)s --shell            # Interactive debugging shell
-    %(prog)s --shell --all-tools  # Shell with all tools
+    %(prog)s --shell --claude-only  # Shell with claude-only
     %(prog)s -k "fresh"         # Run tests matching "fresh"
     %(prog)s --build-only       # Just build the image
     %(prog)s --list             # List available images
@@ -195,9 +195,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--all-tools",
+        "--claude-only",
         action="store_true",
-        help="Use all-tools image instead of claude-only",
+        help="Use claude-only image instead of all-tools (faster builds)",
     )
     parser.add_argument(
         "--rebuild",
@@ -244,8 +244,8 @@ Examples:
         print("Please start Docker and try again")
         return 1
 
-    # Determine which image to use
-    image_name = "all-tools" if args.all_tools else "claude-only"
+    # Determine which image to use (all-tools is default)
+    image_name = "claude-only" if args.claude_only else "all-tools"
 
     # Shell mode
     if args.shell:

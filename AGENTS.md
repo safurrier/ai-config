@@ -92,17 +92,17 @@ E2E tests run in Docker containers to validate ai-config works with real AI codi
 
 | Image | Tools | Use Case |
 |-------|-------|----------|
-| `claude-only` | Claude Code | Fast CI, basic sync validation |
-| `all-tools` | Claude, Codex, OpenCode, Cursor | Full multi-tool validation |
+| `all-tools` | Claude, Codex, OpenCode, Cursor | Default - full multi-tool validation |
+| `claude-only` | Claude Code | Fast local testing |
 
 **Running E2E tests locally:**
 
 ```bash
-# Quick: Claude-only tests (default)
+# Default: All tools tests
 python tests/docker/test_in_docker.py
 
-# Full: All tools tests (slower)
-python tests/docker/test_in_docker.py --all-tools
+# Fast: Claude-only tests (quicker builds)
+python tests/docker/test_in_docker.py --claude-only
 
 # Debug: Interactive shell
 python tests/docker/test_in_docker.py --shell
@@ -114,7 +114,7 @@ python tests/docker/test_in_docker.py --rebuild
 **Pytest markers:**
 - `@pytest.mark.e2e` - All E2E tests
 - `@pytest.mark.docker` - Tests requiring Docker
-- `@pytest.mark.slow` - Slow tests (all-tools image)
+- `@pytest.mark.slow` - Tests using all-tools image
 
 **Multi-tool support:**
 
