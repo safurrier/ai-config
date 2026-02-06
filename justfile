@@ -52,6 +52,19 @@ build:
 dev:
     uv pip install -e .
 
+# Ensure local editable install (source, not PyPI)
+dev-install:
+    uv pip uninstall ai-config-cli -y || true
+    uv pip install -e .
+
+# Verify module path resolves to local repo
+dev-check:
+    uv run python - <<'PY'
+    import ai_config, sys
+    print("ai_config module:", ai_config.__file__)
+    print("python:", sys.executable)
+    PY
+
 # Serve documentation locally
 docs-serve:
     uv run mkdocs serve
