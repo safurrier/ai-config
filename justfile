@@ -67,3 +67,22 @@ hooks:
 # Run pre-commit on all files
 pre-commit:
     uv run pre-commit run --all-files
+
+# Docker dev shells (no local pollution)
+docker-shell:
+    uv run python tests/docker/test_in_docker.py --shell
+
+docker-shell-claude:
+    uv run python tests/docker/test_in_docker.py --shell --claude-only
+
+# Persistent Docker dev container (attachable)
+docker-dev-up:
+    uv run python tests/docker/test_in_docker.py --build-only
+    docker rm -f ai-config-dev 2>/dev/null || true
+    docker run -d --name ai-config-dev -v {{pwd}}:/home/testuser/ai-config -w /home/testuser/ai-config -u testuser ai-config-test:all-tools sleep infinity
+
+docker-dev-attach:
+    docker exec -it ai-config-dev /bin/bash
+
+docker-dev-down:
+    docker rm -f ai-config-dev
