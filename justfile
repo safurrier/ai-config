@@ -83,10 +83,12 @@ pre-commit:
 
 # Docker dev shells (no local pollution)
 docker-shell:
-    uv run python tests/docker/test_in_docker.py --shell
+    env -u VIRTUAL_ENV uv sync --all-extras
+    env -u VIRTUAL_ENV uv run --python .venv/bin/python tests/docker/test_in_docker.py --shell
 
 docker-shell-claude:
-    uv run python tests/docker/test_in_docker.py --shell --claude-only
+    env -u VIRTUAL_ENV uv sync --all-extras
+    env -u VIRTUAL_ENV uv run --python .venv/bin/python tests/docker/test_in_docker.py --shell --claude-only
 
 # Persistent Docker dev container (attachable)
 docker-dev-up:
