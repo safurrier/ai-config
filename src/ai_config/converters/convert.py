@@ -28,7 +28,7 @@ def convert_plugin(
     Args:
         plugin_path: Path to the Claude plugin directory
         targets: List of target tools to convert to
-        output_dir: Base output directory (default: current directory)
+        output_dir: Base output directory. If None, no files are written.
         scope: Installation scope (user or project)
         dry_run: If True, don't write files, just generate report
         best_effort: If True, continue conversion even on errors
@@ -120,14 +120,7 @@ def _convert_to_target(
 
     # Record component mappings
     for mapping in result.mappings:
-        lost_features = []
-
-        # Detect lost features based on notes
-        if mapping.notes:
-            if "variable" in mapping.notes.lower():
-                lost_features.append("Template variable substitution")
-            if "deprecated" in mapping.notes.lower():
-                lost_features.append("Using deprecated feature")
+        lost_features = list(mapping.lost_features)
 
         report.add_component(
             kind=mapping.component_kind,
@@ -142,7 +135,10 @@ def _convert_to_target(
     if output_dir:
         for f in result.files:
             full_path = output_dir / f.path
-            size = len(f.content.encode("utf-8"))
+            if isinstance(f.content, bytes):
+                size = len(f.content)
+            else:
+                size = len(f.content.encode("utf-8"))
 
             if dry_run:
                 action = "preview"

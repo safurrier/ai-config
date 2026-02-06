@@ -21,6 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - OpenCode (`npm install -g opencode-ai`)
   - Cursor CLI (`curl -fsSL https://cursor.com/install | bash`)
 - New pytest markers: `@pytest.mark.e2e`, `@pytest.mark.docker`, `@pytest.mark.slow`
+- Conversion config section persisted by `ai-config init`
+- Sync-driven conversion pipeline with scope-based output defaults
+- Conversion report file output (`--report`, `--report-format`)
+- Binary asset support in skill conversion
+- Env var syntax transformation for Cursor/OpenCode MCP outputs
+- Multi-LSP aggregation for OpenCode conversion
+- Codex project-scope prompt warnings with remediation guidance
+- Conversion hash cache with `--force-convert` override
+
+### Changed
+
+- `ai-config convert` supports `--scope` for output path resolution
+- Codex prompts emit to `.codex/prompts/` relative to output root
+- Name normalization for plugin/skill parsing to improve portability
+
+### Fixed
+
+- Prevent OpenCode LSP config from overwriting when multiple servers exist
 
 ## [0.1.0] - 2025-02-03
 

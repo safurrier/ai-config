@@ -5,6 +5,8 @@ Reads a Claude plugin directory and produces a PluginIR.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -99,14 +101,28 @@ class ClaudePluginParser:
             return None
 
         # Normalize name to plugin_id
-        plugin_id = name.lower().replace("_", "-").replace(" ", "-")
+        plugin_id = self._slugify(name, "plugin")
+        if plugin_id != name:
+            self._add_diagnostic(
+                Severity.WARN,
+                f"Normalized plugin id '{name}' → '{plugin_id}' for portability",
+                component_ref="plugin:identity",
+            )
 
-        return PluginIdentity(
-            plugin_id=plugin_id,
-            name=name,
-            version=manifest.get("version"),
-            description=manifest.get("description"),
-        )
+        try:
+            return PluginIdentity(
+                plugin_id=plugin_id,
+                name=name,
+                version=manifest.get("version"),
+                description=manifest.get("description"),
+            )
+        except Exception as e:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Invalid plugin identity: {e}",
+                component_ref="plugin:identity",
+            )
+            return None
 
     def _resolve_paths(self, manifest: dict[str, Any], key: str) -> list[Path]:
         """Resolve component paths from manifest."""
@@ -184,24 +200,16 @@ class ClaudePluginParser:
             )
             return None
 
-        name = meta.get("name", skill_dir.name)
+        raw_name = meta.get("name", skill_dir.name)
         description = meta.get("description")
-
-        # Validate name for strictest target (OpenCode)
-        try:
-            # This will raise if invalid
-            name_lower = name.lower().replace("_", "-")
-            if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name_lower):
-                self._add_diagnostic(
-                    Severity.WARN,
-                    f"Skill name '{name}' may not be portable (non-kebab-case)",
-                    component_ref=f"skill:{name}",
-                    source_path=skill_md,
-                )
-                # Normalize it
-                name = name_lower
-        except Exception:
-            pass
+        name = self._slugify(raw_name, "skill", max_len=64)
+        if name != raw_name:
+            self._add_diagnostic(
+                Severity.WARN,
+                f"Normalized skill name '{raw_name}' → '{name}' for portability",
+                component_ref=f"skill:{raw_name}",
+                source_path=skill_md,
+            )
 
         # Collect all files in the skill directory
         files: list[TextFile | BinaryFile] = []
@@ -218,24 +226,49 @@ class ClaudePluginParser:
                         )
                     )
                 except UnicodeDecodeError:
-                    # Binary file - skip for now or handle separately
-                    self._add_diagnostic(
-                        Severity.INFO,
-                        f"Skipping binary file: {relpath}",
-                        component_ref=f"skill:{name}",
+                    content_b64 = base64.b64encode(file_path.read_bytes()).decode("ascii")
+                    files.append(
+                        BinaryFile(
+                            relpath=relpath,
+                            content_b64=content_b64,
+                            executable=file_path.stat().st_mode & 0o111 != 0,
+                        )
                     )
 
-        return Skill(
-            name=name,
-            description=description,
-            files=files,
-            allowed_tools=self._parse_allowed_tools(meta.get("allowed-tools")),
-            model=meta.get("model"),
-            context=meta.get("context"),
-            agent=meta.get("agent"),
-            user_invocable=meta.get("user-invocable", True),
-            disable_model_invocation=meta.get("disable-model-invocation", False),
-        )
+        try:
+            return Skill(
+                name=name,
+                description=description,
+                files=files,
+                allowed_tools=self._parse_allowed_tools(meta.get("allowed-tools")),
+                model=meta.get("model"),
+                context=meta.get("context"),
+                agent=meta.get("agent"),
+                user_invocable=meta.get("user-invocable", True),
+                disable_model_invocation=meta.get("disable-model-invocation", False),
+            )
+        except Exception as e:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Invalid skill definition: {e}",
+                component_ref=f"skill:{raw_name}",
+                source_path=skill_md,
+            )
+            return None
+
+    def _slugify(self, value: str, fallback_prefix: str, max_len: int | None = None) -> str:
+        """Normalize names to lowercase kebab-case with safe fallback."""
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower())
+        slug = re.sub(r"-+", "-", slug).strip("-")
+
+        if max_len is not None and len(slug) > max_len:
+            slug = slug[:max_len].rstrip("-")
+
+        if not slug:
+            digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
+            slug = f"{fallback_prefix}-{digest}"
+
+        return slug
 
     def _parse_allowed_tools(self, value: Any) -> list[str] | None:
         """Parse allowed-tools field."""

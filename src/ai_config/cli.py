@@ -65,11 +65,17 @@ def main() -> None:
 @click.option("--config", "-c", "config_path", type=click.Path(exists=True, path_type=Path))
 @click.option("--dry-run", is_flag=True, help="Show what would be done without making changes")
 @click.option("--fresh", is_flag=True, help="Clear cache before syncing")
+@click.option(
+    "--force-convert",
+    is_flag=True,
+    help="Force conversion even if sources appear unchanged",
+)
 @click.option("--verify", is_flag=True, help="Verify sync after completion")
 def sync(
     config_path: Path | None,
     dry_run: bool,
     fresh: bool,
+    force_convert: bool,
     verify: bool,
 ) -> None:
     """Sync plugins and marketplaces to match config.
@@ -109,7 +115,7 @@ def sync(
 
     if dry_run:
         console.print("[warning]Dry run mode - no changes will be made[/warning]")
-        results = sync_config(config, dry_run=dry_run, fresh=fresh)
+        results = sync_config(config, dry_run=dry_run, fresh=fresh, force_convert=force_convert)
     else:
         # Use spinner for actual sync operations
         with Progress(
@@ -119,7 +125,7 @@ def sync(
             transient=True,
         ) as progress:
             progress.add_task("Syncing plugins...", total=None)
-            results = sync_config(config, dry_run=dry_run, fresh=fresh)
+            results = sync_config(config, dry_run=dry_run, fresh=fresh, force_convert=force_convert)
 
     for target_type, result in results.items():
         console.print(f"\n[subheader]Target: {target_type}[/subheader]")
@@ -468,6 +474,47 @@ def init(output: Path | None, non_interactive: bool) -> None:
     console.print("  ai-config sync      # Install plugins")
     console.print("  ai-config doctor    # Verify setup")
 
+    if result.run_sync:
+        console.print("\n[subheader]Running sync now...[/subheader]")
+        try:
+            config = load_config(path)
+        except ConfigError as e:
+            error_console.print(f"[error]Error loading config:[/error] {e}")
+            sys.exit(1)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Syncing plugins...", total=None)
+            results = sync_config(config, dry_run=False, fresh=False)
+
+        for target_type, result in results.items():
+            console.print(f"\n[subheader]Target: {target_type}[/subheader]")
+
+            if result.actions_taken:
+                table = Table(show_header=True, header_style="bold", box=None)
+                table.add_column("Action", style="key")
+                table.add_column("Target")
+                table.add_column("Scope", style="info")
+
+                for action in result.actions_taken:
+                    table.add_row(
+                        action.action,
+                        action.target,
+                        action.scope or "-",
+                    )
+                console.print(table)
+            else:
+                console.print(f"  [success]{SYMBOLS['pass']}[/success] No changes needed")
+
+            if result.errors:
+                console.print("[error]Errors:[/error]")
+                for error in result.errors:
+                    console.print(f"  {SYMBOLS['fail']} {error}")
+
 
 @main.command()
 @click.option("--config", "-c", "config_path", type=click.Path(exists=True, path_type=Path))
@@ -728,7 +775,13 @@ def _doctor_target_mode(
     "-o",
     "output_dir",
     type=click.Path(path_type=Path),
-    help="Output directory (default: current directory)",
+    help="Output directory (default: based on --scope)",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["user", "project"]),
+    default="project",
+    help="Conversion scope for output path resolution",
 )
 @click.option(
     "--dry-run",
@@ -748,6 +801,19 @@ def _doctor_target_mode(
     help="Output format for conversion report",
 )
 @click.option(
+    "--report",
+    "report_path",
+    type=click.Path(path_type=Path),
+    help="Write conversion report to file",
+)
+@click.option(
+    "--report-format",
+    "report_file_format",
+    type=click.Choice(["json", "markdown"]),
+    default="json",
+    help="Format for report file output",
+)
+@click.option(
     "--commands-as-skills",
     is_flag=True,
     help="[Codex] Convert commands to skills (default: prompts for 1:1 behavior)",
@@ -756,9 +822,12 @@ def convert(
     plugin_path: Path,
     targets: tuple[str, ...],
     output_dir: Path | None,
+    scope: str,
     dry_run: bool,
     best_effort: bool,
     report_format: str,
+    report_path: Path | None,
+    report_file_format: str,
     commands_as_skills: bool,
 ) -> None:
     """Convert a Claude Code plugin to other AI coding tools.
@@ -786,9 +855,10 @@ def convert(
     Example usage:
       ai-config convert ./my-plugin --target codex
       ai-config convert ./my-plugin -t cursor -t opencode -o ./converted
+      ai-config convert ./my-plugin -t codex --scope user
       ai-config convert ./my-plugin --dry-run  # Preview without writing
     """
-    from ai_config.converters import TargetTool, convert_plugin, preview_conversion
+    from ai_config.converters import InstallScope, TargetTool, convert_plugin, preview_conversion
 
     # Resolve targets
     if "all" in targets:
@@ -796,9 +866,10 @@ def convert(
     else:
         target_list = [TargetTool(t) for t in targets]
 
-    # Use current directory if no output specified
+    # Use scope-based output resolution if no output specified
     if output_dir is None:
-        output_dir = Path.cwd()
+        output_dir = Path.home() if scope == "user" else Path.cwd()
+    install_scope = InstallScope(scope)
 
     if dry_run:
         # Just preview
@@ -829,6 +900,7 @@ def convert(
             plugin_path=plugin_path,
             targets=target_list,
             output_dir=output_dir,
+            scope=install_scope,
             dry_run=False,
             best_effort=best_effort,
             commands_as_skills=commands_as_skills,
@@ -877,12 +949,38 @@ def convert(
         if report.has_errors():
             any_errors = True
 
+    # Write report files if requested
+    if report_path:
+        multi_target = len(reports) > 1
+        for target, report in reports.items():
+            report_file = (
+                _resolve_report_path(report_path, target.value, report_file_format)
+                if multi_target
+                else report_path
+            )
+            report_file.parent.mkdir(parents=True, exist_ok=True)
+            report.write_to_file(report_file, format=report_file_format)
+
     console.print()
     if any_errors and not best_effort:
         console.print("[error]Conversion completed with errors[/error]")
         sys.exit(1)
     else:
         console.print(f"[success]{SYMBOLS['pass']} Conversion complete![/success]")
+
+
+def _resolve_report_path(base: Path, target: str, report_format: str) -> Path:
+    """Resolve report output path for multi-target conversions."""
+    suffix = ".md" if report_format == "markdown" else ".json"
+    if base.is_dir():
+        return base / f"conversion-{target}{suffix}"
+    if target:
+        stem = base.stem
+        ext = base.suffix if base.suffix else suffix
+        if len(stem) == 0:
+            return Path(f"conversion-{target}{suffix}")
+        return base.with_name(f"{stem}-{target}{ext}")
+    return base
 
 
 @main.command()

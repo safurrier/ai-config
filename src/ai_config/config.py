@@ -8,6 +8,7 @@ import yaml
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
+    ConversionConfig,
     MarketplaceConfig,
     PluginConfig,
     PluginSource,
@@ -162,7 +163,72 @@ def _parse_claude_config(data: dict[str, Any], base_dir: Path | None = None) -> 
         for i, plugin_data in enumerate(raw_plugins):
             plugins.append(_parse_plugin(plugin_data, i))
 
-    return ClaudeTargetConfig(marketplaces=marketplaces, plugins=tuple(plugins))
+    conversion = _parse_conversion(data.get("conversion"), base_dir)
+
+    return ClaudeTargetConfig(
+        marketplaces=marketplaces,
+        plugins=tuple(plugins),
+        conversion=conversion,
+    )
+
+
+def _parse_conversion(
+    data: dict[str, Any] | None, base_dir: Path | None
+) -> ConversionConfig | None:
+    """Parse conversion settings from raw dict."""
+    if not data:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigValidationError(f"Conversion settings must be a dict, got: {type(data)}")
+
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigValidationError(f"Conversion 'enabled' must be boolean, got: {type(enabled)}")
+    if not enabled:
+        return None
+
+    raw_targets = data.get("targets", [])
+    if not raw_targets or not isinstance(raw_targets, list):
+        raise ConfigValidationError("Conversion 'targets' must be a non-empty list")
+
+    targets: list[str] = []
+    for target in raw_targets:
+        if not isinstance(target, str):
+            raise ConfigValidationError(f"Conversion target must be a string, got: {type(target)}")
+        targets.append(target)
+
+    scope = data.get("scope", "project")
+    if scope not in ("user", "project"):
+        raise ConfigValidationError(f"Conversion scope must be 'user' or 'project', got: {scope}")
+
+    output_dir = data.get("output_dir") or data.get("output-dir")
+    if output_dir is not None:
+        if not isinstance(output_dir, str):
+            raise ConfigValidationError(
+                f"Conversion output_dir must be a string, got: {type(output_dir)}"
+            )
+        path = Path(output_dir)
+        if not path.is_absolute() and base_dir is not None:
+            path = (base_dir / path).resolve()
+        else:
+            path = path.resolve()
+        output_dir = str(path)
+
+    commands_as_skills = data.get("commands_as_skills") or data.get("commands-as-skills")
+    if commands_as_skills is None:
+        commands_as_skills = False
+    if not isinstance(commands_as_skills, bool):
+        raise ConfigValidationError(
+            f"Conversion commands_as_skills must be boolean, got: {type(commands_as_skills)}"
+        )
+
+    return ConversionConfig(
+        enabled=True,
+        targets=tuple(targets),  # type: ignore[arg-type]
+        scope=scope,
+        output_dir=output_dir,
+        commands_as_skills=commands_as_skills,
+    )
 
 
 def _parse_target(data: dict[str, Any], index: int, base_dir: Path | None = None) -> TargetConfig:

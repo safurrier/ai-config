@@ -14,7 +14,13 @@ from ai_config.converters.emitters import (
     get_emitter,
 )
 from ai_config.converters.ir import (
+    BinaryFile,
     InstallScope,
+    LspServer,
+    McpServer,
+    McpTransport,
+    PluginIdentity,
+    PluginIR,
     MappingStatus,
     TargetTool,
 )
@@ -117,6 +123,43 @@ class TestClaudeParser:
         assert ir.has_errors()
         assert any("manifest" in d.message.lower() for d in ir.diagnostics)
 
+    def test_parse_binary_skill_files(self, tmp_path: Path) -> None:
+        """Binary files in skills should be captured as BinaryFile entries."""
+        plugin_dir = tmp_path / "plugin"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            '{"name": "binary-plugin", "skills": "./skills"}'
+        )
+        skill_dir = plugin_dir / "skills" / "bin-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: bin-skill\ndescription: test\n---\n\nBody")
+
+        binary_path = skill_dir / "asset.bin"
+        binary_bytes = b"\xff\xfe\x00\x80binary"
+        binary_path.write_bytes(binary_bytes)
+
+        ir = parse_claude_plugin(plugin_dir)
+        skill = ir.skills()[0]
+
+        binary_files = [f for f in skill.files if isinstance(f, BinaryFile)]
+        assert binary_files
+        assert binary_files[0].relpath == "asset.bin"
+
+    def test_parse_non_kebab_names_normalizes(self, tmp_path: Path) -> None:
+        """Non-kebab plugin and skill names should normalize without crashing."""
+        plugin_dir = tmp_path / "plugin"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            '{"name": "My Plugin!", "skills": "./skills"}'
+        )
+        skill_dir = plugin_dir / "skills" / "My Skill!"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: My Skill!\ndescription: test\n---\n\nBody")
+
+        ir = parse_claude_plugin(plugin_dir)
+        assert ir.identity.plugin_id == "my-plugin"
+        assert ir.skills()[0].name == "my-skill"
+
 
 class TestCodexEmitter:
     """Tests for Codex emitter."""
@@ -180,6 +223,47 @@ class TestCodexEmitter:
         content = prompt_file.read_text()
         assert "---" in content  # Should have frontmatter
         assert "Create a git commit" in content  # Should have command content
+
+    def test_emit_commands_as_prompts_user_scope_path(self, ir, tmp_path: Path) -> None:
+        """User scope should still emit prompts under .codex/prompts/."""
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        prompt_file = tmp_path / ".codex" / "prompts" / "dev-tools-commit.md"
+        assert prompt_file.exists(), "User-scope prompts should use .codex/prompts/"
+
+    def test_project_scope_prompt_warning_instructions(self, ir) -> None:
+        """Project-scope prompts should warn with instructions."""
+        emitter = CodexEmitter(scope=InstallScope.PROJECT)
+        result = emitter.emit(ir)
+
+        warnings = [d.message for d in result.diagnostics if d.severity.value == "warn"]
+        assert any("prompts" in msg.lower() and "commands-as-skills" in msg.lower() for msg in warnings)
+
+    def test_emit_binary_skill_files(self, tmp_path: Path) -> None:
+        """Binary files in skills should be emitted to output."""
+        plugin_dir = tmp_path / "plugin"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            '{"name": "binary-plugin", "skills": "./skills"}'
+        )
+        skill_dir = plugin_dir / "skills" / "bin-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: bin-skill\ndescription: test\n---\n\nBody")
+
+        binary_path = skill_dir / "asset.bin"
+        binary_bytes = b"\xff\xfe\x00\x80binary"
+        binary_path.write_bytes(binary_bytes)
+
+        ir = parse_claude_plugin(plugin_dir)
+        emitter = CodexEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        emitted = tmp_path / ".codex" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
+        assert emitted.exists()
+        assert emitted.read_bytes() == binary_bytes
 
     def test_emit_commands_as_skills_opt_in(self, ir, tmp_path: Path) -> None:
         """Test that commands emit as skills with --commands-as-skills flag."""
@@ -297,6 +381,26 @@ class TestCursorEmitter:
         assert "mcpServers" in mcp_config
         assert "dev-tools-database" in mcp_config["mcpServers"]
 
+    def test_env_var_syntax_transform(self, tmp_path: Path) -> None:
+        """Cursor MCP env vars should use ${env:VAR} syntax."""
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="test", name="test"),
+            components=[
+                McpServer(
+                    name="server",
+                    transport=McpTransport.STDIO,
+                    command="cmd",
+                    env={"API_KEY": "${API_KEY}"},
+                )
+            ],
+        )
+        emitter = CursorEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (tmp_path / ".cursor" / "mcp.json").read_text()
+        assert "${env:API_KEY}" in content
+
 
 class TestOpenCodeEmitter:
     """Tests for OpenCode emitter."""
@@ -358,6 +462,43 @@ class TestOpenCodeEmitter:
         # Check extensions converted correctly
         lsp_server = lsp_config["lsp"]["dev-tools-custom-python"]
         assert ".py" in lsp_server.get("extensions", [])
+
+    def test_emit_multiple_lsp_servers(self, tmp_path: Path) -> None:
+        """Multiple LSP servers should be aggregated into one file."""
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="multi", name="multi"),
+            components=[
+                LspServer(name="a", command="a"),
+                LspServer(name="b", command="b"),
+            ],
+        )
+        emitter = OpenCodeEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        lsp_config = json.loads((tmp_path / "opencode.lsp.json").read_text())
+        assert "multi-a" in lsp_config["lsp"]
+        assert "multi-b" in lsp_config["lsp"]
+
+    def test_env_var_syntax_transform(self, tmp_path: Path) -> None:
+        """OpenCode MCP env vars should use {env:VAR} syntax."""
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="test", name="test"),
+            components=[
+                McpServer(
+                    name="server",
+                    transport=McpTransport.STDIO,
+                    command="cmd",
+                    env={"API_KEY": "${API_KEY}"},
+                )
+            ],
+        )
+        emitter = OpenCodeEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (tmp_path / "opencode.json").read_text()
+        assert "{env:API_KEY}" in content
 
 
 class TestEmitterFactory:
@@ -443,11 +584,7 @@ class TestEdgeCases:
             PluginIdentity(plugin_id="My_Plugin", name="My Plugin")
 
     def test_mcp_env_var_syntax_differences(self, tmp_path: Path) -> None:
-        """Test that env var syntax is preserved (tools handle differently)."""
-        # Claude uses ${VAR}, Codex uses ${VAR}, Cursor uses ${env:VAR}, OpenCode uses {env:VAR}
-        # This is a known sharp edge - we preserve original syntax
-        from ai_config.converters.ir import McpServer, McpTransport, PluginIdentity, PluginIR
-
+        """Env var syntax should be transformed per target."""
         ir = PluginIR(
             identity=PluginIdentity(plugin_id="test", name="test"),
             components=[
@@ -460,23 +597,23 @@ class TestEdgeCases:
             ],
         )
 
-        # Emit to each target and check syntax is preserved
-        # (In production, we'd want to transform the syntax)
-        for emitter_class in [CodexEmitter, CursorEmitter, OpenCodeEmitter]:
-            emitter = emitter_class()
-            result = emitter.emit(ir)
+        # Codex keeps ${VAR}
+        codex = CodexEmitter()
+        codex_result = codex.emit(ir)
+        codex_file = next(f for f in codex_result.files if "mcp" in str(f.path).lower())
+        assert "${API_KEY}" in codex_file.content
 
-            # Find MCP-related file (varies by emitter: mcp-config.toml, mcp.json, opencode.json)
-            mcp_files = [
-                f
-                for f in result.files
-                if "mcp" in str(f.path).lower() or f.path.name == "opencode.json"
-            ]
-            assert len(mcp_files) >= 1, f"No MCP file found for {emitter_class.__name__}"
+        # Cursor transforms to ${env:VAR}
+        cursor = CursorEmitter()
+        cursor_result = cursor.emit(ir)
+        cursor_file = next(f for f in cursor_result.files if "mcp" in str(f.path).lower())
+        assert "${env:API_KEY}" in cursor_file.content
 
-            # Env var should be in the output (syntax transformation is a TODO)
-            content = mcp_files[0].content
-            assert "API_KEY" in content
+        # OpenCode transforms to {env:VAR}
+        opencode = OpenCodeEmitter()
+        opencode_result = opencode.emit(ir)
+        opencode_file = next(f for f in opencode_result.files if f.path.name == "opencode.json")
+        assert "{env:API_KEY}" in opencode_file.content
 
     def test_hook_event_mapping_coverage(self) -> None:
         """Test which Claude events map to Cursor."""

@@ -7,6 +7,7 @@ the right shape satisfies the Emitter interface.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from typing import Any
 import yaml
 
 from ai_config.converters.ir import (
+    BinaryFile,
     Command,
     Diagnostic,
     Hook,
@@ -31,13 +33,18 @@ from ai_config.converters.ir import (
     TextFile,
 )
 
+_ENV_VAR_PATTERN = re.compile(
+    r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
+)
+
 
 @dataclass
 class EmittedFile:
     """A file to be written by the emitter."""
 
     path: Path  # Relative path from output root
-    content: str
+    content: str | bytes
+    binary: bool = False
     executable: bool = False
 
 
@@ -50,6 +57,7 @@ class ComponentMapping:
     status: MappingStatus
     target_path: Path | None = None
     notes: str | None = None
+    lost_features: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -65,6 +73,12 @@ class EmitResult:
         """Add a file to emit."""
         self.files.append(EmittedFile(path=Path(path), content=content, executable=executable))
 
+    def add_binary_file(self, path: Path | str, content: bytes, executable: bool = False) -> None:
+        """Add a binary file to emit."""
+        self.files.append(
+            EmittedFile(path=Path(path), content=content, binary=True, executable=executable)
+        )
+
     def add_mapping(
         self,
         kind: str,
@@ -72,6 +86,7 @@ class EmitResult:
         status: MappingStatus,
         target_path: Path | None = None,
         notes: str | None = None,
+        lost_features: list[str] | None = None,
     ) -> None:
         """Record a component mapping."""
         self.mappings.append(
@@ -81,6 +96,7 @@ class EmitResult:
                 status=status,
                 target_path=target_path,
                 notes=notes,
+                lost_features=lost_features or [],
             )
         )
 
@@ -113,7 +129,10 @@ class EmitResult:
             full_path = output_dir / f.path
             if not dry_run:
                 full_path.parent.mkdir(parents=True, exist_ok=True)
-                full_path.write_text(f.content)
+                if f.binary:
+                    full_path.write_bytes(f.content)  # type: ignore[arg-type]
+                else:
+                    full_path.write_text(f.content)  # type: ignore[arg-type]
                 if f.executable:
                     full_path.chmod(full_path.stat().st_mode | 0o111)
             written.append(full_path)
@@ -132,7 +151,10 @@ class EmitResult:
 
         total_bytes = 0
         for f in self.files:
-            size = len(f.content.encode("utf-8"))
+            if f.binary:
+                size = len(f.content)
+            else:
+                size = len(f.content.encode("utf-8"))  # type: ignore[arg-type]
             total_bytes += size
 
             if output_dir:
@@ -145,7 +167,8 @@ class EmitResult:
                 action = "[UPDATE]"
 
             exec_flag = " (exec)" if f.executable else ""
-            lines.append(f"  {action} {display_path}{exec_flag}")
+            bin_flag = " (bin)" if f.binary else ""
+            lines.append(f"  {action} {display_path}{exec_flag}{bin_flag}")
             lines.append(f"         {size:,} bytes")
 
         lines.append("")
@@ -243,6 +266,25 @@ def skill_to_markdown(skill: Skill, strip_claude_fields: bool = True) -> str:
     return f"---\n{frontmatter}---\n\n{body}"
 
 
+def _decode_b64_file(file: BinaryFile) -> bytes:
+    """Decode base64 content for BinaryFile."""
+    return base64.b64decode(file.content_b64)
+
+
+def _transform_env_value(value: str, target: TargetTool) -> str:
+    """Transform env var syntax to target format."""
+
+    def replacer(match: re.Match[str]) -> str:
+        var_name = match.group(1) or match.group(2) or match.group(3)
+        if target == TargetTool.CURSOR:
+            return f"${{env:{var_name}}}"
+        if target == TargetTool.OPENCODE:
+            return f"{{env:{var_name}}}"
+        return f"${{{var_name}}}"
+
+    return _ENV_VAR_PATTERN.sub(replacer, value)
+
+
 class CodexEmitter:
     """Emit plugins in Codex format.
 
@@ -322,8 +364,15 @@ class CodexEmitter:
 
         # Copy other skill files
         for f in skill.files:
-            if f.relpath != "SKILL.md" and isinstance(f, TextFile):
-                result.add_file(skill_dir / f.relpath, f.content, f.executable)
+            if f.relpath != "SKILL.md":
+                if isinstance(f, TextFile):
+                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
+                elif isinstance(f, BinaryFile):
+                    result.add_binary_file(
+                        skill_dir / f.relpath,
+                        _decode_b64_file(f),
+                        f.executable,
+                    )
 
         result.add_mapping(
             "skill",
@@ -349,13 +398,10 @@ class CodexEmitter:
         Prompts provide explicit invocation via /prompts:<name>, matching Claude's
         /command behavior. This is deprecated in Codex but preserves user expectations.
         """
-        # Codex custom prompts go to ~/.codex/prompts/<name>.md
-        # For project scope, we'll use .codex/prompts/
+        # Codex custom prompts are loaded from ~/.codex/prompts/
+        # We always emit under .codex/prompts relative to output root.
         prompt_name = f"{plugin_id}-{cmd.name}"
-        if self.scope == InstallScope.USER:
-            prompt_path = Path("prompts") / f"{prompt_name}.md"
-        else:
-            prompt_path = Path(".codex") / "prompts" / f"{prompt_name}.md"
+        prompt_path = Path(".codex") / "prompts" / f"{prompt_name}.md"
 
         # Build frontmatter
         meta: dict[str, Any] = {}
@@ -378,7 +424,16 @@ class CodexEmitter:
             MappingStatus.FALLBACK,
             target_path=prompt_path,
             notes=f"Invoke with /prompts:{prompt_name} (prompts are deprecated in Codex)",
+            lost_features=["Deprecated prompts (may be removed in Codex)"],
         )
+
+        if self.scope == InstallScope.PROJECT:
+            result.add_diagnostic(
+                Severity.WARN,
+                "Codex only loads prompts from ~/.codex/prompts/. "
+                "For project scope, use --commands-as-skills or run with scope=user.",
+                component_ref=f"command:{cmd.name}",
+            )
 
         result.add_diagnostic(
             Severity.INFO,
@@ -456,9 +511,10 @@ class CodexEmitter:
             if server.cwd:
                 lines.append(f'cwd = "{server.cwd}"')
             if server.env:
-                lines.append(
-                    "env = {" + ", ".join(f'"{k}" = "{v}"' for k, v in server.env.items()) + "}"
-                )
+                env_items = []
+                for k, v in server.env.items():
+                    env_items.append(f'"{k}" = "{_transform_env_value(v, TargetTool.CODEX)}"')
+                lines.append("env = {" + ", ".join(env_items) + "}")
             lines.append("")
 
             result.add_mapping(
@@ -541,8 +597,15 @@ class CursorEmitter:
         result.add_file(skill_path, content)
 
         for f in skill.files:
-            if f.relpath != "SKILL.md" and isinstance(f, TextFile):
-                result.add_file(skill_dir / f.relpath, f.content, f.executable)
+            if f.relpath != "SKILL.md":
+                if isinstance(f, TextFile):
+                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
+                elif isinstance(f, BinaryFile):
+                    result.add_binary_file(
+                        skill_dir / f.relpath,
+                        _decode_b64_file(f),
+                        f.executable,
+                    )
 
         result.add_mapping(
             "skill",
@@ -590,6 +653,9 @@ class CursorEmitter:
             status,
             target_path=cmd_path,
             notes="Cursor commands don't support variable substitution"
+            if status == MappingStatus.TRANSFORM
+            else None,
+            lost_features=["Template variable substitution"]
             if status == MappingStatus.TRANSFORM
             else None,
         )
@@ -665,7 +731,9 @@ class CursorEmitter:
                     config["url"] = server.url
 
             if server.env:
-                config["env"] = server.env
+                config["env"] = {
+                    k: _transform_env_value(v, TargetTool.CURSOR) for k, v in server.env.items()
+                }
 
             mcp_servers[name] = config
 
@@ -724,8 +792,9 @@ class OpenCodeEmitter:
             self._emit_mcp_config(result, mcp_servers, plugin_id)
 
         # Emit LSP servers (OpenCode supports them!)
-        for lsp in ir.lsp_servers():
-            self._emit_lsp_config(result, lsp, plugin_id)
+        lsp_servers = ir.lsp_servers()
+        if lsp_servers:
+            self._emit_lsp_config(result, lsp_servers, plugin_id)
 
         # Agents not supported
         for agent in ir.agents():
@@ -747,8 +816,15 @@ class OpenCodeEmitter:
         result.add_file(skill_path, content)
 
         for f in skill.files:
-            if f.relpath != "SKILL.md" and isinstance(f, TextFile):
-                result.add_file(skill_dir / f.relpath, f.content, f.executable)
+            if f.relpath != "SKILL.md":
+                if isinstance(f, TextFile):
+                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
+                elif isinstance(f, BinaryFile):
+                    result.add_binary_file(
+                        skill_dir / f.relpath,
+                        _decode_b64_file(f),
+                        f.executable,
+                    )
 
         result.add_mapping(
             "skill",
@@ -829,7 +905,9 @@ class OpenCodeEmitter:
                     config["url"] = server.url
 
             if server.env:
-                config["environment"] = server.env
+                config["environment"] = {
+                    k: _transform_env_value(v, TargetTool.OPENCODE) for k, v in server.env.items()
+                }
             if server.timeout_ms:
                 config["timeout"] = server.timeout_ms
 
@@ -853,32 +931,38 @@ class OpenCodeEmitter:
             component_ref="mcp:*",
         )
 
-    def _emit_lsp_config(self, result: EmitResult, lsp: LspServer, plugin_id: str) -> None:
+    def _emit_lsp_config(
+        self, result: EmitResult, lsp_servers: list[LspServer], plugin_id: str
+    ) -> None:
         """Emit LSP configuration for OpenCode."""
-        name = f"{plugin_id}-{lsp.name}"
+        lsp_entries: dict[str, dict[str, Any]] = {}
 
-        config: dict[str, Any] = {}
-        if lsp.command:
-            cmd_parts = [lsp.command] + lsp.args
-            config["command"] = cmd_parts
-        if lsp.extensions:
-            config["extensions"] = lsp.extensions
-        if lsp.env:
-            config["env"] = lsp.env
-        if lsp.initialization_options:
-            config["initialization"] = lsp.initialization_options
+        for lsp in lsp_servers:
+            name = f"{plugin_id}-{lsp.name}"
 
-        lsp_config = {"lsp": {name: config}}
+            config: dict[str, Any] = {}
+            if lsp.command:
+                cmd_parts = [lsp.command] + lsp.args
+                config["command"] = cmd_parts
+            if lsp.extensions:
+                config["extensions"] = lsp.extensions
+            if lsp.env:
+                config["env"] = lsp.env
+            if lsp.initialization_options:
+                config["initialization"] = lsp.initialization_options
+
+            lsp_entries[name] = config
+
+            result.add_mapping(
+                "lsp",
+                lsp.name,
+                MappingStatus.TRANSFORM,
+                target_path=Path("opencode.lsp.json"),
+                notes="Converted to OpenCode LSP format",
+            )
+
         config_path = Path("opencode.lsp.json")
-        result.add_file(config_path, json.dumps(lsp_config, indent=2))
-
-        result.add_mapping(
-            "lsp",
-            lsp.name,
-            MappingStatus.TRANSFORM,
-            target_path=config_path,
-            notes="Converted to OpenCode LSP format",
-        )
+        result.add_file(config_path, json.dumps({"lsp": lsp_entries}, indent=2))
 
 
 # Factory function

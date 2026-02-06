@@ -665,6 +665,7 @@ class TestInteractiveClaudeSkillDiscovery:
         if not os.getenv("ANTHROPIC_API_KEY"):
             pytest.skip("ANTHROPIC_API_KEY required for interactive Claude tests")
 
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
         session_name = f"claude-skills-test-{int(time.time())}"
 
         try:
@@ -680,16 +681,63 @@ class TestInteractiveClaudeSkillDiscovery:
 
             # Start Claude in tmux (non-interactive print mode won't work for /skills)
             # We need to use the interactive mode
+            import shlex
+
+            claude_cmd = "claude"
+            if api_key:
+                claude_cmd = f"ANTHROPIC_API_KEY={shlex.quote(api_key)} claude"
+
             exec_in_container_tmux(
                 claude_container,
                 session_name,
-                "claude",  # Start interactive Claude
+                claude_cmd,  # Start interactive Claude
             )
 
-            # Wait for Claude to start (shows prompt or welcome message)
-            if not wait_for_tmux_output(claude_container, session_name, ">", timeout=30):
-                # Claude might show different prompts, just wait a bit
-                time.sleep(5)
+            def dismiss_startup_prompts() -> None:
+                output = capture_tmux_pane(claude_container, session_name)
+                lower_output = output.lower()
+                if "choose the text style" in lower_output or "/theme" in lower_output:
+                    exec_in_container(
+                        claude_container,
+                        f"tmux send-keys -t {session_name} Enter",
+                    )
+                    time.sleep(2)
+                    output = capture_tmux_pane(claude_container, session_name)
+                    lower_output = output.lower()
+                if "choose the text style" in lower_output or "/theme" in lower_output:
+                    exec_in_container(
+                        claude_container,
+                        f"tmux send-keys -t {session_name} '1' Enter",
+                    )
+                    time.sleep(2)
+                    output = capture_tmux_pane(claude_container, session_name)
+                    lower_output = output.lower()
+                if "select login method" in lower_output:
+                    exec_in_container(
+                        claude_container,
+                        f"tmux send-keys -t {session_name} Down",
+                    )
+                    exec_in_container(
+                        claude_container,
+                        f"tmux send-keys -t {session_name} Enter",
+                    )
+                    time.sleep(2)
+                    output = capture_tmux_pane(claude_container, session_name)
+                    lower_output = output.lower()
+                if "api key" in lower_output and api_key:
+                    exec_in_container(
+                        claude_container,
+                        f"tmux send-keys -t {session_name} {shlex.quote(api_key)} Enter",
+                    )
+                    time.sleep(2)
+
+            # Wait for Claude to start and dismiss first-run theme prompt if needed
+            time.sleep(3)
+            for _ in range(3):
+                dismiss_startup_prompts()
+                if wait_for_tmux_output(claude_container, session_name, ">", timeout=15):
+                    break
+                time.sleep(2)
 
             # Send /skills command
             exec_in_container(
@@ -700,6 +748,15 @@ class TestInteractiveClaudeSkillDiscovery:
             # Wait for skills output
             time.sleep(3)
             output = capture_tmux_pane(claude_container, session_name)
+            if "choose the text style" in output.lower() or "/theme" in output.lower() or "select login method" in output.lower():
+                dismiss_startup_prompts()
+                wait_for_tmux_output(claude_container, session_name, ">", timeout=15)
+                exec_in_container(
+                    claude_container,
+                    f"tmux send-keys -t {session_name} '/skills' Enter",
+                )
+                time.sleep(3)
+                output = capture_tmux_pane(claude_container, session_name)
 
             # Verify we got some skills-related output
             # Note: Exact output depends on installed skills

@@ -111,6 +111,10 @@ python tests/docker/test_in_docker.py --shell
 python tests/docker/test_in_docker.py --rebuild
 ```
 
+**Tmux requirement (tool validation):**
+- `tests/e2e/test_tool_validation.py` uses tmux to exercise interactive CLIs and will **fail loudly** if tmux is missing.
+- Install tmux on your host (`brew install tmux` or `apt-get install tmux`) or run via the Docker test runner (tmux is preinstalled in the images).
+
 **Pytest markers:**
 - `@pytest.mark.e2e` - All E2E tests
 - `@pytest.mark.docker` - Tests requiring Docker

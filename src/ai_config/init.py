@@ -8,7 +8,7 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import questionary
 import requests
@@ -148,6 +148,7 @@ class InitConfig:
     marketplaces: list[MarketplaceChoice] = field(default_factory=list)
     plugins: list[PluginChoice] = field(default_factory=list)
     conversion: ConversionChoice | None = None
+    run_sync: bool = False
 
 
 def check_claude_cli() -> tuple[bool, str]:
@@ -489,7 +490,7 @@ def generate_config_yaml(init_config: InitConfig) -> str:
         )
 
     # Build config structure
-    config = {
+    config: dict[str, object] = {
         "version": 1,
         "targets": [
             {
@@ -501,6 +502,20 @@ def generate_config_yaml(init_config: InitConfig) -> str:
             }
         ],
     }
+
+    # Add conversion settings if enabled
+    if init_config.conversion and init_config.conversion.enabled:
+        conversion_cfg: dict[str, object] = {
+            "enabled": True,
+            "targets": init_config.conversion.targets,
+            "scope": init_config.conversion.scope,
+        }
+        if init_config.conversion.custom_output_dir:
+            conversion_cfg["output_dir"] = str(init_config.conversion.custom_output_dir)
+        targets = cast(list[dict[str, Any]], config["targets"])
+        target_entry = targets[0]
+        target_config = cast(dict[str, Any], target_entry["config"])
+        target_config["conversion"] = conversion_cfg
 
     # Generate YAML with nice formatting
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -893,6 +908,13 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
     write_ok = prompt_confirm(f"Write config to {config_path}?", default=True)
     if not write_ok:
         return None
+
+    # Offer to run sync now if conversion enabled
+    if init_config.conversion and init_config.conversion.enabled:
+        run_sync = prompt_confirm("Run ai-config sync now?", default=True)
+        if run_sync is None:
+            return None
+        init_config.run_sync = run_sync
 
     return init_config
 
