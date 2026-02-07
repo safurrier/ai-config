@@ -19,8 +19,12 @@ if TYPE_CHECKING:
     from docker.models.containers import Container
 
 
+# Absolute path inside the container — config lives in ~/.ai-config/ so relative
+# paths would resolve against /home/testuser instead of the repo checkout.
+REPO_DIR = "/home/testuser/ai-config"
+
 # Test config that uses a local marketplace with a test plugin
-TEST_CONFIG = """
+TEST_CONFIG = f"""
 version: 1
 targets:
   - type: claude
@@ -28,7 +32,7 @@ targets:
       marketplaces:
         test-marketplace:
           source: local
-          path: tests/fixtures/test-marketplace
+          path: {REPO_DIR}/tests/fixtures/test-marketplace
       plugins:
         - id: test-plugin@test-marketplace
           scope: user

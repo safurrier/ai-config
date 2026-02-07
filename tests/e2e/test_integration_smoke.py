@@ -64,7 +64,10 @@ class TestIntegrationSmoke:
 
     def test_sync_and_verify(self, claude_container: Container) -> None:
         """Write config, sync, verify marketplace + plugin in Claude."""
-        config = textwrap.dedent("""\
+        # Use absolute path — config lives in ~/.ai-config/ so relative paths
+        # would resolve against /home/testuser instead of the repo checkout.
+        repo = "/home/testuser/ai-config"
+        config = textwrap.dedent(f"""\
             version: 1
             targets:
               - type: claude
@@ -72,7 +75,7 @@ class TestIntegrationSmoke:
                   marketplaces:
                     test-marketplace:
                       source: local
-                      path: tests/fixtures/test-marketplace
+                      path: {repo}/tests/fixtures/test-marketplace
                   plugins:
                     - id: test-plugin@test-marketplace
                       scope: user
