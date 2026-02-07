@@ -10,10 +10,7 @@
       "name": "test-plugin",
       "description": "A test plugin for E2E validation",
       "version": "0.1.0",
-      "source": {
-        "type": "local",
-        "path": "test-plugin"
-      }
+      "source": "./test-plugin"
     }
   ]
 }
