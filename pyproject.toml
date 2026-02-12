@@ -29,10 +29,12 @@ classifiers = [
 
 dependencies = [
     "click>=8.0",
+    "pydantic>=2.0",
     "pyyaml>=6.0",
     "questionary>=2.0",
     "requests>=2.28",
     "rich>=13.0",
+    "tomli>=1.0.0 ; python_full_version < '3.11'",
     "watchdog>=3.0",
 ]
 
@@ -117,4 +119,6 @@ markers = [
     "e2e: marks tests as end-to-end tests",
     "docker: marks tests that require Docker",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "requires_api_key: marks tests that require API keys for AI tools",
+    "requires_tmux: marks tests that require tmux to be installed",
 ]

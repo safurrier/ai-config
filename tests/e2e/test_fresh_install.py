@@ -19,8 +19,12 @@ if TYPE_CHECKING:
     from docker.models.containers import Container
 
 
+# Absolute path inside the container — config lives in ~/.ai-config/ so relative
+# paths would resolve against /home/testuser instead of the repo checkout.
+REPO_DIR = "/home/testuser/ai-config"
+
 # Test config that uses a local marketplace with a test plugin
-TEST_CONFIG = """
+TEST_CONFIG = f"""
 version: 1
 targets:
   - type: claude
@@ -28,7 +32,7 @@ targets:
       marketplaces:
         test-marketplace:
           source: local
-          path: tests/fixtures/test-marketplace
+          path: {REPO_DIR}/tests/fixtures/test-marketplace
       plugins:
         - id: test-plugin@test-marketplace
           scope: user
@@ -60,7 +64,7 @@ class TestFreshInstall:
         assert exit_code == 0, f"Claude CLI not available: {output}"
 
     def test_sync_adds_marketplace(self, all_tools_container: Container) -> None:
-        """Verify sync adds the local marketplace."""
+        """Verify sync adds the local marketplace and installs the plugin."""
         # Write config
         exit_code, output = exec_in_container(
             all_tools_container,
@@ -73,15 +77,34 @@ class TestFreshInstall:
             all_tools_container,
             "uv run ai-config sync",
         )
-        # Sync may fail if claude plugin commands fail, but check the status
-        print(f"Sync output: {output}")  # noqa: T201
+        assert exit_code == 0, f"ai-config sync failed (exit {exit_code}): {output}"
+        assert "Failed" not in output, f"Sync reported failure: {output}"
+        assert "Error" not in output, f"Sync reported error: {output}"
 
-        # Check status
+        # Verify marketplace is registered
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "claude plugin marketplace list --json",
+        )
+        assert exit_code == 0, f"claude plugin marketplace list failed: {output}"
+        assert "test-marketplace" in output, (
+            f"test-marketplace not in marketplace list: {output}"
+        )
+
+        # Verify plugin is installed
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "claude plugin list --json",
+        )
+        assert exit_code == 0, f"claude plugin list failed: {output}"
+        assert "test-plugin" in output, f"test-plugin not in plugin list: {output}"
+
+        # Check status for good measure
         exit_code, output = exec_in_container(
             all_tools_container,
             "uv run ai-config status",
         )
-        print(f"Status output: {output}")  # noqa: T201
+        assert exit_code == 0, f"ai-config status failed: {output}"
 
     def test_sync_dry_run_shows_actions(self, all_tools_container: Container) -> None:
         """Verify dry-run shows what would be done."""

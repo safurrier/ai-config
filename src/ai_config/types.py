@@ -61,11 +61,35 @@ class PluginConfig:
 
 
 @dataclass(frozen=True)
+class ConversionConfig:
+    """Configuration for plugin conversion targets."""
+
+    enabled: bool = True
+    targets: tuple[Literal["codex", "cursor", "opencode"], ...] = field(default_factory=tuple)
+    scope: Literal["user", "project"] = "project"
+    output_dir: str | None = None
+    commands_as_skills: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return
+        if not self.targets:
+            raise ValueError("Conversion targets cannot be empty")
+        valid_targets = {"codex", "cursor", "opencode"}
+        for target in self.targets:
+            if target not in valid_targets:
+                raise ValueError(f"Invalid conversion target: {target}")
+        if self.scope not in ("user", "project"):
+            raise ValueError(f"Conversion scope must be 'user' or 'project', got: {self.scope}")
+
+
+@dataclass(frozen=True)
 class ClaudeTargetConfig:
     """Configuration specific to Claude Code target."""
 
     marketplaces: dict[str, MarketplaceConfig] = field(default_factory=dict)
     plugins: tuple[PluginConfig, ...] = field(default_factory=tuple)
+    conversion: ConversionConfig | None = None
 
 
 @dataclass(frozen=True)

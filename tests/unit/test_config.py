@@ -99,6 +99,67 @@ class TestLoadConfig:
         assert plugin.scope == "user"
         assert plugin.enabled is True
 
+    def test_config_with_conversion(self, tmp_path: Path) -> None:
+        """Config with conversion section should parse conversion settings."""
+        config_dir = tmp_path / ".ai-config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(
+            dedent("""
+            version: 1
+            targets:
+              - type: claude
+                config:
+                  marketplaces:
+                    my-marketplace:
+                      source: github
+                      repo: owner/repo
+                  plugins:
+                    - id: my-plugin@my-marketplace
+                      scope: user
+                      enabled: true
+                  conversion:
+                    enabled: true
+                    targets: [codex, cursor]
+                    scope: user
+                    output_dir: ./converted
+                    commands_as_skills: true
+            """)
+        )
+
+        config = load_config(config_file)
+        target = config.targets[0]
+        conversion = target.config.conversion
+        assert conversion is not None
+        assert conversion.enabled is True
+        assert conversion.targets == ("codex", "cursor")
+        assert conversion.scope == "user"
+        assert conversion.commands_as_skills is True
+        assert conversion.output_dir == str(tmp_path / "converted")
+
+    def test_config_with_conversion_disabled(self, tmp_path: Path) -> None:
+        """Conversion disabled should result in no conversion config."""
+        config_dir = tmp_path / ".ai-config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(
+            dedent("""
+            version: 1
+            targets:
+              - type: claude
+                config:
+                  plugins:
+                    - id: my-plugin@my-marketplace
+                  conversion:
+                    enabled: false
+                    targets: [codex]
+            """)
+        )
+
+        config = load_config(config_file)
+        target = config.targets[0]
+        assert target.config.conversion is None
+
     def test_invalid_yaml(self, tmp_path: Path) -> None:
         """Invalid YAML should raise ConfigParseError."""
         config_file = tmp_path / "config.yaml"

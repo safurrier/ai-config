@@ -45,3 +45,11 @@ site/
 # Packaging
 *.lock
 !uv.lock
+
+# ai-config local artifacts (conversion output, local config)
+.ai-config/
+.codex/
+.cursor/
+.opencode/
+opencode.json
+opencode.lsp.json

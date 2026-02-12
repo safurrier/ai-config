@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from ai_config.adapters.claude import CommandResult
 from ai_config.cli import main
+from ai_config.converters.ir import PluginIdentity, TargetTool
+from ai_config.converters.report import ConversionReport
 from ai_config.types import PluginStatus, StatusResult, SyncAction, SyncResult
 
 
@@ -39,6 +41,23 @@ def config_file(tmp_path: Path) -> Path:
         """)
     )
     return config
+
+
+@pytest.fixture
+def minimal_plugin(tmp_path: Path) -> Path:
+    """Create a minimal plugin directory for convert command tests."""
+    plugin_dir = tmp_path / "plugin"
+    (plugin_dir / ".claude-plugin").mkdir(parents=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        '{"name": "test-plugin", "version": "1.0.0"}'
+    )
+    return plugin_dir
+
+
+def _stub_report(target: TargetTool) -> ConversionReport:
+    """Create a minimal conversion report for CLI tests."""
+    identity = PluginIdentity(plugin_id="test-plugin", name="test-plugin", version="1.0.0")
+    return ConversionReport(source_plugin=identity, target_tool=target)
 
 
 class TestMainGroup:
@@ -82,6 +101,21 @@ class TestSyncCommand:
             result = runner.invoke(main, ["sync", "-c", str(config_file)])
 
             assert "Something went wrong" in result.output
+
+    def test_sync_force_convert_flag(self, runner: CliRunner, config_file: Path) -> None:
+        """Force-convert flag is passed through to sync_config."""
+        sync_result = SyncResult()
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}) as mock_sync:
+            result = runner.invoke(
+                main,
+                ["sync", "-c", str(config_file), "--force-convert"],
+            )
+
+            assert result.exit_code == 0
+            assert mock_sync.called
+            kwargs = mock_sync.call_args.kwargs
+            assert kwargs["force_convert"] is True
 
     def test_sync_config_error(self, runner: CliRunner, tmp_path: Path) -> None:
         """Handles config loading errors."""
@@ -179,6 +213,57 @@ class TestUpdateCommand:
             mock_update.assert_called_once()
             call_args = mock_update.call_args
             assert call_args[1]["plugin_ids"] == ["plugin1", "plugin2"]
+
+
+class TestConvertCommand:
+    """Tests for convert command."""
+
+    def test_convert_scope_user_sets_output_dir(
+        self, runner: CliRunner, minimal_plugin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Scope user should map output_dir to home when --output not provided."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with patch(
+            "ai_config.converters.convert_plugin",
+            return_value={TargetTool.CODEX: _stub_report(TargetTool.CODEX)},
+        ) as mock_convert:
+            result = runner.invoke(
+                main,
+                ["convert", str(minimal_plugin), "--target", "codex", "--scope", "user"],
+            )
+
+        assert result.exit_code == 0
+        call_args = mock_convert.call_args.kwargs
+        assert call_args["output_dir"] == Path(tmp_path / "home")
+
+    def test_convert_writes_report_file(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        """Convert with --report should write report to disk."""
+        report_path = tmp_path / "report.json"
+
+        with patch(
+            "ai_config.converters.convert_plugin",
+            return_value={TargetTool.CODEX: _stub_report(TargetTool.CODEX)},
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "convert",
+                    str(minimal_plugin),
+                    "--target",
+                    "codex",
+                    "--report",
+                    str(report_path),
+                    "--report-format",
+                    "json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert report_path.exists()
+        assert '"target_tool": "codex"' in report_path.read_text()
 
 
 class TestCacheCommand:

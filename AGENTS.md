@@ -1,12 +1,12 @@
 # ai-config
 
-Declarative plugin manager for Claude Code.
+Declarative plugin manager for Claude Code — with cross-tool plugin conversion.
 
 ## Why This Exists
 
 Claude Code plugins let you extend Claude with custom skills, hooks, and MCP servers. Managing them manually (`claude plugin install`, `claude plugin marketplace add`) doesn't scale across machines or teams.
 
-ai-config provides a YAML config file for declarative plugin management. Define what you want, run `ai-config sync`, done.
+ai-config provides a YAML config file for declarative plugin management. Define what you want, run `ai-config sync`, done. It also converts Claude plugins to other AI coding tools (Codex, Cursor, OpenCode) via `ai-config convert`.
 
 ## Repo Map
 
@@ -14,24 +14,39 @@ ai-config provides a YAML config file for declarative plugin management. Define 
 src/ai_config/
 ├── cli.py           # Click CLI entry point
 ├── config.py        # Config file parsing
-├── operations.py    # sync, update, status logic
+├── operations.py    # sync, update, status, sync-driven conversion
 ├── init.py          # Interactive setup wizard
+├── types.py         # Frozen dataclasses for config schema
 ├── watch.py         # File watcher for dev mode
 ├── adapters/        # Tool-specific adapters (claude.py)
-└── validators/      # Validation (plugins, skills, hooks, MCP)
+├── converters/      # Plugin conversion pipeline (parse → IR → emit)
+│   ├── ir.py            # Tool-agnostic intermediate representation
+│   ├── claude_parser.py # Claude plugin → PluginIR
+│   ├── emitters.py      # PluginIR → target files (Codex, Cursor, OpenCode)
+│   ├── convert.py       # Orchestrator (ties parse + emit + report)
+│   └── report.py        # Conversion reports (JSON, Markdown)
+└── validators/      # Validation framework
+    ├── component/   # skill, hook, mcp validators
+    ├── marketplace/ # marketplace validators
+    ├── plugin/      # plugin validators
+    └── target/      # converted output validators (codex, cursor, opencode)
 tests/
-├── unit/            # Fast unit tests (374 tests)
-├── integration/     # Integration tests (marked)
-├── e2e/             # Docker-based E2E tests
-│   ├── conftest.py      # Docker fixtures
-│   ├── test_fresh_install.py  # Claude-only sync tests
-│   └── test_multi_tool.py     # Multi-tool installation tests
+├── unit/            # Fast unit tests (516 tests)
+├── integration/     # Integration tests (8 tests, marked)
+├── e2e/             # Docker-based E2E tests (76 tests)
+│   ├── conftest.py             # Docker fixtures + exec_in_container()
+│   ├── tmux_helper.py          # TmuxTestSession for interactive CLI testing
+│   ├── test_conversion.py      # Conversion CLI + per-target output
+│   ├── test_fresh_install.py   # Sync + config validation
+│   ├── test_integration_smoke.py # Full workflow smoke test
+│   └── test_tool_validation.py # Interactive CLI introspection via tmux
 ├── docker/          # Docker test infrastructure
 │   ├── Dockerfile.claude-only  # Fast image with Claude Code only
 │   ├── Dockerfile.all-tools    # Full image with 4 AI tools
 │   └── test_in_docker.py       # CLI for local Docker testing
-└── fixtures/        # Test data
-    └── test-marketplace/       # Local marketplace for E2E tests
+└── fixtures/
+    ├── sample-plugins/complete-plugin/  # Full plugin fixture (skills, hooks, MCP, LSP)
+    └── test-marketplace/                # Local marketplace for sync E2E tests
 ```
 
 ## How to Work Here
@@ -59,6 +74,7 @@ All commands use `uv run` (or `just` if installed).
 | Docs serve | `uv run mkdocs serve` |
 | E2E tests (Claude) | `uv run pytest tests/e2e/ -m "e2e and docker" -v` |
 | E2E tests (all tools) | `uv run pytest tests/e2e/ -m "e2e and docker and slow" -v` |
+| Smoke test | `uv run pytest tests/e2e/test_integration_smoke.py -v` |
 | Docker shell | `python tests/docker/test_in_docker.py --shell` |
 | Docker build | `python tests/docker/test_in_docker.py --build-only` |
 
@@ -111,6 +127,10 @@ python tests/docker/test_in_docker.py --shell
 python tests/docker/test_in_docker.py --rebuild
 ```
 
+**Tmux requirement (tool validation):**
+- `tests/e2e/test_tool_validation.py` uses tmux to exercise interactive CLIs and will **fail loudly** if tmux is missing.
+- Install tmux on your host (`brew install tmux` or `apt-get install tmux`) or run via the Docker test runner (tmux is preinstalled in the images).
+
 **Pytest markers:**
 - `@pytest.mark.e2e` - All E2E tests
 - `@pytest.mark.docker` - Tests requiring Docker
@@ -156,13 +176,20 @@ Publishing is automated via GitHub Actions (`.github/workflows/publish.yml`):
 
 ## Nested Docs
 
-- `src/AGENTS.md` - Code patterns, validator/CLI extension guides
+Module-specific docs (auto-discovered by Claude Code):
+- `src/AGENTS.md` — Code patterns, module overview, extension guides
+
+Cross-cutting docs in `ai_agent_docs/`:
+- `ai_agent_docs/conversion-pipeline.md` — Converter architecture (Parse → IR → Emit)
+- `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
 
 ## Gotchas
 
-- **Claude Code reloads plugins at session start** - after `ai-config sync`, restart Claude Code (use `claude --resume` to continue)
+- **Claude Code reloads plugins at session start** — after `ai-config sync`, restart Claude Code (use `claude --resume` to continue)
 - **Config locations**: `.ai-config/config.yaml` (project) or `~/.ai-config/config.yaml` (global)
 - **Scopes**: `user` scope installs to `~/.claude/plugins/`, `project` scope to `.claude/plugins/`
-- **Docker E2E tests require Docker** - use `docker info` to verify Docker is running
-- **Cursor CLI binary is `cursor-agent`** - not `cursor` (the desktop app uses `cursor`)
-- **E2E tests are class-scoped** - tests in the same class share a container, different classes get fresh containers
+- **Docker E2E tests require Docker** — use `docker info` to verify Docker is running
+- **Cursor CLI binary is `cursor-agent`** — not `cursor` (the desktop app uses `cursor`)
+- **E2E tests are class-scoped** — tests in the same class share a container, different classes get fresh containers
+- **E2E sync configs need absolute paths** — config written to `~/.ai-config/` resolves relative paths from `~`, not the repo. Use `/home/testuser/ai-config/...` in Docker tests.
+- **Conversion artifacts are gitignored** — `.codex/`, `.cursor/`, `.opencode/`, `opencode.json`, `opencode.lsp.json` are local output, not committed

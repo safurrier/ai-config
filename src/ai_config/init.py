@@ -8,7 +8,7 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import questionary
 import requests
@@ -107,12 +107,48 @@ class PluginChoice:
 
 
 @dataclass
+class ConversionChoice:
+    """Conversion target selection during init."""
+
+    enabled: bool = False
+    targets: list[str] = field(default_factory=list)
+    scope: str = "project"  # "user" or "project"
+    custom_output_dir: Path | None = None  # Override canonical location if set
+
+    def get_output_dir(self, target: str) -> Path:
+        """Get the output directory for a specific target.
+
+        Args:
+            target: Target tool name (codex, cursor, opencode)
+
+        Returns:
+            Path to output directory for this target.
+        """
+        if self.custom_output_dir:
+            return self.custom_output_dir
+
+        # Canonical locations per target and scope
+        if self.scope == "user":
+            return Path.home()
+        else:
+            return Path.cwd()
+
+    # For backwards compatibility
+    @property
+    def output_dir(self) -> Path | None:
+        """Get the output directory (for backwards compatibility)."""
+        return self.custom_output_dir
+
+
+@dataclass
 class InitConfig:
     """Collected user choices during init wizard."""
 
     config_path: Path
     marketplaces: list[MarketplaceChoice] = field(default_factory=list)
     plugins: list[PluginChoice] = field(default_factory=list)
+    conversion: ConversionChoice | None = None
+    run_sync: bool = False
 
 
 def check_claude_cli() -> tuple[bool, str]:
@@ -454,7 +490,7 @@ def generate_config_yaml(init_config: InitConfig) -> str:
         )
 
     # Build config structure
-    config = {
+    config: dict[str, object] = {
         "version": 1,
         "targets": [
             {
@@ -466,6 +502,20 @@ def generate_config_yaml(init_config: InitConfig) -> str:
             }
         ],
     }
+
+    # Add conversion settings if enabled
+    if init_config.conversion and init_config.conversion.enabled:
+        conversion_cfg: dict[str, object] = {
+            "enabled": True,
+            "targets": init_config.conversion.targets,
+            "scope": init_config.conversion.scope,
+        }
+        if init_config.conversion.custom_output_dir:
+            conversion_cfg["output_dir"] = str(init_config.conversion.custom_output_dir)
+        targets = cast(list[dict[str, Any]], config["targets"])
+        target_entry = targets[0]
+        target_config = cast(dict[str, Any], target_entry["config"])
+        target_config["conversion"] = conversion_cfg
 
     # Generate YAML with nice formatting
     return yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -490,6 +540,95 @@ def write_config(init_config: InitConfig) -> Path:
     config_path.write_text(yaml_content)
 
     return config_path
+
+
+def prompt_conversion_targets(
+    console: Console, default_scope: str = "user"
+) -> ConversionChoice | None:
+    """Prompt user for conversion target selection.
+
+    Args:
+        console: Rich console for output.
+        default_scope: Default scope from plugin selection ("user" or "project").
+
+    Returns:
+        ConversionChoice with user selections, or None if cancelled.
+    """
+    console.print()
+    console.print("[subheader]Plugin Conversion[/subheader]")
+    console.print("You can convert your Claude plugins to work with other AI coding tools.")
+    console.print()
+
+    # Ask if user wants to convert
+    wants_conversion = prompt_confirm(
+        "Convert plugins to other tools (Codex, Cursor, OpenCode)?",
+        default=False,
+    )
+
+    if wants_conversion is None:
+        return None  # Cancelled
+
+    if not wants_conversion:
+        return ConversionChoice(enabled=False)
+
+    # Select targets
+    target_choices = [
+        ("codex", "Codex (OpenAI) - .codex/ directory"),
+        ("cursor", "Cursor - .cursor/ directory"),
+        ("opencode", "OpenCode - .opencode/ directory"),
+    ]
+
+    selected_targets = prompt_checkbox(
+        "Select target tools:",
+        target_choices,
+        checked_by_default=True,
+    )
+
+    if selected_targets is None:
+        return None  # Cancelled
+
+    if not selected_targets:
+        return ConversionChoice(enabled=False)
+
+    # Use the same scope as the plugins
+    scope = default_scope
+
+    # Show where files will be written
+    console.print()
+    if scope == "user":
+        console.print("[info]Converted files will be written to:[/info]")
+        for target in selected_targets:
+            console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
+    else:
+        console.print("[info]Converted files will be written to:[/info]")
+        for target in selected_targets:
+            console.print(f"  {SYMBOLS['bullet']} .{target}/")
+
+    # Ask if they want to customize location
+    use_custom = prompt_confirm(
+        "Use custom output directory instead?",
+        default=False,
+    )
+
+    if use_custom is None:
+        return None  # Cancelled
+
+    custom_output_dir = None
+    if use_custom:
+        output_dir_str = prompt_text(
+            "Output directory for all converted files:",
+            default=".",
+        )
+        if output_dir_str is None:
+            return None  # Cancelled
+        custom_output_dir = Path(output_dir_str)
+
+    return ConversionChoice(
+        enabled=True,
+        targets=selected_targets,
+        scope=scope,
+        custom_output_dir=custom_output_dir,
+    )
 
 
 def run_init_wizard(console: Console, output_path: Path | None = None) -> InitConfig | None:
@@ -728,6 +867,20 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
 
         console.print()
 
+    # Ask about conversion if plugins were selected
+    if init_config.plugins:
+        console.print()
+        console.print("━" * 40)
+
+        # Use the scope from the first plugin (they should all be the same)
+        default_scope = init_config.plugins[0].scope if init_config.plugins else "user"
+
+        conversion_choice = prompt_conversion_targets(console, default_scope)
+        if conversion_choice is None:
+            return None
+
+        init_config.conversion = conversion_choice
+
     console.print()
     console.print("━" * 40)
     console.print()
@@ -738,10 +891,30 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
     yaml_preview = generate_config_yaml(init_config)
     console.print(yaml_preview)
 
+    # Show conversion preview if enabled
+    if init_config.conversion and init_config.conversion.enabled:
+        console.print()
+        console.print("[subheader]Conversion preview:[/subheader]")
+        console.print(f"  Targets: {', '.join(init_config.conversion.targets)}")
+        console.print(f"  Scope: {init_config.conversion.scope}")
+        if init_config.conversion.custom_output_dir:
+            console.print(f"  Output: {init_config.conversion.custom_output_dir}")
+        else:
+            for target in init_config.conversion.targets:
+                output_path = init_config.conversion.get_output_dir(target) / f".{target}"
+                console.print(f"  {SYMBOLS['bullet']} {target}: {output_path}")
+
     # Confirm write
     write_ok = prompt_confirm(f"Write config to {config_path}?", default=True)
     if not write_ok:
         return None
+
+    # Offer to run sync now if conversion enabled
+    if init_config.conversion and init_config.conversion.enabled:
+        run_sync = prompt_confirm("Run ai-config sync now?", default=True)
+        if run_sync is None:
+            return None
+        init_config.run_sync = run_sync
 
     return init_config
 

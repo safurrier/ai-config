@@ -5,6 +5,7 @@ import pytest
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
+    ConversionConfig,
     MarketplaceConfig,
     PluginConfig,
     PluginSource,
@@ -113,6 +114,46 @@ class TestClaudeTargetConfig:
         )
         assert "my-marketplace" in config.marketplaces
         assert len(config.plugins) == 1
+
+
+class TestConversionConfig:
+    """Tests for ConversionConfig dataclass."""
+
+    def test_valid_conversion_config(self) -> None:
+        """Valid conversion config should be created."""
+        config = ConversionConfig(
+            enabled=True,
+            targets=("codex", "cursor"),
+            scope="user",
+            output_dir="/tmp/converted",
+            commands_as_skills=True,
+        )
+        assert config.enabled is True
+        assert config.targets == ("codex", "cursor")
+        assert config.scope == "user"
+        assert config.output_dir == "/tmp/converted"
+        assert config.commands_as_skills is True
+
+    def test_empty_targets_raises(self) -> None:
+        """Empty targets should raise ValueError."""
+        with pytest.raises(ValueError, match="targets"):
+            ConversionConfig(enabled=True, targets=(), scope="user")
+
+    def test_invalid_target_raises(self) -> None:
+        """Invalid target name should raise ValueError."""
+        with pytest.raises(ValueError, match="target"):
+            ConversionConfig(enabled=True, targets=("invalid",), scope="user")
+
+    def test_invalid_scope_raises(self) -> None:
+        """Invalid scope should raise ValueError."""
+        with pytest.raises(ValueError, match="scope"):
+            ConversionConfig(enabled=True, targets=("codex",), scope="local")  # type: ignore[arg-type]
+
+    def test_frozen(self) -> None:
+        """Conversion config should be immutable."""
+        config = ConversionConfig(enabled=True, targets=("codex",), scope="project")
+        with pytest.raises(AttributeError):
+            config.scope = "user"  # type: ignore[misc]
 
 
 class TestTargetConfig:

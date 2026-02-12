@@ -343,7 +343,8 @@ class MarketplaceManifestValidator:
             )
 
         # Check required 'source' field
-        if not entry.get("source"):
+        source = entry.get("source")
+        if not source:
             results.append(
                 ValidationResult(
                     check_name="marketplace_plugin_source_required",
@@ -352,6 +353,20 @@ class MarketplaceManifestValidator:
                         f"Marketplace '{mp_name}' plugins[{index}] "
                         "is missing required 'source' field"
                     ),
+                )
+            )
+        elif not isinstance(source, str):
+            results.append(
+                ValidationResult(
+                    check_name="marketplace_plugin_source_type",
+                    status="fail",
+                    message=(
+                        f"Marketplace '{mp_name}' plugins[{index}] 'source' must be a string path"
+                    ),
+                    details=(
+                        f"Got {type(source).__name__}. Use a relative path like './plugin-name'"
+                    ),
+                    fix_hint='Change source to a string path, e.g. "source": "./my-plugin"',
                 )
             )
 

@@ -52,6 +52,19 @@ build:
 dev:
     uv pip install -e .
 
+# Ensure local editable install (source, not PyPI)
+dev-install:
+    uv pip uninstall ai-config-cli -y || true
+    uv pip install -e .
+
+# Verify module path resolves to local repo
+dev-check:
+    uv run python - <<'PY'
+    import ai_config, sys
+    print("ai_config module:", ai_config.__file__)
+    print("python:", sys.executable)
+    PY
+
 # Serve documentation locally
 docs-serve:
     uv run mkdocs serve
@@ -67,3 +80,24 @@ hooks:
 # Run pre-commit on all files
 pre-commit:
     uv run pre-commit run --all-files
+
+# Docker dev shells (no local pollution)
+docker-shell:
+    env -u VIRTUAL_ENV uv sync --all-extras
+    env -u VIRTUAL_ENV uv run --python .venv/bin/python tests/docker/test_in_docker.py --shell
+
+docker-shell-claude:
+    env -u VIRTUAL_ENV uv sync --all-extras
+    env -u VIRTUAL_ENV uv run --python .venv/bin/python tests/docker/test_in_docker.py --shell --claude-only
+
+# Persistent Docker dev container (attachable)
+docker-dev-up:
+    uv run python tests/docker/test_in_docker.py --build-only
+    docker rm -f ai-config-dev 2>/dev/null || true
+    docker run -d --name ai-config-dev -v "{{justfile_directory()}}":/home/testuser/ai-config -w /home/testuser/ai-config -u testuser ai-config-test:all-tools sleep infinity
+
+docker-dev-attach:
+    docker exec -it ai-config-dev /bin/bash
+
+docker-dev-down:
+    docker rm -f ai-config-dev

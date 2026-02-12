@@ -1,9 +1,16 @@
 """Core operations for ai-config: sync, status, update."""
 
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
 from ai_config.adapters import claude
+from ai_config.converters import InstallScope, TargetTool, convert_plugin
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
+    ConversionConfig,
     PluginSource,
     PluginStatus,
     StatusResult,
@@ -11,6 +18,67 @@ from ai_config.types import (
     SyncResult,
     TargetConfig,
 )
+
+_CONVERSION_CACHE_VERSION = 1
+
+
+def _conversion_cache_path() -> Path:
+    """Return path for conversion hash cache file."""
+    return Path.home() / ".ai-config" / "cache" / "conversion-hashes.json"
+
+
+def _load_conversion_cache() -> dict:
+    """Load conversion cache data from disk."""
+    cache_path = _conversion_cache_path()
+    if not cache_path.exists():
+        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+    try:
+        raw = json.loads(cache_path.read_text())
+        if not isinstance(raw, dict):
+            return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+        if raw.get("version") != _CONVERSION_CACHE_VERSION:
+            return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+        if not isinstance(raw.get("entries"), dict):
+            raw["entries"] = {}
+        return raw
+    except (OSError, json.JSONDecodeError):
+        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+
+
+def _save_conversion_cache(cache: dict) -> None:
+    """Persist conversion cache data to disk."""
+    cache_path = _conversion_cache_path()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, indent=2, sort_keys=True))
+
+
+def _conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str:
+    """Build a stable signature for conversion settings."""
+    payload = {
+        "targets": sorted(conversion.targets),
+        "scope": conversion.scope,
+        "output_dir": str(output_dir),
+        "commands_as_skills": conversion.commands_as_skills,
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
+def _compute_plugin_hash(plugin_path: Path) -> str | None:
+    """Compute a hash of all files in a plugin directory."""
+    hasher = hashlib.sha256()
+    try:
+        for file_path in sorted(plugin_path.rglob("*")):
+            if not file_path.is_file() or file_path.is_symlink():
+                continue
+            relpath = file_path.relative_to(plugin_path).as_posix()
+            hasher.update(relpath.encode("utf-8"))
+            hasher.update(b"\0")
+            data = file_path.read_bytes()
+            hasher.update(len(data).to_bytes(8, "big"))
+            hasher.update(data)
+        return hasher.hexdigest()
+    except OSError:
+        return None
 
 
 def _sync_marketplaces(
@@ -140,6 +208,7 @@ def sync_target(
     target: TargetConfig,
     dry_run: bool = False,
     fresh: bool = False,
+    force_convert: bool = False,
 ) -> SyncResult:
     """Sync a target to match its config.
 
@@ -147,6 +216,7 @@ def sync_target(
         target: Target configuration to sync.
         dry_run: If True, only report what would be done.
         fresh: If True, clear cache before syncing.
+        force_convert: If True, bypass conversion hash cache.
 
     Returns:
         SyncResult with actions taken and any errors.
@@ -177,6 +247,10 @@ def sync_target(
         result.add_success(action)
     result.errors.extend(plugin_errors)
 
+    # Run conversion if configured
+    conversion_errors = _sync_conversions(target.config, dry_run, force_convert)
+    result.errors.extend(conversion_errors)
+
     # If there were any errors, mark as failed
     if result.errors:
         result.success = False
@@ -184,10 +258,85 @@ def sync_target(
     return result
 
 
+def _sync_conversions(
+    config: ClaudeTargetConfig,
+    dry_run: bool = False,
+    force_convert: bool = False,
+) -> list[str]:
+    """Convert installed plugins to other targets when configured."""
+    if config.conversion is None or not config.conversion.enabled:
+        return []
+
+    errors: list[str] = []
+    cache = _load_conversion_cache()
+    cache_entries = cache.setdefault("entries", {})
+    cache_dirty = False
+
+    installed_plugins, plugin_errors = claude.list_installed_plugins()
+    if plugin_errors:
+        return plugin_errors
+
+    installed_by_id = {p.id: p for p in installed_plugins}
+
+    conversion = config.conversion
+    output_dir = _resolve_conversion_output_dir(conversion)
+    targets = [TargetTool(t) for t in conversion.targets]
+    scope = InstallScope(conversion.scope)
+    signature = _conversion_signature(conversion, output_dir)
+
+    for plugin_config in config.plugins:
+        if not plugin_config.enabled:
+            continue
+        installed = installed_by_id.get(plugin_config.id)
+        if not installed:
+            continue
+        plugin_path = Path(installed.install_path)
+        plugin_hash = _compute_plugin_hash(plugin_path)
+        if not force_convert and plugin_hash is not None:
+            signature_map = cache_entries.get(str(plugin_path), {})
+            if isinstance(signature_map, dict):
+                cached = signature_map.get(signature)
+                if isinstance(cached, dict) and cached.get("hash") == plugin_hash:
+                    continue
+        try:
+            reports = convert_plugin(
+                plugin_path=plugin_path,
+                targets=targets,
+                output_dir=output_dir,
+                scope=scope,
+                dry_run=dry_run,
+                best_effort=True,
+                commands_as_skills=conversion.commands_as_skills,
+            )
+            if not dry_run and plugin_hash is not None:
+                if not any(report.has_errors() for report in reports.values()):
+                    signature_map = cache_entries.setdefault(str(plugin_path), {})
+                    signature_map[signature] = {
+                        "hash": plugin_hash,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    cache_dirty = True
+        except Exception as e:
+            errors.append(f"Conversion failed for {plugin_config.id}: {e}")
+
+    if cache_dirty:
+        _save_conversion_cache(cache)
+
+    return errors
+
+
+def _resolve_conversion_output_dir(conversion: ConversionConfig) -> Path:
+    """Resolve output directory based on conversion config."""
+    if conversion.output_dir:
+        return Path(conversion.output_dir)
+    return Path.home() if conversion.scope == "user" else Path.cwd()
+
+
 def sync_config(
     config: AIConfig,
     dry_run: bool = False,
     fresh: bool = False,
+    force_convert: bool = False,
 ) -> dict[str, SyncResult]:
     """Sync all targets in a config.
 
@@ -195,6 +344,7 @@ def sync_config(
         config: Configuration to sync.
         dry_run: If True, only report what would be done.
         fresh: If True, clear cache before syncing.
+        force_convert: If True, bypass conversion hash cache.
 
     Returns:
         Dict mapping target type to SyncResult.
@@ -202,7 +352,7 @@ def sync_config(
     results: dict[str, SyncResult] = {}
 
     for target in config.targets:
-        results[target.type] = sync_target(target, dry_run, fresh)
+        results[target.type] = sync_target(target, dry_run, fresh, force_convert)
 
     return results
 

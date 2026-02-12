@@ -1,0 +1,12 @@
+{
+  "name": "test-plugin",
+  "version": "0.1.0",
+  "description": "A test plugin for E2E validation",
+  "author": {
+    "name": "Test Author",
+    "email": "test@example.com"
+  },
+  "license": "MIT",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
+}

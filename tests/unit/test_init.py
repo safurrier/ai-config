@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from ai_config.cli import main
 from ai_config.init import (
+    ConversionChoice,
     InitConfig,
     MarketplaceChoice,
     PluginChoice,
@@ -149,6 +150,26 @@ class TestGenerateConfigYaml:
         assert plugins[1]["id"] == "plugin2@mp1"
         assert plugins[1]["enabled"] is False
         assert plugins[1]["scope"] == "project"
+
+    def test_with_conversion(self, tmp_path: Path) -> None:
+        """Generates config with conversion settings."""
+        init_config = InitConfig(
+            config_path=tmp_path / "config.yaml",
+            plugins=[PluginChoice(id="plugin1", marketplace="mp1")],
+            conversion=ConversionChoice(
+                enabled=True,
+                targets=["codex", "cursor"],
+                scope="user",
+                custom_output_dir=Path("./converted"),
+            ),
+        )
+        yaml_str = generate_config_yaml(init_config)
+
+        config = yaml.safe_load(yaml_str)
+        conversion = config["targets"][0]["config"]["conversion"]
+        assert conversion["targets"] == ["codex", "cursor"]
+        assert conversion["scope"] == "user"
+        assert conversion["output_dir"] == "converted"
 
 
 class TestWriteConfig:

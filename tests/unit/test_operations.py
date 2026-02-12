@@ -1,11 +1,15 @@
 """Tests for ai_config.operations module."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
+from ai_config.converters.ir import PluginIdentity, TargetTool
+from ai_config.converters.report import ConversionReport
 from ai_config.operations import (
+    _conversion_signature,
     get_status,
     sync_config,
     sync_target,
@@ -15,6 +19,7 @@ from ai_config.operations import (
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
+    ConversionConfig,
     MarketplaceConfig,
     PluginConfig,
     PluginSource,
@@ -209,6 +214,229 @@ class TestSyncTarget:
             mock_disable.assert_called_once_with("plugin1@mp")
             assert result.success is True
             assert any(a.action == "disable" for a in result.actions_taken)
+
+    def test_sync_runs_conversion_when_configured(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Sync should run conversion when conversion config is present."""
+        conversion = ConversionConfig(
+            enabled=True,
+            targets=("codex",),
+            scope="user",
+            output_dir=None,
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+
+        # Ensure deterministic home path resolution
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations.convert_plugin") as mock_convert,
+        ):
+            result = sync_target(target)
+
+            assert result.success is True
+            assert mock_convert.called
+            call_args = mock_convert.call_args.kwargs
+            assert call_args["plugin_path"] == Path(mock_installed_plugins[0].install_path)
+            assert call_args["output_dir"] == Path(tmp_path / "home")
+
+    def test_sync_skips_conversion_when_hash_unchanged(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Conversion is skipped when cached hash matches current hash."""
+        conversion = ConversionConfig(
+            enabled=True,
+            targets=("codex",),
+            scope="user",
+            output_dir=None,
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        output_dir = Path(tmp_path / "home")
+        signature = _conversion_signature(conversion, output_dir)
+        plugin_path = Path(mock_installed_plugins[0].install_path)
+
+        cache = {
+            "version": 1,
+            "entries": {
+                str(plugin_path): {
+                    signature: {"hash": "abc123"},
+                }
+            },
+        }
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations._load_conversion_cache", return_value=cache),
+            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.operations.convert_plugin") as mock_convert,
+        ):
+            result = sync_target(target)
+
+            assert result.success is True
+            mock_convert.assert_not_called()
+
+    def test_sync_force_convert_ignores_cache(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Force-convert bypasses hash cache and runs conversion."""
+        conversion = ConversionConfig(
+            enabled=True,
+            targets=("codex",),
+            scope="user",
+            output_dir=None,
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.operations.convert_plugin") as mock_convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+            assert result.success is True
+            mock_convert.assert_called()
+
+    def test_sync_updates_cache_on_successful_conversion(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Conversion cache is updated after a successful conversion."""
+        conversion = ConversionConfig(
+            enabled=True,
+            targets=("codex",),
+            scope="user",
+            output_dir=None,
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        output_dir = Path(tmp_path / "home")
+        signature = _conversion_signature(conversion, output_dir)
+        plugin_path = Path(mock_installed_plugins[0].install_path)
+
+        identity = PluginIdentity(plugin_id="plugin1", name="plugin1", version="1.0.0")
+        report = ConversionReport(source_plugin=identity, target_tool=TargetTool.CODEX)
+
+        saved_cache: dict = {}
+
+        def _capture_cache(cache: dict) -> None:
+            saved_cache.update(cache)
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.operations.convert_plugin", return_value={TargetTool.CODEX: report}),
+            patch("ai_config.operations._save_conversion_cache", side_effect=_capture_cache),
+        ):
+            result = sync_target(target)
+
+            assert result.success is True
+            assert "entries" in saved_cache
+            assert str(plugin_path) in saved_cache["entries"]
+            assert signature in saved_cache["entries"][str(plugin_path)]
+    def test_sync_skips_conversion_when_disabled(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+    ) -> None:
+        """Sync should not run conversion when conversion is disabled."""
+        conversion = ConversionConfig(
+            enabled=False,
+            targets=("codex",),
+            scope="user",
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations.convert_plugin") as mock_convert,
+        ):
+            sync_target(target)
+            mock_convert.assert_not_called()
 
     def test_add_missing_marketplace(self, sample_config: AIConfig) -> None:
         """Missing marketplace is added."""
