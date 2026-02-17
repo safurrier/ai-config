@@ -152,6 +152,10 @@ def sync(
             for error in result.errors:
                 console.print(f"  {SYMBOLS['fail']} {error}")
 
+    # Exit non-zero if any target had errors
+    if any(r.errors for r in results.values()):
+        sys.exit(1)
+
     # Verify if requested
     if verify and not dry_run:
         console.print("\n[subheader]Verification:[/subheader]")

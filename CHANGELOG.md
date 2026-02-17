@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ai-config sync` now exits non-zero when sync errors occur
 - Prevent OpenCode LSP config from overwriting when multiple servers exist
 - Interactive wizard now defaults to no plugins selected (user must opt-in)
 - ESC key cancels prompts in `ai-config init` wizard

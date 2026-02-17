@@ -141,10 +141,10 @@ plugins:
             f"mkdir -p ~/.ai-config && cat > ~/.ai-config/config.yaml << 'EOF'\n{invalid_config}\nEOF",
         )
 
-        # Try to sync
+        # Try to sync (use --config to ensure we read the global config, not a project-local one)
         exit_code, output = exec_in_container(
             all_tools_container,
-            "uv run ai-config sync",
+            "uv run ai-config sync --config ~/.ai-config/config.yaml",
         )
         assert exit_code != 0, "Should fail with invalid config"
         assert "version" in output.lower(), f"Error should mention version: {output}"
@@ -158,7 +158,7 @@ plugins:
 
         exit_code, output = exec_in_container(
             all_tools_container,
-            "uv run ai-config sync",
+            "uv run ai-config sync --config ~/.ai-config/config.yaml",
         )
         assert exit_code != 0, "Should fail with empty config"
 
