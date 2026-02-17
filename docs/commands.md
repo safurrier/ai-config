@@ -12,20 +12,19 @@ Complete reference for all ai-config commands.
 | `watch` | Auto-sync on file changes |
 | `update` | Update plugins to latest versions |
 | `doctor` | Validate setup and show fix hints |
+| `convert` | Convert plugins to other AI tools |
 | `plugin create` | Scaffold a new plugin |
 | `cache clear` | Clear the plugin cache |
 
 ## Global Options
-
-All commands support these options:
 
 ```bash
 ai-config [OPTIONS] COMMAND
 
 Options:
   -c, --config PATH  Path to config file
-  --verbose         Enable verbose output
-  --help           Show help message
+  --version          Show version
+  --help             Show help message
 ```
 
 ## init
@@ -38,16 +37,18 @@ ai-config init
 
 **Options:**
 
-- `--non-interactive` - Create config with defaults (no prompts)
-- `--force` - Overwrite existing config
+| Option | Description |
+|--------|-------------|
+| `-o, --output PATH` | Output path for the config file |
+| `--non-interactive` | Create minimal config without prompts |
 
 The wizard walks you through:
 
-1. Adding marketplaces (GitHub repos with plugins)
+1. Adding marketplaces (GitHub repos or local directories with plugins)
 2. Selecting plugins from those marketplaces
 3. Choosing install scope (user or project)
 
-Creates `.ai-config/config.yaml` in current directory.
+Creates `.ai-config/config.yaml` in the current directory (or the path specified with `-o`).
 
 ## sync
 
@@ -59,14 +60,22 @@ ai-config sync
 
 **Options:**
 
-- `--fresh` - Clear cache and reinstall everything
-- `--dry-run` - Show what would change without doing it
+| Option | Description |
+|--------|-------------|
+| `-c, --config PATH` | Path to config file |
+| `--dry-run` | Show what would change without doing it |
+| `--fresh` | Clear cache before syncing |
+| `--force-convert` | Force conversion even if sources appear unchanged |
+| `--verify` | Verify sync state after completion |
 
 What it does:
 
 - Installs plugins listed in config but not installed
 - Uninstalls plugins installed but not in config
 - Updates plugin configurations
+- Runs conversion if `conversion` section is configured (see [Conversion](conversion.md))
+
+Exits non-zero if any target had errors.
 
 ## status
 
@@ -75,6 +84,14 @@ Show current state of marketplaces and plugins.
 ```bash
 ai-config status
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-c, --config PATH` | Path to config file |
+| `--verify` | Verify current state matches config |
+| `--json` | Output as JSON |
 
 Displays:
 
@@ -92,9 +109,12 @@ ai-config watch
 
 **Options:**
 
-- `--debounce SECONDS` - Wait time before syncing (default: 1.5)
-- `--dry-run` - Show changes without syncing
-- `--verbose` - Show all file events
+| Option | Description |
+|--------|-------------|
+| `-c, --config PATH` | Path to config file |
+| `--debounce SECONDS` | Wait time before syncing (default: 1.5) |
+| `--dry-run` | Show changes without syncing |
+| `-v, --verbose` | Show all file events |
 
 Useful during plugin development. Watches:
 
@@ -103,29 +123,39 @@ Useful during plugin development. Watches:
 
 Press Ctrl+C to stop.
 
-**Important limitation:**
+!!! warning "Claude Code reload required"
 
-Claude Code only loads plugins at session start. After `watch` syncs your changes, you must restart Claude Code for them to take effect.
+    Claude Code only loads plugins at session start. After `watch` syncs your changes, you must restart Claude Code for them to take effect.
 
-To continue your previous session after restarting:
+    To continue your previous session after restarting:
 
-```bash
-claude --resume
-```
-
-This resumes your last conversation with the updated plugins loaded.
+    ```bash
+    claude --resume
+    ```
 
 ## update
 
-Update all plugins to their latest versions.
+Update plugins to their latest versions.
 
 ```bash
-ai-config update
+ai-config update --all
+ai-config update PLUGIN1 PLUGIN2
 ```
 
 **Options:**
 
-- `--marketplace NAME` - Update only plugins from specific marketplace
+| Option | Description |
+|--------|-------------|
+| `--all` | Update all plugins |
+| `--fresh` | Clear cache before updating |
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `PLUGINS` | Specific plugin IDs to update (positional, space-separated) |
+
+You must specify either `--all` or one or more plugin names.
 
 ## doctor
 
@@ -137,8 +167,21 @@ ai-config doctor
 
 **Options:**
 
-- `--verbose` - Show detailed validation info
-- `--fix` - Attempt to fix found issues
+| Option | Description |
+|--------|-------------|
+| `-c, --config PATH` | Path to config file |
+| `--category CATEGORY` | Run only specific validation categories (can be repeated) |
+| `-t, --target TARGET` | Validate converted output: `codex`, `cursor`, `opencode`, or `all` |
+| `--json` | Output as JSON |
+| `-v, --verbose` | Show all checks including passed |
+
+**Arguments (target mode only):**
+
+| Argument | Description |
+|----------|-------------|
+| `OUTPUT_DIR` | Directory containing converted output (default: current dir) |
+
+### Default mode
 
 Checks:
 
@@ -147,6 +190,55 @@ Checks:
 - Skills have required fields
 - Hooks are executable
 - MCP server configs are valid
+
+### Target validation mode
+
+When `--target` is specified, validates converted output instead of plugin config:
+
+```bash
+ai-config doctor --target codex ./output-dir
+ai-config doctor --target all ./output-dir
+```
+
+Checks target-specific output directory structure, SKILL.md files, MCP/hooks/LSP config validity.
+
+## convert
+
+Convert a Claude Code plugin to other AI coding tools.
+
+```bash
+ai-config convert PLUGIN_PATH
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `all` (default: `all`) |
+| `-o, --output DIR` | Output directory (default: based on `--scope`) |
+| `--scope SCOPE` | `user` or `project` — controls default output path |
+| `--dry-run` | Preview changes without writing files |
+| `--best-effort` | Continue even if some components fail to convert |
+| `--format FORMAT` | Console output: `summary`, `markdown`, or `json` |
+| `--report PATH` | Write conversion report to a file |
+| `--report-format FORMAT` | Report file format: `json` (default) or `markdown` |
+| `--commands-as-skills` | Convert commands to skills instead of prompts (Codex) |
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `PLUGIN_PATH` | Path to the Claude Code plugin directory to convert |
+
+Supported targets:
+
+- **codex** — OpenAI Codex (`.codex/` dir with TOML config + skills)
+- **cursor** — Cursor (`.cursor/` dir with rules + MCP config)
+- **opencode** — OpenCode (`opencode.json` + `.opencode/` skills dir)
+
+Multiple targets can be specified: `-t codex -t cursor`
+
+See [Conversion](conversion.md) for a full guide.
 
 ## plugin create
 
@@ -158,13 +250,15 @@ ai-config plugin create NAME
 
 **Options:**
 
-- `--marketplace NAME` - Create in specific marketplace
-- `--type TYPE` - Plugin type (skill, hook, mcp)
+| Option | Description |
+|--------|-------------|
+| `--path PATH` | Base path for plugin directory |
 
-Creates plugin directory with:
+Creates a plugin directory with:
 
-- `plugin.yaml` - Plugin metadata
-- Appropriate starter files based on type
+- `manifest.yaml` — Plugin metadata
+- `skills/` — Directory for skill files
+- `hooks/` — Directory for hook files
 
 ## cache clear
 

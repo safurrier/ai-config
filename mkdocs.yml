@@ -67,6 +67,7 @@ nav:
   - Home: index.md
   - Commands: commands.md
   - Configuration: config.md
+  - Conversion: conversion.md
 
 extra:
   social:
