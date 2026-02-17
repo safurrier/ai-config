@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Prevent OpenCode LSP config from overwriting when multiple servers exist
+- Interactive wizard now defaults to no plugins selected (user must opt-in)
+- ESC key cancels prompts in `ai-config init` wizard
+- MCP validator supports HTTP and SSE transport types (not just stdio)
+- GitHub marketplace name now read from `marketplace.json` instead of URL slug
+- `ai-config sync` detects and reports marketplace name mismatches
 
 ## [0.1.0] - 2025-02-03
 

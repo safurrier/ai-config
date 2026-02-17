@@ -13,6 +13,8 @@ from typing import Any, Literal, cast
 import questionary
 import requests
 import yaml
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -200,6 +202,34 @@ def get_marketplace_name(path: Path) -> str | None:
         return None
 
 
+def get_marketplace_name_from_github(repo: str) -> str | None:
+    """Get the marketplace name from a GitHub repo's marketplace.json.
+
+    Fetches .claude-plugin/marketplace.json from the repo and reads the name field.
+    Tries 'main' branch first, then 'master'.
+
+    Args:
+        repo: GitHub repo in owner/repo format.
+
+    Returns:
+        The marketplace name, or None if it can't be fetched.
+    """
+    branches = ["main", "master"]
+
+    for branch in branches:
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/.claude-plugin/marketplace.json"
+
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("name")
+        except Exception:
+            continue
+
+    return None
+
+
 def discover_plugins_from_local(path: Path) -> list[PluginInfo]:
     """Discover plugins from a local marketplace directory.
 
@@ -326,6 +356,25 @@ def fetch_marketplace_plugins(
         return discover_plugins_from_local(Path(path))
 
 
+def _add_escape_binding(question: questionary.Question) -> questionary.Question:
+    """Add ESC key binding to a questionary prompt.
+
+    Pressing ESC will cancel the prompt (same as Ctrl+C).
+    """
+    extra = KeyBindings()
+
+    @extra.add(Keys.Escape, eager=True)
+    def _escape(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    original = question.application.key_bindings
+    if original is not None:
+        question.application.key_bindings = merge_key_bindings([original, extra])
+    else:
+        question.application.key_bindings = extra
+    return question
+
+
 def prompt_select(message: str, choices: list[str], default: str | None = None) -> str | None:
     """Interactive select prompt using questionary.
 
@@ -337,11 +386,9 @@ def prompt_select(message: str, choices: list[str], default: str | None = None) 
     Returns:
         Selected choice string, or None if cancelled.
     """
-    return questionary.select(
-        message,
-        choices=choices,
-        default=default,
-    ).ask()
+    question = questionary.select(message, choices=choices, default=default)
+    _add_escape_binding(question)
+    return question.ask()
 
 
 def prompt_checkbox(
@@ -363,7 +410,9 @@ def prompt_checkbox(
         questionary.Choice(title=label, value=value, checked=checked_by_default)
         for value, label in choices
     ]
-    return questionary.checkbox(message, choices=q_choices).ask()
+    question = questionary.checkbox(message, choices=q_choices)
+    _add_escape_binding(question)
+    return question.ask()
 
 
 def prompt_text(message: str, default: str = "") -> str | None:
@@ -376,7 +425,9 @@ def prompt_text(message: str, default: str = "") -> str | None:
     Returns:
         Entered text, or None if cancelled.
     """
-    return questionary.text(message, default=default).ask()
+    question = questionary.text(message, default=default)
+    _add_escape_binding(question)
+    return question.ask()
 
 
 def prompt_confirm(message: str, default: bool = True) -> bool | None:
@@ -389,7 +440,9 @@ def prompt_confirm(message: str, default: bool = True) -> bool | None:
     Returns:
         True/False, or None if cancelled.
     """
-    return questionary.confirm(message, default=default).ask()
+    question = questionary.confirm(message, default=default)
+    _add_escape_binding(question)
+    return question.ask()
 
 
 def prompt_path_with_search(
@@ -730,12 +783,31 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
                 console.print("  - https://github.com/owner/repo")
                 continue
 
-            # Suggest marketplace name from repo
-            suggested_name = repo.replace("/", "-")
-            name = prompt_text("Marketplace name:", default=suggested_name)
+            # Read the actual marketplace name from marketplace.json
+            # Claude CLI uses this name, not user-provided names
+            console.print()
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task("Reading marketplace name...", total=None)
+                actual_name = get_marketplace_name_from_github(repo)
 
-            if name is None:
-                return None
+            if actual_name:
+                console.print(
+                    f"  [info]Found marketplace name in manifest:[/info] [key]{actual_name}[/key]"
+                )
+                name = actual_name
+            else:
+                # Fallback to slug-based name if we can't read marketplace.json
+                console.print("  [warning]Could not read marketplace name from manifest[/warning]")
+                suggested_name = repo.replace("/", "-")
+                name = prompt_text("Marketplace name:", default=suggested_name)
+
+                if name is None:
+                    return None
 
             marketplace = MarketplaceChoice(
                 name=name,
@@ -822,7 +894,7 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
             selected = prompt_checkbox(
                 "Select plugins to enable:",
                 choices,
-                checked_by_default=True,
+                checked_by_default=False,
             )
 
             if selected is None:

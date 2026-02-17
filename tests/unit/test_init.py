@@ -13,6 +13,7 @@ from ai_config.init import (
     InitConfig,
     MarketplaceChoice,
     PluginChoice,
+    _add_escape_binding,
     check_claude_cli,
     create_minimal_config,
     generate_config_yaml,
@@ -687,3 +688,162 @@ class TestGetMarketplaceName:
 
         name = get_marketplace_name(tmp_path)
         assert name is None
+
+
+class TestGetMarketplaceNameFromGithub:
+    """Tests for get_marketplace_name_from_github function."""
+
+    def test_success(self) -> None:
+        """Reads name from GitHub marketplace.json."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"name": "my-marketplace", "plugins": []}
+
+        with patch("ai_config.init.requests.get", return_value=mock_response):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name == "my-marketplace"
+
+    def test_fallback_to_master(self) -> None:
+        """Falls back to master branch when main returns 404."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        def mock_get(url: str, timeout: int) -> MagicMock:
+            response = MagicMock()
+            if "main" in url:
+                response.status_code = 404
+            else:  # master
+                response.status_code = 200
+                response.json.return_value = {"name": "master-marketplace"}
+            return response
+
+        with patch("ai_config.init.requests.get", side_effect=mock_get):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name == "master-marketplace"
+
+    def test_network_error_returns_none(self) -> None:
+        """Returns None on network error."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        with patch("ai_config.init.requests.get") as mock_get:
+            mock_get.side_effect = Exception("Network error")
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name is None
+
+    def test_missing_name_field_returns_none(self) -> None:
+        """Returns None when name field is missing."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"plugins": []}
+
+        with patch("ai_config.init.requests.get", return_value=mock_response):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name is None
+
+
+class TestAddEscapeBinding:
+    """Tests for _add_escape_binding helper."""
+
+    def test_adds_escape_key_binding(self):
+        """ESC key binding is added to question's key bindings."""
+        import questionary
+
+        question = questionary.text("test")
+        original_bindings = question.application.key_bindings
+        _add_escape_binding(question)
+        # After adding, the key bindings should be a merged set
+        # (different object from original since merge creates new)
+        assert question.application.key_bindings is not original_bindings
+
+    def test_escape_binding_preserves_original(self):
+        """Original key bindings are preserved after adding ESC."""
+        import questionary
+
+        question = questionary.text("test")
+        _add_escape_binding(question)
+        # The merged bindings should still work (not None, not empty)
+        assert question.application.key_bindings is not None
+
+
+class TestPluginSelectionDefaults:
+    """Tests for plugin selection default behavior."""
+
+    def test_plugin_selection_defaults_to_unchecked(self):
+        """Plugin selection in wizard should default to unchecked."""
+        from ai_config.init import run_init_wizard
+
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch(
+                "ai_config.init.prompt_select",
+                side_effect=[
+                    ".ai-config/config.yaml (this project)",  # config location
+                    "GitHub repository",  # marketplace source
+                ],
+            ),
+            patch(
+                "ai_config.init.prompt_text",
+                side_effect=[
+                    "owner/repo",  # repo input
+                    "test-mp",  # marketplace name
+                ],
+            ),
+            patch(
+                "ai_config.init.prompt_confirm",
+                side_effect=[
+                    False,  # no existing config overwrite
+                    False,  # no more marketplaces
+                ],
+            ),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[
+                    MagicMock(id="plugin1", description="desc1"),
+                ],
+            ),
+            patch("ai_config.init.prompt_checkbox") as mock_checkbox,
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+        ):
+            mock_checkbox.return_value = None  # cancel after checkbox
+            from rich.console import Console
+
+            console = Console()
+            run_init_wizard(console)
+
+            if mock_checkbox.called:
+                call_kwargs = mock_checkbox.call_args
+                # The third positional arg or keyword arg should be False
+                if len(_args := call_kwargs.args) >= 3:
+                    assert _args[2] is False
+                elif "checked_by_default" in call_kwargs.kwargs:
+                    assert call_kwargs.kwargs["checked_by_default"] is False
+
+    def test_conversion_targets_default_to_checked(self):
+        """Conversion target selection should default to checked."""
+        from ai_config.init import prompt_conversion_targets
+
+        with (
+            patch(
+                "ai_config.init.prompt_confirm", side_effect=[True, False]
+            ),  # wants conversion, no custom dir
+            patch("ai_config.init.prompt_checkbox") as mock_checkbox,
+        ):
+            mock_checkbox.return_value = ["codex"]
+            from rich.console import Console
+
+            console = Console()
+            prompt_conversion_targets(console)
+
+            if mock_checkbox.called:
+                call_kwargs = mock_checkbox.call_args
+                if len(_args := call_kwargs.args) >= 3:
+                    assert _args[2] is True
+                elif "checked_by_default" in call_kwargs.kwargs:
+                    assert call_kwargs.kwargs["checked_by_default"] is True

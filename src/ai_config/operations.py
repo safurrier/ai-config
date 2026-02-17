@@ -123,6 +123,21 @@ def _sync_marketplaces(
                     errors.append(f"Failed to add marketplace '{name}': {result.stderr}")
                     continue
 
+                # Check if the registered name matches our config key
+                post_mps, _ = claude.list_installed_marketplaces()
+                post_names = {mp.name for mp in post_mps}
+                if name not in post_names:
+                    # The marketplace was registered under a different name
+                    # (Claude CLI uses the name from marketplace.json)
+                    new_names = post_names - installed_names
+                    if new_names:
+                        actual = next(iter(new_names))
+                        errors.append(
+                            f"Marketplace registered as '{actual}' (from marketplace.json), "
+                            f"but config uses '{name}'. "
+                            f"Update your config key from '{name}' to '{actual}' to match."
+                        )
+
             actions.append(action)
 
     return actions, errors
