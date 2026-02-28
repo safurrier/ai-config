@@ -1,24 +1,82 @@
 """Tests for ai_config.init module."""
 
+from __future__ import annotations
+
+from collections import deque
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from click.testing import CliRunner
+from rich.console import Console
 
 from ai_config.cli import main
 from ai_config.init import (
+    GO_BACK,
     ConversionChoice,
     InitConfig,
     MarketplaceChoice,
     PluginChoice,
+    Prompter,
     _add_escape_binding,
     check_claude_cli,
     create_minimal_config,
     generate_config_yaml,
+    run_init_wizard,
     write_config,
 )
+
+
+class ScriptedPrompter:
+    """Fake prompter that returns pre-scripted answers and records prompts shown.
+
+    Each call pops the next answer from the script. If the script runs out,
+    the test fails with a clear message showing which prompt was unexpected.
+
+    Usage::
+
+        p = ScriptedPrompter([
+            GO_BACK,                                    # first prompt → go back
+            ".ai-config/config.yaml (this project)",    # second prompt → select
+            "Skip (no more marketplaces)",              # third prompt → select
+            True,                                       # fourth prompt → confirm
+        ])
+        result = run_init_wizard(console, prompter=p)
+        assert p.prompts_shown[0] == "Where should the config be created?"
+    """
+
+    def __init__(self, script: list[object]) -> None:
+        self._script: deque[object] = deque(script)
+        self.prompts_shown: list[str] = []
+
+    def _next(self, message: str) -> object:
+        self.prompts_shown.append(message)
+        if not self._script:
+            raise AssertionError(
+                f"ScriptedPrompter ran out of answers at prompt #{len(self.prompts_shown)}: "
+                f"{message!r}"
+            )
+        return self._script.popleft()
+
+    def select(
+        self, message: str, choices: list[str], default: str | None = None
+    ) -> str | None | object:
+        return self._next(message)
+
+    def checkbox(
+        self,
+        message: str,
+        choices: list[tuple[str, str]],
+        checked_by_default: bool = True,
+    ) -> list[str] | None | object:
+        return self._next(message)
+
+    def text(self, message: str, default: str = "") -> str | None | object:
+        return self._next(message)
+
+    def confirm(self, message: str, default: bool = True) -> bool | None | object:
+        return self._next(message)
 
 
 @pytest.fixture
@@ -772,78 +830,261 @@ class TestAddEscapeBinding:
         assert question.application.key_bindings is not None
 
 
-class TestPluginSelectionDefaults:
-    """Tests for plugin selection default behavior."""
+class TestGoBack:
+    """Tests for Escape-to-go-back behavior in the init wizard.
 
-    def test_plugin_selection_defaults_to_unchecked(self):
-        """Plugin selection in wizard should default to unchecked."""
-        from ai_config.init import run_init_wizard
+    Uses ScriptedPrompter (injected fake) instead of patching module-level functions.
+    Tests verify observable behavior: what the wizard returns, what prompts are shown,
+    and what state is accumulated — not internal call order.
+    """
 
+    def _console(self) -> Console:
+        """Real console with output suppressed."""
+        return Console(quiet=True)
+
+    def test_go_back_from_config_location_cancels(self) -> None:
+        """Escape at the first prompt (config location) cancels the wizard."""
+        p = ScriptedPrompter([GO_BACK])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+        assert "config be created" in p.prompts_shown[0]
+
+    def test_go_back_from_overwrite_returns_to_config_location(self) -> None:
+        """Escape at overwrite → re-prompts config location."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            GO_BACK,  # overwrite confirm → go back
+            GO_BACK,  # config location again → cancel
+        ])
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
-            patch(
-                "ai_config.init.prompt_select",
-                side_effect=[
-                    ".ai-config/config.yaml (this project)",  # config location
-                    "GitHub repository",  # marketplace source
-                ],
-            ),
-            patch(
-                "ai_config.init.prompt_text",
-                side_effect=[
-                    "owner/repo",  # repo input
-                    "test-mp",  # marketplace name
-                ],
-            ),
-            patch(
-                "ai_config.init.prompt_confirm",
-                side_effect=[
-                    False,  # no existing config overwrite
-                    False,  # no more marketplaces
-                ],
-            ),
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+        # Config location was asked twice
+        assert p.prompts_shown.count("Where should the config be created?") == 2
+
+    def test_go_back_from_marketplace_no_marketplaces_returns_to_config(self) -> None:
+        """Escape at marketplace source (empty) goes back to config location."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            GO_BACK,  # marketplace source → go back
+            GO_BACK,  # config location → cancel
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+        # Marketplace prompt was shown, then config prompt again
+        assert "marketplace" in p.prompts_shown[1].lower()
+        assert "config be created" in p.prompts_shown[2]
+
+    def test_go_back_from_repo_entry_returns_to_marketplace_source(self) -> None:
+        """Escape at repo entry → re-prompts marketplace source, then skip finishes."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "GitHub repository",  # marketplace source
+            GO_BACK,  # repo entry → back to source
+            "Skip (no more marketplaces)",  # skip
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+
+    def test_go_back_from_plugin_selection_removes_marketplace(self) -> None:
+        """Escape at plugin checkbox removes marketplace and goes back to source."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            GO_BACK,  # plugin checkbox → go back (removes marketplace)
+            "Skip (no more marketplaces)",  # skip
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
             patch(
                 "ai_config.init.fetch_marketplace_plugins",
-                return_value=[
-                    MagicMock(id="plugin1", description="desc1"),
-                ],
+                return_value=[MagicMock(id="p1", description="d1")],
             ),
-            patch("ai_config.init.prompt_checkbox") as mock_checkbox,
-            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
         ):
-            mock_checkbox.return_value = None  # cancel after checkbox
-            from rich.console import Console
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+        assert result.plugins == []
 
-            console = Console()
-            run_init_wizard(console)
-
-            if mock_checkbox.called:
-                call_kwargs = mock_checkbox.call_args
-                # The third positional arg or keyword arg should be False
-                if len(_args := call_kwargs.args) >= 3:
-                    assert _args[2] is False
-                elif "checked_by_default" in call_kwargs.kwargs:
-                    assert call_kwargs.kwargs["checked_by_default"] is False
-
-    def test_conversion_targets_default_to_checked(self):
-        """Conversion target selection should default to checked."""
-        from ai_config.init import prompt_conversion_targets
-
+    def test_go_back_from_scope_returns_to_plugin_selection(self) -> None:
+        """Escape at scope selection → re-shows plugin checkbox."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            ["p1"],  # plugin checkbox (1st)
+            GO_BACK,  # scope select → back to plugins
+            ["p1"],  # plugin checkbox (2nd — re-shown)
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            False,  # add another? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
         with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
             patch(
-                "ai_config.init.prompt_confirm", side_effect=[True, False]
-            ),  # wants conversion, no custom dir
-            patch("ai_config.init.prompt_checkbox") as mock_checkbox,
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
         ):
-            mock_checkbox.return_value = ["codex"]
-            from rich.console import Console
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert len(result.plugins) == 1
+        # Plugin selection prompt was shown twice
+        plugin_prompts = [m for m in p.prompts_shown if "plugins to enable" in m.lower()]
+        assert len(plugin_prompts) == 2
 
-            console = Console()
-            prompt_conversion_targets(console)
+    def test_go_back_from_add_another_removes_marketplace_and_plugins(self) -> None:
+        """Escape at 'add another?' undoes the marketplace and its plugins."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            ["p1"],  # plugin checkbox
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            GO_BACK,  # add another? → undo marketplace+plugins
+            "Skip (no more marketplaces)",  # now skip
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+        assert result.plugins == []
 
-            if mock_checkbox.called:
-                call_kwargs = mock_checkbox.call_args
-                if len(_args := call_kwargs.args) >= 3:
-                    assert _args[2] is True
-                elif "checked_by_default" in call_kwargs.kwargs:
-                    assert call_kwargs.kwargs["checked_by_default"] is True
+    def test_go_back_from_conversion_returns_to_marketplace(self) -> None:
+        """Escape at conversion → re-enters marketplace loop."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            # First marketplace pass
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            GO_BACK,  # conversion prompt → go back to marketplace loop
+            # Second marketplace pass
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert len(result.plugins) == 1
+
+    def test_go_back_from_confirm_write_returns_to_conversion(self) -> None:
+        """Escape at confirm-write goes back to conversion step."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            False,  # conversion? no
+            GO_BACK,  # confirm write → back to conversion
+            False,  # conversion? no (second time)
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert len(result.plugins) == 1
+
+    def test_go_back_from_confirm_write_no_plugins_returns_to_marketplace(self) -> None:
+        """Escape at confirm-write (no plugins) goes back to marketplace loop."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",
+            "Skip (no more marketplaces)",  # first pass
+            GO_BACK,  # confirm write → back to marketplace
+            "Skip (no more marketplaces)",  # second pass
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.plugins == []
+
+    def test_ctrl_c_still_cancels(self) -> None:
+        """None return (Ctrl+C) cancels the wizard at any point."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",
+            "GitHub repository",
+            None,  # Ctrl+C at repo entry
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+
+    def test_go_back_from_sync_returns_to_confirm(self) -> None:
+        """Escape at run-sync → re-prompts confirm-write."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            True,  # conversion? yes
+            ["codex"],  # target checkbox
+            False,  # custom dir? no
+            True,  # confirm write
+            GO_BACK,  # run sync? → back to confirm write
+            True,  # confirm write (again)
+            True,  # run sync? yes
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.run_sync is True

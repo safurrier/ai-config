@@ -4,6 +4,8 @@ This module groups validation results by entity (plugin, marketplace, skill, etc
 and renders them in a human-friendly format for the CLI.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -198,7 +200,7 @@ def count_by_status(
 def render_doctor_output(
     reports: dict[str, ValidationReport],
     config: AIConfig,
-    console: "Console",
+    console: Console,
     verbose: bool = False,
 ) -> tuple[int, int, int]:
     """Render the improved doctor output.
@@ -272,7 +274,7 @@ def render_doctor_output(
 
 
 def _render_marketplaces_section(
-    console: "Console",
+    console: Console,
     config: AIConfig,
     grouped: dict[EntityType, dict[str, EntityResult]],
     verbose: bool,
@@ -345,7 +347,7 @@ def _render_marketplaces_section(
 
 
 def _render_plugins_section(
-    console: "Console",
+    console: Console,
     config: AIConfig,
     grouped: dict[EntityType, dict[str, EntityResult]],
     verbose: bool,
@@ -413,7 +415,7 @@ def _render_plugins_section(
 
 
 def _render_components_section(
-    console: "Console",
+    console: Console,
     grouped: dict[EntityType, dict[str, EntityResult]],
     verbose: bool,
 ) -> None:

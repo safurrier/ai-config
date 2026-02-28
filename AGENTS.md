@@ -89,7 +89,7 @@ Enforced by tooling—don't memorize rules, run the tools:
 - **Types**: `ty check` with strict mode
 
 Conventions:
-- Python 3.9+ syntax
+- Python 3.10+ syntax
 - Type annotations required
 - Imports: stdlib → third-party → local (enforced by ruff isort)
 

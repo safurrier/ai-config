@@ -1,5 +1,7 @@
 """Validator framework for ai-config doctor command."""
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -81,7 +83,7 @@ async def _run_validator(
 
 
 async def run_validators(
-    config: "AIConfig",
+    config: AIConfig,
     config_path: Path,
     categories: list[str] | None = None,
     target_type: str = "claude",
@@ -130,7 +132,7 @@ async def run_validators(
 
 
 def run_validators_sync(
-    config: "AIConfig",
+    config: AIConfig,
     config_path: Path,
     categories: list[str] | None = None,
     target_type: str = "claude",

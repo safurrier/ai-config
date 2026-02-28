@@ -5,14 +5,12 @@ Provides validators for converted plugin output for each target tool.
 
 from __future__ import annotations
 
-from typing import Union
-
 from ai_config.validators.target.codex import CodexOutputValidator
 from ai_config.validators.target.cursor import CursorOutputValidator
 from ai_config.validators.target.opencode import OpenCodeOutputValidator
 
 # Type alias for any output validator
-OutputValidator = Union[CodexOutputValidator, CursorOutputValidator, OpenCodeOutputValidator]
+OutputValidator = CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator
 
 
 def get_output_validator(

@@ -1,5 +1,7 @@
 """CLI for ai-config."""
 
+from __future__ import annotations
+
 import json
 import signal
 import sys

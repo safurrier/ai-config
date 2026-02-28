@@ -3,6 +3,8 @@
 This module shells out to the `claude` CLI to manage plugins and marketplaces.
 """
 
+from __future__ import annotations
+
 import json
 import subprocess
 from dataclasses import dataclass

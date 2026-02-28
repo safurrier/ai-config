@@ -4,6 +4,8 @@ Validates .mcp.json configuration per the official Claude Code schema:
 https://code.claude.com/docs/en/plugins-reference#mcp-servers
 """
 
+from __future__ import annotations
+
 import json
 import shutil
 from pathlib import Path
@@ -21,7 +23,7 @@ class MCPValidator:
     name = "mcp_validator"
     description = "Validates MCP server configuration files"
 
-    async def validate(self, context: "ValidationContext") -> list[ValidationResult]:
+    async def validate(self, context: ValidationContext) -> list[ValidationResult]:
         """Validate MCP config for all configured plugins.
 
         Args:
