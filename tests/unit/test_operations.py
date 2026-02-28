@@ -774,6 +774,7 @@ class TestSyncMarketplaceNameMismatch:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 side_effect=[
                     ([], []),  # Initial: no marketplaces
+                    ([], []),  # Pre-add baseline
                     (  # After add: registered under different name
                         [
                             InstalledMarketplace(

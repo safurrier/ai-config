@@ -120,6 +120,11 @@ def _sync_marketplaces(
                 is_github = marketplace_config.source == PluginSource.GITHUB
                 repo = marketplace_config.repo if is_github else None
                 path = marketplace_config.path if not is_github else None
+
+                # Snapshot names before this add so we can detect renames
+                pre_add_mps, _ = claude.list_installed_marketplaces()
+                pre_add_names = {mp.name for mp in pre_add_mps}
+
                 result = claude.add_marketplace(repo=repo, name=name, path=path)
                 if not result.success:
                     errors.append(f"Failed to add marketplace '{name}': {result.stderr}")
@@ -131,7 +136,7 @@ def _sync_marketplaces(
                 if name not in post_names:
                     # The marketplace was registered under a different name
                     # (Claude CLI uses the name from marketplace.json)
-                    new_names = post_names - installed_names
+                    new_names = post_names - pre_add_names
                     if new_names:
                         actual = next(iter(new_names))
                         errors.append(
