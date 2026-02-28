@@ -328,7 +328,7 @@ class TestInitCommand:
         result = runner.invoke(main, ["init", "--help"])
 
         assert result.exit_code == 0
-        assert "Create a new ai-config configuration file" in result.output
+        assert "Set up a new ai-config configuration" in result.output
         assert "--non-interactive" in result.output
         assert "--output" in result.output
 

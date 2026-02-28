@@ -56,23 +56,52 @@ class OrderedGroup(click.Group):
         return sorted(commands, key=lambda x: COMMAND_ORDER.index(x) if x in COMMAND_ORDER else 999)
 
 
-@click.group(cls=OrderedGroup)
+@click.group(
+    cls=OrderedGroup,
+    context_settings={"max_content_width": 100},
+    epilog="\b\nExamples:\n"
+    "  ai-config init                          Set up config interactively\n"
+    "  ai-config sync                          Install and sync all plugins\n"
+    "  ai-config sync --dry-run                Preview what sync would do\n"
+    "  ai-config status                        See what's installed\n"
+    "  ai-config doctor                        Check for problems\n"
+    "  ai-config convert ./plugin -t codex     Convert a plugin to Codex format\n"
+    "\n\b\nGetting started:\n"
+    "  ai-config init && ai-config sync && ai-config doctor",
+)
 @click.version_option(package_name="ai-config-cli")
 def main() -> None:
-    """ai-config: Declarative plugin manager for Claude Code."""
+    """ai-config - Declarative plugin manager for Claude Code.
+
+    Define plugins, marketplaces, and MCP servers in a YAML config file.
+    Run sync to install everything. Also converts Claude Code plugins to
+    other AI tools (Codex, Cursor, OpenCode) via convert.
+    """
     pass
 
 
-@main.command()
-@click.option("--config", "-c", "config_path", type=click.Path(exists=True, path_type=Path))
-@click.option("--dry-run", is_flag=True, help="Show what would be done without making changes")
-@click.option("--fresh", is_flag=True, help="Clear cache before syncing")
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config sync --dry-run        Preview changes before applying\n"
+    "  ai-config sync                  Apply changes\n"
+    "  ai-config sync --verify         Apply and verify result\n"
+    "  ai-config sync --fresh          Clear cache, then sync from scratch",
+)
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to config file. Default: auto-detected .ai-config/config.yaml.",
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be done without making changes.")
+@click.option("--fresh", is_flag=True, help="Clear cache before syncing.")
 @click.option(
     "--force-convert",
     is_flag=True,
-    help="Force conversion even if sources appear unchanged",
+    help="Force conversion even if sources appear unchanged.",
 )
-@click.option("--verify", is_flag=True, help="Verify sync after completion")
+@click.option("--verify", is_flag=True, help="Verify installed state matches config after sync.")
 def sync(
     config_path: Path | None,
     dry_run: bool,
@@ -80,26 +109,12 @@ def sync(
     force_convert: bool,
     verify: bool,
 ) -> None:
-    """Sync plugins and marketplaces to match config.
+    """Install, enable, and disable plugins to match your config file.
 
-    \b
-    When to use:
-      - After editing .ai-config/config.yaml to add/remove plugins
-      - After cloning a repo with an existing ai-config setup
-      - To fix drift between config and installed state
-
-    \b
-    What you'll see:
-      - Table of actions taken (install/enable/disable)
-      - "No changes needed" means config already matches reality
-      - Errors show which plugins/marketplaces failed
-
-    \b
-    Typical workflow:
-      1. Edit config.yaml
-      2. Run: ai-config sync --dry-run  (preview changes)
-      3. Run: ai-config sync            (apply changes)
-      4. Verify: ai-config doctor       (check health)
+    Reads .ai-config/config.yaml (or the path given by -c) and makes
+    Claude Code's installed state match. Actions include installing from
+    marketplaces, enabling/disabling plugins, and running conversions
+    for other tools if configured.
     """
     try:
         config = load_config(config_path)
@@ -171,34 +186,31 @@ def sync(
             console.print(f"[success]{SYMBOLS['pass']} All in sync![/success]")
 
 
-@main.command()
-@click.option("--config", "-c", "config_path", type=click.Path(exists=True, path_type=Path))
-@click.option("--verify", is_flag=True, help="Verify current state matches config")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config status                List installed plugins\n"
+    "  ai-config status --verify       Compare installed state with config\n"
+    "  ai-config status --json         Machine-readable output",
+)
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to config file (needed for --verify).",
+)
+@click.option("--verify", is_flag=True, help="Compare installed state against config file.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def status(
     config_path: Path | None,
     verify: bool,
     as_json: bool,
 ) -> None:
-    """Show current plugin and marketplace status.
+    """Show installed plugins and registered marketplaces.
 
-    \b
-    When to use:
-      - See what plugins are currently installed in Claude Code
-      - Check if plugins are enabled or disabled
-      - Compare actual state with config using --verify
-
-    \b
-    What you'll see:
-      - Table of installed plugins with ID, version, scope, and enabled status
-      - List of registered marketplaces
-      - Use --json for machine-readable output
-
-    \b
-    Typical workflow:
-      1. Run: ai-config status          (see current state)
-      2. Run: ai-config status --verify (compare with config)
-      3. Run: ai-config sync            (if out of sync)
+    Lists every plugin Claude Code knows about with its version, scope,
+    and enabled/disabled state. Add --verify to compare against your
+    config and flag anything out of sync.
     """
     result = get_status()
 
@@ -277,33 +289,24 @@ def status(
             sys.exit(1)
 
 
-@main.command()
-@click.option("--all", "update_all", is_flag=True, help="Update all plugins")
-@click.option("--fresh", is_flag=True, help="Clear cache before updating")
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config update --all              Update everything\n"
+    "  ai-config update my-plugin          Update one plugin\n"
+    "  ai-config update --all --fresh      Clear cache, then update",
+)
+@click.option("--all", "update_all", is_flag=True, help="Update all plugins.")
+@click.option("--fresh", is_flag=True, help="Clear cache before updating.")
 @click.argument("plugins", nargs=-1)
 def update(
     update_all: bool,
     fresh: bool,
     plugins: tuple[str, ...],
 ) -> None:
-    """Update plugins to latest versions.
+    """Update plugins to their latest versions.
 
-    \b
-    When to use:
-      - Get latest plugin versions from marketplaces
-      - Update a specific plugin after upstream changes
-      - Refresh all plugins with --all
-
-    \b
-    What you'll see:
-      - Lists plugins that were updated
-      - Shows errors for failed updates
-
-    \b
-    Typical workflow:
-      1. Run: ai-config update --all    (update everything)
-      2. Run: ai-config update plugin1  (update specific plugin)
-      3. Run: ai-config doctor          (verify health after update)
+    Fetches newest versions from marketplaces and re-installs. Name
+    specific plugins to update selectively, or use --all for everything.
     """
     if not update_all and not plugins:
         error_console.print("[error]Specify plugins to update or use --all[/error]")
@@ -337,34 +340,19 @@ def update(
 
 @main.group()
 def cache() -> None:
-    """Manage plugin cache.
-
-    USE CASES:
-      - Clear stale plugin data with 'cache clear'
-      - Force re-download of plugins on next sync
-    """
+    """Manage the plugin cache."""
     pass
 
 
-@cache.command(name="clear")
+@cache.command(
+    name="clear",
+    epilog="\b\nExample:\n  ai-config cache clear && ai-config sync",
+)
 def cache_clear() -> None:
-    """Clear the plugin cache.
+    """Delete cached plugin data.
 
-    \b
-    When to use:
-      - When plugins seem stale or out of date
-      - After changing marketplace URLs
-      - When sync doesn't pick up expected changes
-
-    \b
-    What you'll see:
-      - Success message when cache is cleared
-      - Error message if clearing fails
-
-    \b
-    Typical workflow:
-      1. Run: ai-config cache clear
-      2. Run: ai-config sync --fresh  (re-fetch everything)
+    Forces the next sync to re-download everything from marketplaces.
+    Use when plugins seem stale or after changing marketplace URLs.
     """
     from ai_config.adapters import claude
 
@@ -386,41 +374,28 @@ def cache_clear() -> None:
 
 @main.group()
 def plugin() -> None:
-    """Plugin management commands.
-
-    Subcommands:
-      create - Scaffold a new plugin
-    """
+    """Create and manage plugins."""
     pass
 
 
-@plugin.command(name="create")
+@plugin.command(
+    name="create",
+    epilog="\b\nExamples:\n"
+    "  ai-config plugin create my-plugin\n"
+    "  ai-config plugin create my-plugin --path ~/plugins",
+)
 @click.argument("name")
 @click.option(
     "--path",
     type=click.Path(path_type=Path),
-    help="Base path for plugin directory",
+    help="Base directory to create the plugin in. Defaults to current directory.",
 )
 def plugin_create(name: str, path: Path | None) -> None:
-    """Create a new plugin scaffold.
+    """Scaffold a new plugin directory.
 
-    \b
-    When to use:
-      - Start a new plugin project from scratch
-      - Create a local plugin for testing skills/hooks
-
-    \b
-    What you'll see:
-      - Creates directory with manifest.yaml, skills/, and hooks/
-      - Shows next steps for plugin development
-
-    \b
-    Typical workflow:
-      1. Run: ai-config plugin create my-plugin
-      2. Edit my-plugin/manifest.yaml
-      3. Add skills to my-plugin/skills/
-      4. Add to config.yaml as local marketplace
-      5. Run: ai-config sync
+    Creates NAME/ with a manifest.yaml, skills/, and hooks/
+    subdirectories. Add the plugin to your config as a local
+    marketplace, then run sync to start using it.
     """
     plugin_dir = create_plugin(name, path)
     console.print(f"[success]{SYMBOLS['pass']} Created plugin scaffold at:[/success] {plugin_dir}")
@@ -430,30 +405,29 @@ def plugin_create(name: str, path: Path | None) -> None:
     console.print(f"  3. Add hooks to {plugin_dir}/hooks/")
 
 
-@main.command()
-@click.option("--output", "-o", type=click.Path(path_type=Path), help="Output path for config file")
-@click.option("--non-interactive", is_flag=True, help="Create minimal config without prompts")
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config init                       Interactive setup wizard\n"
+    "  ai-config init -o my-config.yaml     Custom output path\n"
+    "  ai-config init --non-interactive     Empty config, no prompts",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    help="Output path for config file. Default: .ai-config/config.yaml.",
+)
+@click.option(
+    "--non-interactive",
+    is_flag=True,
+    help="Create a minimal empty config without prompts.",
+)
 def init(output: Path | None, non_interactive: bool) -> None:
-    """Create a new ai-config configuration file interactively.
+    """Set up a new ai-config configuration.
 
-    \b
-    When to use:
-      - First-time setup of ai-config in a new project
-      - Starting fresh with a new plugin configuration
-      - Creating config without writing YAML manually
-
-    \b
-    What you'll see:
-      - Interactive wizard walks through marketplace/plugin selection
-      - Creates .ai-config/config.yaml (or custom path with -o)
-      - Use --non-interactive for minimal empty config
-
-    \b
-    Typical workflow:
-      1. Run: ai-config init           (interactive wizard)
-      2. Follow prompts to add marketplaces and plugins
-      3. Run: ai-config sync           (install plugins)
-      4. Run: ai-config doctor         (verify setup)
+    Walks you through adding marketplaces and selecting plugins, then
+    writes .ai-config/config.yaml. Use --non-interactive to create a
+    minimal empty config you can edit by hand.
     """
     from ai_config.init import create_minimal_config, run_init_wizard, write_config
 
@@ -522,23 +496,36 @@ def init(output: Path | None, non_interactive: bool) -> None:
                     console.print(f"  {SYMBOLS['fail']} {error}")
 
 
-@main.command()
-@click.option("--config", "-c", "config_path", type=click.Path(exists=True, path_type=Path))
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config doctor                             Check plugin health\n"
+    "  ai-config doctor --verbose                   Show passing checks too\n"
+    "  ai-config doctor --category component        Run only component checks\n"
+    "  ai-config doctor --target codex ./out        Validate Codex conversion\n"
+    "  ai-config doctor --json                      Machine-readable output",
+)
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to config file. Default: auto-detected .ai-config/config.yaml.",
+)
 @click.option(
     "--category",
     type=click.Choice(list(VALIDATORS.keys())),
     multiple=True,
-    help="Run only specific validation categories",
+    help="Run only specific validation categories (repeatable).",
 )
 @click.option(
     "--target",
     "-t",
     type=click.Choice(["codex", "cursor", "opencode", "all"]),
-    help="Validate converted output for a target tool",
+    help="Validate converted output for a target tool instead of plugin health.",
 )
 @click.argument("output_dir", type=click.Path(exists=True, path_type=Path), required=False)
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-@click.option("--verbose", "-v", is_flag=True, help="Show all checks including passed")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option("--verbose", "-v", is_flag=True, help="Show all checks, including passed ones.")
 def doctor(
     config_path: Path | None,
     category: tuple[str, ...],
@@ -547,47 +534,19 @@ def doctor(
     as_json: bool,
     verbose: bool,
 ) -> None:
-    """Diagnose plugin, marketplace, and component issues.
+    """Check for problems with plugins, marketplaces, and components.
+
+    Runs validation checks and reports pass/fail/warn for each. Failed
+    checks include a fix_hint with remediation steps.
 
     \b
-    When to use:
-      - Verify setup after sync or update
-      - Debug why a plugin or skill isn't working
-      - Check for configuration drift or missing dependencies
-      - Validate converted output (with --target)
+    Default mode checks marketplace registration, plugin install state,
+    skill file validity, hook configuration, and MCP server setup.
 
     \b
-    What you'll see:
-      - Shows pass/fail/warn status for each check
-      - Failed checks include fix_hint with remediation steps
-      - Use --verbose to see all checks (including passed)
-      - Use --json for machine-readable output
-
-    \b
-    Checks performed (default mode):
-      - Marketplace registration and accessibility
-      - Plugin installation and enabled state
-      - Skill file validity and frontmatter
-      - Hook configuration and script existence
-      - MCP server configuration
-
-    \b
-    Checks performed (with --target):
-      - Target-specific output directory structure
-      - SKILL.md files and frontmatter
-      - MCP/hooks/LSP configuration validity
-
-    \b
-    Typical workflow:
-      1. Run: ai-config doctor          (check health)
-      2. Read fix_hint for any failures
-      3. Run suggested commands to fix issues
-      4. Re-run: ai-config doctor       (verify fixes)
-
-    \b
-    For converted output validation:
-      ai-config doctor --target codex ./output-dir
-      ai-config doctor --target all ./output-dir
+    With --target, validates converted output instead: directory
+    structure, skill files, and tool-specific config files. Pass the
+    output directory as an argument (defaults to current directory).
     """
     # Handle target validation mode
     if target:
@@ -765,7 +724,14 @@ def _doctor_target_mode(
         sys.exit(1)
 
 
-@main.command()
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config convert ./my-plugin                    Convert to all targets\n"
+    "  ai-config convert ./my-plugin -t codex           Codex only\n"
+    "  ai-config convert ./my-plugin -t cursor -o ./out Custom output directory\n"
+    "  ai-config convert ./my-plugin --dry-run          Preview without writing\n"
+    "  ai-config convert ./my-plugin --scope user       Write to ~/ instead of ./",
+)
 @click.argument("plugin_path", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--target",
@@ -774,55 +740,59 @@ def _doctor_target_mode(
     multiple=True,
     type=click.Choice(["codex", "cursor", "opencode", "all"]),
     default=["all"],
-    help="Target tool(s) to convert to",
+    show_default=True,
+    help="Target tool(s) to convert to (repeatable).",
 )
 @click.option(
     "--output",
     "-o",
     "output_dir",
     type=click.Path(path_type=Path),
-    help="Output directory (default: based on --scope)",
+    help="Output directory. Default: ~/ for user scope, ./ for project scope.",
 )
 @click.option(
     "--scope",
     type=click.Choice(["user", "project"]),
     default="project",
-    help="Conversion scope for output path resolution",
+    show_default=True,
+    help="Where to write output when -o is not set.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Preview changes without writing files",
+    help="Preview what would be written without creating files.",
 )
 @click.option(
     "--best-effort",
     is_flag=True,
-    help="Continue conversion even if some components fail",
+    help="Keep going even if some components fail to convert.",
 )
 @click.option(
     "--format",
     "report_format",
     type=click.Choice(["summary", "markdown", "json"]),
     default="summary",
-    help="Output format for conversion report",
+    show_default=True,
+    help="Output format for the conversion report.",
 )
 @click.option(
     "--report",
     "report_path",
     type=click.Path(path_type=Path),
-    help="Write conversion report to file",
+    help="Write conversion report to a file.",
 )
 @click.option(
     "--report-format",
     "report_file_format",
     type=click.Choice(["json", "markdown"]),
     default="json",
-    help="Format for report file output",
+    show_default=True,
+    help="Format for the report file (used with --report).",
 )
 @click.option(
     "--commands-as-skills",
     is_flag=True,
-    help="[Codex] Convert commands to skills (default: prompts for 1:1 behavior)",
+    help="Codex only: convert commands to skills instead of prompts.",
 )
 def convert(
     plugin_path: Path,
@@ -838,31 +808,16 @@ def convert(
 ) -> None:
     """Convert a Claude Code plugin to other AI coding tools.
 
-    \b
-    Supported targets:
-      - codex     OpenAI Codex (skills, prompts, MCP as TOML)
-      - cursor    Cursor (skills, commands, hooks, MCP)
-      - opencode  OpenCode (skills, commands, MCP, LSP)
-      - all       All supported tools (default)
+    Reads PLUGIN_PATH and emits equivalent config for the target
+    tool(s). Components that can't convert exactly are flagged as
+    degraded or skipped in the report.
 
     \b
-    When to use:
-      - Share your Claude Code plugins with users of other tools
-      - Maintain plugins that work across multiple AI coding assistants
-      - Migrate plugin development to a different tool
-
-    \b
-    What you'll see:
-      - Component mappings showing how each part converted
-      - Warnings for features that couldn't be converted
-      - Files created/updated in the output directory
-
-    \b
-    Example usage:
-      ai-config convert ./my-plugin --target codex
-      ai-config convert ./my-plugin -t cursor -t opencode -o ./converted
-      ai-config convert ./my-plugin -t codex --scope user
-      ai-config convert ./my-plugin --dry-run  # Preview without writing
+    Targets:
+      codex      OpenAI Codex (skills as prompts, MCP as TOML)
+      cursor     Cursor (skills, commands, hooks, MCP)
+      opencode   OpenCode (skills, commands, MCP, LSP)
+      all        All of the above (default)
     """
     from ai_config.converters import InstallScope, TargetTool, convert_plugin, preview_conversion
 
@@ -989,30 +944,37 @@ def _resolve_report_path(base: Path, target: str, report_format: str) -> Path:
     return base
 
 
-@main.command()
+@main.command(
+    epilog="\b\nExamples:\n"
+    "  ai-config watch                 Start watching with defaults\n"
+    "  ai-config watch --dry-run       See what would sync, don't apply\n"
+    "  ai-config watch --verbose       Show individual file events\n"
+    "  ai-config watch --debounce 3    Wait 3 seconds between syncs",
+)
 @click.option(
     "--config",
     "-c",
     "config_path",
     type=click.Path(exists=True, path_type=Path),
-    help="Path to config file",
+    help="Path to config file. Default: auto-detected .ai-config/config.yaml.",
 )
 @click.option(
     "--debounce",
     type=float,
     default=1.5,
-    help="Seconds to wait after changes before syncing",
+    show_default=True,
+    help="Seconds to wait after a change before syncing.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show changes without syncing",
+    help="Report changes without syncing.",
 )
 @click.option(
     "--verbose",
     "-v",
     is_flag=True,
-    help="Show all file events",
+    help="Show individual file change events.",
 )
 def watch(
     config_path: Path | None,
@@ -1020,33 +982,16 @@ def watch(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Watch config and plugin directories, auto-sync on changes.
+    """Watch for file changes and auto-sync.
+
+    Monitors your config file and local plugin directories. When a file
+    changes, waits for the debounce period, then runs sync. Useful
+    during plugin development. Press Ctrl+C to stop.
 
     \b
-    When to use:
-      - During plugin development to auto-sync on skill/hook edits
-      - When iterating on config to see changes applied immediately
-      - Keeping plugins in sync while editing across multiple files
-
-    \b
-    What you'll see:
-      - Which paths are being watched (config + plugin directories)
-      - Detected changes grouped by type (config vs plugin)
-      - Sync results after each batch of changes
-
-    \b
-    How it works:
-      1. Start: ai-config watch
-      2. Edit your plugin files or config
-      3. Changes are batched (1.5s debounce)
-      4. Sync runs automatically
-      5. Press Ctrl+C to stop
-
-    \b
-    Important limitation:
-      Claude Code only loads plugins at session start. After syncing,
-      you must restart Claude Code for changes to take effect.
-      Use: claude --resume to continue your previous session.
+    Note: Claude Code loads plugins at session start. After watch syncs
+    new changes, restart Claude Code for them to take effect. Use
+    "claude --resume" to keep your session.
     """
     from ai_config.watch import FileChange, collect_watch_paths, run_watch_loop
 
