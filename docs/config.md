@@ -66,9 +66,12 @@ marketplaces:
   dev-plugins:
     source: local
     path: ./plugins
+  dotfiles-plugins:
+    source: local
+    path: $DOTS_REPO/config/ai-config/plugins
 ```
 
-Relative paths are resolved from the config file's parent directory (the repo root, not the `.ai-config/` directory). Absolute paths are used as-is.
+Relative paths are resolved from the config file's parent directory (the repo root, not the `.ai-config/` directory). Absolute paths are used as-is. Environment variables (`$VAR` or `${VAR}`) and tilde (`~`) are expanded at load time — use them for portability across machines.
 
 Each marketplace has a name (used to reference plugins) and a source config.
 
@@ -176,14 +179,19 @@ targets:
 
 ## Environment Variables
 
-You can use environment variables in config:
+You can use environment variables in local marketplace paths and conversion output directories:
 
 ```yaml
 marketplaces:
-  private-plugins:
-    source: github
-    repo: ${GITHUB_ORG}/private-plugins
+  my-plugins:
+    source: local
+    path: $MY_REPO/plugins        # expanded at load time
+    # also works: ${MY_REPO}/plugins, ~/plugins
+conversion:
+  output_dir: $PROJECT_ROOT/output  # also expanded
 ```
+
+Variables are expanded at load time using `os.path.expandvars`. If a variable is undefined, the literal `$VAR` string is kept (and the path will likely fail to resolve). The `ai-config init` wizard preserves env var strings in the config file for portability.
 
 ## Validation
 
