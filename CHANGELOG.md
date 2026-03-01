@@ -7,14 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-02-28
+## [0.4.0] - 2026-03-01
 
 ### Added
 
 - Pi as a conversion target — skills map natively (Agent Skills standard), commands map as prompt templates
+- Pi user-scope output goes to `~/.pi/agent/skills/` and `~/.pi/agent/prompts/` (matching Pi's discovery paths)
+- Pi output validator (`ai-config doctor --target pi`) checks both project and user scope locations
+- `--force` alias for `--fresh` on `sync` and `update` commands
 - `ai_agent_docs/adding-a-target.md` — step-by-step playbook for adding new conversion targets
-- Pi output validator (`ai-config doctor --target pi`)
-- Pi in Docker E2E test image
+- Pi in Docker E2E test image (`@mariozechner/pi-coding-agent`)
+- "One config, five tools" example in README showing the full multi-tool sync flow
+
+### Changed
+
+- README and docs reframed around portability — no vendor lock-in, reproducible setup across machines
+
+### Fixed
+
+- Flaky watch integration tests (increased watchdog init and join timeouts)
+- `test_no_config_found` failing when `.ai-config/config.yaml` exists in CWD
 
 ## [0.3.0] - 2026-02-28
 
