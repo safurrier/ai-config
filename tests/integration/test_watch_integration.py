@@ -110,14 +110,14 @@ class TestWatchLoop:
         thread.start()
 
         # Give watchdog time to set up (longer for parallel test runs)
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         # Modify the config file
         with open(config_path, "a") as f:
             f.write("# comment\n")
 
         # Wait for detection (with timeout)
-        thread.join(timeout=3.0)
+        thread.join(timeout=5.0)
 
         # Should have received changes
         assert len(changes_received) >= 1

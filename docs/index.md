@@ -65,6 +65,21 @@ ai-config status
 
 Shows what's installed vs what's in config.
 
+## The idea
+
+You define your setup once. `ai-config sync` installs your Claude plugins and generates equivalent config for every other tool:
+
+```
+ai-config sync
+  → Claude Code: plugins installed
+  → Codex:       ~/.codex/skills/, ~/.codex/mcp-config.toml
+  → Cursor:      ~/.cursor/rules/, ~/.cursor/mcp.json
+  → OpenCode:    ~/.opencode/skills/, ~/opencode.json
+  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/
+```
+
+Check your `.ai-config/config.yaml` into your dotfiles. Run `ai-config sync` on any machine. Want to try a new tool? Add it to `conversion.targets` and re-sync — your skills are already there.
+
 ## What's Next
 
 - [Commands](commands.md) — Full command reference

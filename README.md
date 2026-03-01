@@ -95,6 +95,42 @@ ai-config doctor
 
 Validates marketplaces, plugins, skills, hooks, and MCP servers. Shows fix hints for any issues.
 
+## Example: one config, five tools
+
+Say you have a plugin marketplace with your coding skills and MCP servers. Here's the full config:
+
+```yaml
+version: 1
+targets:
+  - type: claude
+    config:
+      marketplaces:
+        my-plugins:
+          source: github
+          repo: myorg/ai-plugins
+      plugins:
+        - id: code-review@my-plugins
+          scope: user
+        - id: test-writer@my-plugins
+          scope: user
+      conversion:
+        enabled: true
+        targets: [codex, cursor, opencode, pi]
+        scope: user
+```
+
+Run `ai-config sync` and you get:
+
+- **Claude Code**: plugins installed via `claude plugin install`
+- **Codex**: skills in `~/.codex/skills/`, MCP in `~/.codex/mcp-config.toml`
+- **Cursor**: rules in `~/.cursor/rules/`, MCP in `~/.cursor/mcp.json`
+- **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
+- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`
+
+Same skills, same setup, every tool. Check this config into your dotfiles and run `ai-config sync` on any machine.
+
+Want to try Pi for the first time? Just add `pi` to the targets list and re-sync. Your skills are already there.
+
 ## What it does
 
 **Declarative config** - Define your plugins in `.ai-config/config.yaml`:
@@ -117,7 +153,7 @@ targets:
           enabled: true
       conversion:
         enabled: true
-        targets: [codex, cursor, opencode]
+        targets: [codex, cursor, opencode, pi]
         scope: user
 ```
 
