@@ -109,8 +109,8 @@ class TestWatchLoop:
         )
         thread.start()
 
-        # Give watchdog time to set up (longer for parallel test runs)
-        time.sleep(1.0)
+        # Give watchdog time to set up (macOS FSEvents can be slow on tmp dirs)
+        time.sleep(2.0)
 
         # Modify the config file
         with open(config_path, "a") as f:
