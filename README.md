@@ -1,14 +1,17 @@
 # ai-config
 
-Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, and OpenCode.
+Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.
 
 ## Why this exists
 
-Claude Code plugins are useful. They let you extend Claude with custom skills, hooks, and MCP servers. The problem is managing them.
+You've spent time building up your AI coding setup — custom skills, MCP servers, hooks, workflows. Then you want to try Codex or Pi, and you're starting from scratch. Or you get a new machine and have to remember what you installed.
 
-Without ai-config, you're running `claude plugin install` and `claude plugin marketplace add` commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.
+ai-config solves both problems. You define your setup in one YAML file, and it:
 
-ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools so you don't have to maintain separate configs.
+1. **Installs your plugins** across machines reproducibly (`ai-config sync`)
+2. **Converts your setup** to work with other tools automatically — same skills, same config, no manual porting
+
+No more vendor lock-in because your customizations are trapped in one tool's config directory. No more juggling dotfiles across `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, and `.pi/`. Write it once, sync everywhere.
 
 Or more simply, run `ai-config init` and it walks you through everything.
 
