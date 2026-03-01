@@ -863,6 +863,11 @@
 <td>OpenCode</td>
 <td><code>opencode.json</code> + <code>.opencode/</code> skills dir</td>
 </tr>
+<tr>
+<td><code>pi</code></td>
+<td>Pi</td>
+<td><code>.pi/</code> dir with skills + prompt templates</td>
+</tr>
 </tbody>
 </table>
 <p>Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.</p>
@@ -921,7 +926,7 @@
 <td><code>targets</code></td>
 <td>list</td>
 <td><em>(required)</em></td>
-<td>Target tools: <code>codex</code>, <code>cursor</code>, <code>opencode</code></td>
+<td>Target tools: <code>codex</code>, <code>cursor</code>, <code>opencode</code>, <code>pi</code></td>
 </tr>
 <tr>
 <td><code>scope</code></td>
@@ -952,6 +957,7 @@
 <th>Codex</th>
 <th>Cursor</th>
 <th>OpenCode</th>
+<th>Pi</th>
 </tr>
 </thead>
 <tbody>
@@ -960,17 +966,20 @@
 <td><code>.codex/skills/*.md</code></td>
 <td><code>.cursor/rules/*.mdc</code></td>
 <td><code>.opencode/skills/*.md</code></td>
+<td><code>.pi/skills/*/SKILL.md</code></td>
 </tr>
 <tr>
 <td>Commands</td>
 <td>Prompts or skills</td>
 <td>Commands</td>
 <td>Prompts</td>
+<td>Prompt templates</td>
 </tr>
 <tr>
 <td>Hooks</td>
 <td>Unsupported</td>
 <td>Hooks config</td>
+<td>Unsupported</td>
 <td>Unsupported</td>
 </tr>
 <tr>
@@ -978,15 +987,18 @@
 <td><code>.codex/config.toml</code></td>
 <td><code>.cursor/mcp.json</code></td>
 <td><code>opencode.json</code></td>
+<td>Unsupported</td>
 </tr>
 <tr>
 <td>LSP servers</td>
 <td>Unsupported</td>
 <td>Unsupported</td>
 <td><code>opencode.lsp.json</code></td>
+<td>Unsupported</td>
 </tr>
 <tr>
 <td>Agents</td>
+<td>Unsupported</td>
 <td>Unsupported</td>
 <td>Unsupported</td>
 <td>Unsupported</td>
@@ -1014,7 +1026,7 @@
 <tbody>
 <tr>
 <td><code>-t, --target TARGET</code></td>
-<td>Target tool(s): <code>codex</code>, <code>cursor</code>, <code>opencode</code>, <code>all</code> (default: <code>all</code>)</td>
+<td>Target tool(s): <code>codex</code>, <code>cursor</code>, <code>opencode</code>, <code>pi</code>, <code>all</code> (default: <code>all</code>)</td>
 </tr>
 <tr>
 <td><code>-o, --output DIR</code></td>

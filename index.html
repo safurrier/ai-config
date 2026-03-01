@@ -674,7 +674,7 @@
 <h2 id="why-this-exists">Why This Exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>Claude Code plugins are useful. They let you extend Claude with custom skills, hooks, and MCP servers. The problem is managing them.</p>
 <p>Without ai-config, you're running <code>claude plugin install</code> and <code>claude plugin marketplace add</code> commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.</p>
-<p>ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, and OpenCode.</p>
+<p>ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, OpenCode, and Pi.</p>
 <p>Or more simply, run <code>ai-config init</code> and it writes the config for you.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>git+https://github.com/safurrier/ai-config
@@ -698,7 +698,7 @@
 <p><strong>3. Convert to other tools</strong> (optional)</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--target<span class="w"> </span>codex
 </code></pre></div>
-<p>Converts a Claude Code plugin to work with Codex, Cursor, or OpenCode. You can also set up automatic conversion on sync via the <code>conversion</code> config section.</p>
+<p>Converts a Claude Code plugin to work with Codex, Cursor, OpenCode, or Pi. You can also set up automatic conversion on sync via the <code>conversion</code> config section.</p>
 <p><strong>4. Check status</strong></p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-config<span class="w"> </span>status
 </code></pre></div>
