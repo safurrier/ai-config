@@ -578,6 +578,32 @@ class TestPiEmitter:
         assert len(cmd_mappings) >= 1
         assert all(m.status == MappingStatus.TRANSFORM for m in cmd_mappings)
 
+    def test_user_scope_emits_to_agent_subdir(self, ir, tmp_path: Path) -> None:
+        """User scope should emit to .pi/agent/skills/ and .pi/agent/prompts/."""
+        emitter = PiEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        # Skills go to .pi/agent/skills/, not .pi/skills/
+        skill_md = tmp_path / ".pi" / "agent" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        assert skill_md.exists()
+        assert not (tmp_path / ".pi" / "skills").exists()
+
+        # Prompts go to .pi/agent/prompts/, not .pi/prompts/
+        prompt_files = list((tmp_path / ".pi" / "agent" / "prompts").glob("*.md"))
+        assert len(prompt_files) >= 1
+        assert not (tmp_path / ".pi" / "prompts").exists()
+
+    def test_project_scope_emits_to_pi_root(self, ir, tmp_path: Path) -> None:
+        """Project scope should emit to .pi/skills/ and .pi/prompts/."""
+        emitter = PiEmitter(scope=InstallScope.PROJECT)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        skill_md = tmp_path / ".pi" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        assert skill_md.exists()
+        assert not (tmp_path / ".pi" / "agent").exists()
+
     def test_emit_binary_skill_files(self, tmp_path: Path) -> None:
         """Test binary files in skills are copied."""
         ir = PluginIR(

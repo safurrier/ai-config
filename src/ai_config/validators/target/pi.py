@@ -23,9 +23,13 @@ class PiOutputValidator:
     description = "Validates Pi converted output"
 
     def validate_skills(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate skills in .pi/skills/ directory."""
+        """Validate skills in .pi/skills/ or .pi/agent/skills/ directory."""
         results: list[ValidationResult] = []
+        # Check both project (.pi/skills/) and user (.pi/agent/skills/) locations
         skills_dir = output_dir / ".pi" / "skills"
+        agent_skills_dir = output_dir / ".pi" / "agent" / "skills"
+        if agent_skills_dir.exists():
+            skills_dir = agent_skills_dir
 
         if not skills_dir.exists():
             results.append(
@@ -176,9 +180,12 @@ class PiOutputValidator:
             return None
 
     def validate_prompts(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate prompt templates in .pi/prompts/ directory."""
+        """Validate prompt templates in .pi/prompts/ or .pi/agent/prompts/ directory."""
         results: list[ValidationResult] = []
         prompts_dir = output_dir / ".pi" / "prompts"
+        agent_prompts_dir = output_dir / ".pi" / "agent" / "prompts"
+        if agent_prompts_dir.exists():
+            prompts_dir = agent_prompts_dir
 
         if not prompts_dir.exists():
             return results  # No prompts is fine
