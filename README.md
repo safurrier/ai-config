@@ -237,10 +237,24 @@ Skills, commands, hooks, and MCP servers are mapped to each tool's native format
 
 **Plugin installed but not showing up in / commands**
 
-Clear cache and re-sync:
+Clear the plugin cache and re-sync:
 
 ```bash
-ai-config sync --fresh
+ai-config sync --force
+```
+
+**Added a new conversion target but nothing happened**
+
+Conversion caches results by content hash. Force re-conversion:
+
+```bash
+ai-config sync --force-convert
+```
+
+**Full clean rebuild** (clear plugin cache + re-convert everything):
+
+```bash
+ai-config sync --force --force-convert
 ```
 
 **Something's broken and Claude Code won't help**
@@ -252,7 +266,7 @@ ai-config doctor --verbose
 **Converted output looks wrong**
 
 ```bash
-ai-config doctor --target codex
+ai-config doctor --target codex    # or cursor, opencode, pi
 ```
 
 ## License
