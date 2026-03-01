@@ -276,6 +276,25 @@
   
 
       
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="conversion/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Conversion
+
+      </a>
+    </li>
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -516,6 +535,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="conversion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conversion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -624,11 +670,11 @@
 
 
 <h1 id="ai-config">ai-config<a class="headerlink" href="#ai-config" title="Permanent link">&para;</a></h1>
-<p>Declarative plugin manager for Claude Code.</p>
+<p>Declarative plugin manager for Claude Code — with cross-tool plugin conversion.</p>
 <h2 id="why-this-exists">Why This Exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>Claude Code plugins are useful. They let you extend Claude with custom skills, hooks, and MCP servers. The problem is managing them.</p>
 <p>Without ai-config, you're running <code>claude plugin install</code> and <code>claude plugin marketplace add</code> commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.</p>
-<p>ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest.</p>
+<p>ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, and OpenCode.</p>
 <p>Or more simply, run <code>ai-config init</code> and it writes the config for you.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>git+https://github.com/safurrier/ai-config
@@ -649,14 +695,19 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ai-config<span class="w"> </span>sync
 </code></pre></div>
 <p>Installs/uninstalls plugins to match your config. Run this after editing <code>config.yaml</code>.</p>
-<p><strong>3. Check status</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-config<span class="w"> </span>status
+<p><strong>3. Convert to other tools</strong> (optional)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--target<span class="w"> </span>codex
+</code></pre></div>
+<p>Converts a Claude Code plugin to work with Codex, Cursor, or OpenCode. You can also set up automatic conversion on sync via the <code>conversion</code> config section.</p>
+<p><strong>4. Check status</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-config<span class="w"> </span>status
 </code></pre></div>
 <p>Shows what's installed vs what's in config.</p>
 <h2 id="whats-next">What's Next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="commands/">Commands</a> - Full command reference</li>
-<li><a href="config/">Configuration</a> - Config file format and examples</li>
+<li><a href="commands/">Commands</a> — Full command reference</li>
+<li><a href="config/">Configuration</a> — Config file format and examples</li>
+<li><a href="conversion/">Conversion</a> — Converting plugins to other AI tools</li>
 </ul>
 
 
