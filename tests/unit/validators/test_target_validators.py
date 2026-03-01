@@ -331,6 +331,75 @@ class TestOpenCodeValidator:
         assert any(r.status == "pass" for r in results)
 
 
+class TestPiValidator:
+    """Tests for Pi output validation."""
+
+    def test_validate_skills_directory_exists(self, tmp_path: Path) -> None:
+        """Valid skill passes validation."""
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        skill_dir = tmp_path / ".pi" / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: A test skill\n---\n\n# My Skill\n"
+        )
+
+        validator = PiOutputValidator()
+        results = validator.validate_skills(tmp_path)
+        failures = [r for r in results if r.status == "fail"]
+        assert len(failures) == 0
+
+    def test_validate_skills_missing_description(self, tmp_path: Path) -> None:
+        """Skill without description fails (Pi won't load it)."""
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        skill_dir = tmp_path / ".pi" / "skills" / "no-desc"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: no-desc\n---\n\nBody\n")
+
+        validator = PiOutputValidator()
+        results = validator.validate_skills(tmp_path)
+        failures = [r for r in results if r.status == "fail"]
+        assert len(failures) == 1
+        assert "description" in failures[0].message.lower()
+
+    def test_validate_skills_missing_skill_md(self, tmp_path: Path) -> None:
+        """Skill dir without SKILL.md fails."""
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        skill_dir = tmp_path / ".pi" / "skills" / "empty"
+        skill_dir.mkdir(parents=True)
+
+        validator = PiOutputValidator()
+        results = validator.validate_skills(tmp_path)
+        failures = [r for r in results if r.status == "fail"]
+        assert len(failures) == 1
+        assert "SKILL.md" in failures[0].message
+
+    def test_validate_prompts(self, tmp_path: Path) -> None:
+        """Valid prompt templates pass validation."""
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        prompts_dir = tmp_path / ".pi" / "prompts"
+        prompts_dir.mkdir(parents=True)
+        (prompts_dir / "review.md").write_text("---\ndescription: Review code\n---\nReview this.")
+
+        validator = PiOutputValidator()
+        results = validator.validate_prompts(tmp_path)
+        passes = [r for r in results if r.status == "pass"]
+        assert len(passes) == 1
+
+    def test_validate_all_no_pi_dir(self, tmp_path: Path) -> None:
+        """No .pi directory produces a warning."""
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        validator = PiOutputValidator()
+        results = validator.validate_all(tmp_path)
+        warnings = [r for r in results if r.status == "warn"]
+        assert len(warnings) == 1
+        assert ".pi" in warnings[0].message
+
+
 class TestValidatorFactory:
     """Tests for the validator factory function."""
 
@@ -357,6 +426,14 @@ class TestValidatorFactory:
         validator = get_output_validator("opencode")
         assert validator is not None
         assert "opencode" in validator.__class__.__name__.lower()
+
+    def test_get_validator_pi(self) -> None:
+        """Test getting Pi validator."""
+        from ai_config.validators.target import get_output_validator
+
+        validator = get_output_validator("pi")
+        assert validator is not None
+        assert "pi" in validator.__class__.__name__.lower()
 
     def test_get_validator_unknown_raises(self) -> None:
         """Test that unknown target raises ValueError."""
@@ -443,6 +520,30 @@ class TestIntegrationWithConversion:
 
         # Validate
         validator = OpenCodeOutputValidator()
+        results = validator.validate_all(tmp_path)
+
+        failures = [r for r in results if r.status == "fail"]
+        assert len(failures) == 0, f"Validation failures: {failures}"
+
+    def test_convert_and_validate_pi(self, tmp_path: Path) -> None:
+        """Test that converted Pi output validates."""
+        from ai_config.converters import TargetTool, convert_plugin
+        from ai_config.validators.target.pi import PiOutputValidator
+
+        fixtures = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
+        plugin_path = fixtures / "complete-plugin"
+
+        if not plugin_path.exists():
+            pytest.skip("Test fixture not available")
+
+        convert_plugin(
+            plugin_path=plugin_path,
+            targets=[TargetTool.PI],
+            output_dir=tmp_path,
+            dry_run=False,
+        )
+
+        validator = PiOutputValidator()
         results = validator.validate_all(tmp_path)
 
         failures = [r for r in results if r.status == "fail"]

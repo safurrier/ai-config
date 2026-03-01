@@ -46,8 +46,9 @@ class TestFindConfigFile:
     def test_no_config_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should raise when no config found in default paths."""
         monkeypatch.chdir(tmp_path)
-        # Patch home to tmp_path so it doesn't find user config
-        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fakehome")
+        # Patch the module-level default paths to only check tmp_path locations
+        fake_paths = [tmp_path / ".ai-config" / "config.yaml", tmp_path / ".ai-config" / "config.yml"]
+        monkeypatch.setattr("ai_config.config.DEFAULT_CONFIG_PATHS", fake_paths)
         with pytest.raises(ConfigNotFoundError, match="No config file found"):
             find_config_file()
 

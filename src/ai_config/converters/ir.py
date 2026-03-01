@@ -20,6 +20,7 @@ class TargetTool(str, Enum):
     CODEX = "codex"
     CURSOR = "cursor"
     OPENCODE = "opencode"
+    PI = "pi"
 
 
 class InstallScope(str, Enum):

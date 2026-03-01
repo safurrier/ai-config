@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-28
+
+### Added
+
+- Pi as a conversion target — skills map natively (Agent Skills standard), commands map as prompt templates
+- `ai_agent_docs/adding-a-target.md` — step-by-step playbook for adding new conversion targets
+- Pi output validator (`ai-config doctor --target pi`)
+- Pi in Docker E2E test image
+
+## [0.3.0] - 2026-02-28
+
 ### Added
 
 - Docker-based E2E testing infrastructure

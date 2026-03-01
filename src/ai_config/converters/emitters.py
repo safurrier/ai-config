@@ -971,12 +971,157 @@ class OpenCodeEmitter:
         result.add_file(config_path, json.dumps({"lsp": lsp_entries}, indent=2))
 
 
+class PiEmitter:
+    """Emit plugins in Pi format.
+
+    Pi implements the Agent Skills standard. Skills map natively.
+    Commands map to Pi prompt templates. Hooks and MCP are unsupported.
+    """
+
+    target = TargetTool.PI
+
+    def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
+        self.scope = scope
+
+    def emit(self, ir: PluginIR) -> EmitResult:
+        result = EmitResult(target=self.target)
+        plugin_id = ir.identity.plugin_id
+
+        for skill in ir.skills():
+            self._emit_skill(result, skill, plugin_id)
+
+        for cmd in ir.commands():
+            self._emit_command(result, cmd, plugin_id)
+
+        for _hook in ir.hooks():
+            result.add_mapping(
+                "hook",
+                "hooks",
+                MappingStatus.UNSUPPORTED,
+                notes="Pi uses TypeScript extensions for event handling",
+            )
+
+        for server in ir.mcp_servers():
+            result.add_mapping(
+                "mcp_server",
+                server.name,
+                MappingStatus.UNSUPPORTED,
+                notes="Pi does not support MCP; use CLI tools exposed as skills",
+            )
+
+        for agent in ir.agents():
+            result.add_mapping(
+                "agent",
+                agent.name,
+                MappingStatus.UNSUPPORTED,
+                notes="Pi does not support agent definitions",
+            )
+
+        for lsp in ir.lsp_servers():
+            result.add_mapping(
+                "lsp",
+                lsp.name,
+                MappingStatus.UNSUPPORTED,
+                notes="Pi does not support custom LSP servers",
+            )
+
+        return result
+
+    def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
+        """Emit a skill to Pi format (Agent Skills standard)."""
+        skill_dir = Path(".pi") / "skills" / f"{plugin_id}-{skill.name}"
+        skill_path = skill_dir / "SKILL.md"
+
+        # Build frontmatter — Pi supports the Agent Skills standard fields
+        meta: dict[str, Any] = {"name": skill.name}
+        if skill.description:
+            meta["description"] = skill.description
+        if skill.disable_model_invocation:
+            meta["disable-model-invocation"] = True
+
+        # Extract body from SKILL.md
+        body = ""
+        for f in skill.files:
+            if f.relpath == "SKILL.md" and isinstance(f, TextFile):
+                file_content = f.content
+                if file_content.startswith("---"):
+                    parts = file_content.split("---", 2)
+                    if len(parts) >= 3:
+                        body = parts[2].strip()
+                else:
+                    body = file_content
+                break
+
+        frontmatter = yaml.dump(meta, default_flow_style=False, sort_keys=False)
+        content = f"---\n{frontmatter}---\n\n{body}"
+        result.add_file(skill_path, content)
+
+        # Copy other skill files (scripts, references, etc.)
+        for f in skill.files:
+            if f.relpath != "SKILL.md":
+                if isinstance(f, TextFile):
+                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
+                elif isinstance(f, BinaryFile):
+                    result.add_binary_file(
+                        skill_dir / f.relpath,
+                        _decode_b64_file(f),
+                        f.executable,
+                    )
+
+        result.add_mapping(
+            "skill",
+            skill.name,
+            MappingStatus.NATIVE,
+            target_path=skill_path,
+        )
+
+    def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
+        """Emit a command as a Pi prompt template."""
+        prompt_name = f"{plugin_id}-{cmd.name}"
+        prompt_path = Path(".pi") / "prompts" / f"{prompt_name}.md"
+
+        # Build frontmatter
+        meta: dict[str, Any] = {}
+        if cmd.description:
+            meta["description"] = cmd.description
+
+        body = cmd.markdown
+        if cmd.argument_hint:
+            body = f"{body}\n\nArguments: {cmd.argument_hint}"
+
+        if meta:
+            frontmatter = yaml.dump(meta, default_flow_style=False)
+            content = f"---\n{frontmatter}---\n\n{body}"
+        else:
+            content = body
+
+        result.add_file(prompt_path, content)
+
+        # Pi prompt templates support $1, $2, $@ natively
+        lost = []
+        if cmd.has_arguments_var:
+            result.add_diagnostic(
+                Severity.INFO,
+                f"Command '{cmd.name}' uses $ARGUMENTS — Pi uses $@ for the same purpose",
+                component_ref=f"command:{cmd.name}",
+            )
+
+        result.add_mapping(
+            "command",
+            cmd.name,
+            MappingStatus.TRANSFORM,
+            target_path=prompt_path,
+            notes=f"Invoke with /{prompt_name}",
+            lost_features=lost,
+        )
+
+
 # Factory function
 def get_emitter(
     target: TargetTool,
     scope: InstallScope = InstallScope.PROJECT,
     commands_as_skills: bool = False,
-) -> CodexEmitter | CursorEmitter | OpenCodeEmitter:
+) -> CodexEmitter | CursorEmitter | OpenCodeEmitter | PiEmitter:
     """Get an emitter for the specified target tool.
 
     Args:
@@ -991,5 +1136,7 @@ def get_emitter(
         return CursorEmitter(scope)
     elif target == TargetTool.OPENCODE:
         return OpenCodeEmitter(scope)
+    elif target == TargetTool.PI:
+        return PiEmitter(scope)
     else:
         raise ValueError(f"No emitter for target: {target}")

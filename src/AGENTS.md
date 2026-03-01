@@ -18,7 +18,7 @@ ai_config/
 ├── converters/      # Plugin conversion pipeline
 │   ├── ir.py            # Tool-agnostic intermediate representation (Pydantic models)
 │   ├── claude_parser.py # Claude plugin dir → PluginIR
-│   ├── emitters.py      # PluginIR → target files (Codex, Cursor, OpenCode)
+│   ├── emitters.py      # PluginIR → target files (Codex, Cursor, OpenCode, Pi)
 │   ├── convert.py       # Orchestrator (parse + emit + report)
 │   └── report.py        # Structured conversion reports
 └── validators/      # doctor command validation framework
@@ -27,7 +27,7 @@ ai_config/
     ├── component/   # skill.py, hook.py, mcp.py
     ├── marketplace/ # validators.py (source type validation)
     ├── plugin/      # validators.py
-    └── target/      # Output validators (codex.py, cursor.py, opencode.py)
+    └── target/      # Output validators (codex.py, cursor.py, opencode.py, pi.py)
 ```
 
 ## Key Patterns
@@ -67,7 +67,7 @@ ai_config/
 - `_run_marketplace_loop` extracted as a helper with its own sub-step tracking
 
 **Target output validators** (`validators/target/`)
-- `CodexOutputValidator`, `CursorOutputValidator`, `OpenCodeOutputValidator`
+- `CodexOutputValidator`, `CursorOutputValidator`, `OpenCodeOutputValidator`, `PiOutputValidator`
 - Validate converted output structure (skills dirs, config files, naming conventions)
 - Used by `ai-config doctor --target <tool> <dir>`
 
@@ -82,11 +82,13 @@ Example: `validators/component/skill.py`
 
 ## Adding a New Target Emitter
 
-1. Create a class in `converters/emitters.py` with `target: TargetTool` and `emit(ir: PluginIR) -> EmitResult`
-2. Add to the `get_emitter()` factory function
-3. Create matching validator in `validators/target/<tool>.py`
-4. Add to `get_output_validator()` in `validators/target/__init__.py`
-5. Add CLI target choice in `cli.py` convert command
+See `ai_agent_docs/adding-a-target.md` for the full checklist (19 files). Summary:
+
+1. Add to `TargetTool` enum in `converters/ir.py`
+2. Create emitter class in `converters/emitters.py`, register in `get_emitter()` factory
+3. Create validator in `validators/target/<tool>.py`, register in `__init__.py`
+4. Add to `types.py` Literal + valid_targets, `cli.py` Choice lists (3 places), `init.py` target_choices
+5. Add tests (unit emitter + protocol + validator + E2E), Docker install, docs
 
 ## Adding a New CLI Command
 

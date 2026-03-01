@@ -11,6 +11,7 @@ The `convert` command takes a Claude Code plugin directory and produces equivale
 | `codex` | OpenAI Codex | `.codex/` dir with TOML config + skills |
 | `cursor` | Cursor | `.cursor/` dir with rules + MCP config |
 | `opencode` | OpenCode | `opencode.json` + `.opencode/` skills dir |
+| `pi` | Pi | `.pi/` dir with skills + prompt templates |
 
 Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.
 
@@ -68,7 +69,7 @@ With this config, `ai-config sync` installs your Claude plugins and then convert
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable conversion |
-| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode` |
+| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
 | `scope` | string | `"project"` | `"user"` (home dir) or `"project"` (cwd) |
 | `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
 | `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
@@ -77,14 +78,14 @@ With this config, `ai-config sync` installs your Claude plugins and then convert
 
 How each plugin component maps to target tools:
 
-| Component | Codex | Cursor | OpenCode |
-|-----------|-------|--------|----------|
-| Skills | `.codex/skills/*.md` | `.cursor/rules/*.mdc` | `.opencode/skills/*.md` |
-| Commands | Prompts or skills | Commands | Prompts |
-| Hooks | Unsupported | Hooks config | Unsupported |
-| MCP servers | `.codex/config.toml` | `.cursor/mcp.json` | `opencode.json` |
-| LSP servers | Unsupported | Unsupported | `opencode.lsp.json` |
-| Agents | Unsupported | Unsupported | Unsupported |
+| Component | Codex | Cursor | OpenCode | Pi |
+|-----------|-------|--------|----------|----|
+| Skills | `.codex/skills/*.md` | `.cursor/rules/*.mdc` | `.opencode/skills/*.md` | `.pi/skills/*/SKILL.md` |
+| Commands | Prompts or skills | Commands | Prompts | Prompt templates |
+| Hooks | Unsupported | Hooks config | Unsupported | Unsupported |
+| MCP servers | `.codex/config.toml` | `.cursor/mcp.json` | `opencode.json` | Unsupported |
+| LSP servers | Unsupported | Unsupported | `opencode.lsp.json` | Unsupported |
+| Agents | Unsupported | Unsupported | Unsupported | Unsupported |
 
 **Mapping fidelity levels:**
 
@@ -102,7 +103,7 @@ ai-config convert PLUGIN_PATH [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `all` (default: `all`) |
+| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `pi`, `all` (default: `all`) |
 | `-o, --output DIR` | Output directory (default: based on `--scope`) |
 | `--scope SCOPE` | `user` or `project` — controls default output path |
 | `--dry-run` | Preview changes without writing files |

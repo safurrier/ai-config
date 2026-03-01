@@ -11,6 +11,7 @@ from ai_config.converters.emitters import (
     CodexEmitter,
     CursorEmitter,
     OpenCodeEmitter,
+    PiEmitter,
     get_emitter,
 )
 from ai_config.converters.ir import (
@@ -22,7 +23,9 @@ from ai_config.converters.ir import (
     PluginIdentity,
     PluginIR,
     MappingStatus,
+    Skill,
     TargetTool,
+    TextFile,
 )
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
@@ -501,6 +504,110 @@ class TestOpenCodeEmitter:
         assert "{env:API_KEY}" in content
 
 
+class TestPiEmitter:
+    """Tests for Pi emitter."""
+
+    @pytest.fixture
+    def ir(self):
+        """Load the test plugin IR."""
+        return parse_claude_plugin(FIXTURES_DIR / "complete-plugin")
+
+    def test_emit_skills(self, ir, tmp_path: Path) -> None:
+        """Test emitting skills to Pi format (Agent Skills standard)."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        skill_md = tmp_path / ".pi" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        assert skill_md.exists()
+
+        import yaml
+
+        content = skill_md.read_text()
+        parts = content.split("---", 2)
+        frontmatter = yaml.safe_load(parts[1])
+        assert "name" in frontmatter
+        assert "description" in frontmatter
+
+    def test_emit_commands_as_prompts(self, ir, tmp_path: Path) -> None:
+        """Test commands are emitted as Pi prompt templates."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        prompt_path = tmp_path / ".pi" / "prompts" / "dev-tools-commit.md"
+        assert prompt_path.exists()
+
+        content = prompt_path.read_text()
+        assert len(content) > 0
+
+    def test_emit_hooks_unsupported(self, ir) -> None:
+        """Test hooks are marked unsupported for Pi."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+
+        hook_mappings = [m for m in result.mappings if m.component_kind == "hook"]
+        assert len(hook_mappings) == 1
+        assert hook_mappings[0].status == MappingStatus.UNSUPPORTED
+        assert "extension" in hook_mappings[0].notes.lower()
+
+    def test_emit_mcp_unsupported(self, ir) -> None:
+        """Test MCP servers are marked unsupported for Pi."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+
+        mcp_mappings = [m for m in result.mappings if m.component_kind == "mcp_server"]
+        assert len(mcp_mappings) >= 1
+        assert all(m.status == MappingStatus.UNSUPPORTED for m in mcp_mappings)
+
+    def test_skill_mapping_native(self, ir) -> None:
+        """Test skills map as NATIVE status."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+
+        skill_mappings = [m for m in result.mappings if m.component_kind == "skill"]
+        assert len(skill_mappings) >= 1
+        assert all(m.status == MappingStatus.NATIVE for m in skill_mappings)
+
+    def test_command_mapping_transform(self, ir) -> None:
+        """Test commands map as TRANSFORM status."""
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+
+        cmd_mappings = [m for m in result.mappings if m.component_kind == "command"]
+        assert len(cmd_mappings) >= 1
+        assert all(m.status == MappingStatus.TRANSFORM for m in cmd_mappings)
+
+    def test_emit_binary_skill_files(self, tmp_path: Path) -> None:
+        """Test binary files in skills are copied."""
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="bin-plugin", name="bin-plugin"),
+            components=[
+                Skill(
+                    name="bin-skill",
+                    description="A skill with binary asset",
+                    files=[
+                        TextFile(
+                            relpath="SKILL.md",
+                            content="---\nname: bin-skill\ndescription: test\n---\nBody",
+                        ),
+                        BinaryFile(
+                            relpath="asset.bin",
+                            content_b64="AQID",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        asset = tmp_path / ".pi" / "skills" / "bin-plugin-bin-skill" / "asset.bin"
+        assert asset.exists()
+        assert asset.read_bytes() == b"\x01\x02\x03"
+
+
 class TestEmitterFactory:
     """Tests for emitter factory."""
 
@@ -518,6 +625,11 @@ class TestEmitterFactory:
         """Test getting OpenCode emitter."""
         emitter = get_emitter(TargetTool.OPENCODE)
         assert isinstance(emitter, OpenCodeEmitter)
+
+    def test_get_emitter_pi(self) -> None:
+        """Test getting Pi emitter."""
+        emitter = get_emitter(TargetTool.PI)
+        assert isinstance(emitter, PiEmitter)
 
     def test_get_emitter_claude_raises(self) -> None:
         """Test that Claude emitter raises (we don't convert TO Claude)."""

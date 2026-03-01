@@ -8,18 +8,21 @@ from __future__ import annotations
 from ai_config.validators.target.codex import CodexOutputValidator
 from ai_config.validators.target.cursor import CursorOutputValidator
 from ai_config.validators.target.opencode import OpenCodeOutputValidator
+from ai_config.validators.target.pi import PiOutputValidator
 
 # Type alias for any output validator
-OutputValidator = CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator
+OutputValidator = (
+    CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator | PiOutputValidator
+)
 
 
 def get_output_validator(
     target: str,
-) -> CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator:
+) -> CodexOutputValidator | CursorOutputValidator | OpenCodeOutputValidator | PiOutputValidator:
     """Get the appropriate output validator for a target tool.
 
     Args:
-        target: Target tool name ("codex", "cursor", "opencode")
+        target: Target tool name ("codex", "cursor", "opencode", "pi")
 
     Returns:
         The appropriate validator instance.
@@ -31,6 +34,7 @@ def get_output_validator(
         "codex": CodexOutputValidator,
         "cursor": CursorOutputValidator,
         "opencode": OpenCodeOutputValidator,
+        "pi": PiOutputValidator,
     }
 
     target_lower = target.lower()
@@ -45,6 +49,7 @@ __all__ = [
     "CodexOutputValidator",
     "CursorOutputValidator",
     "OpenCodeOutputValidator",
+    "PiOutputValidator",
     "get_output_validator",
     "OutputValidator",
 ]

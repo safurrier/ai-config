@@ -8,7 +8,7 @@ Claude Code plugins are useful. They let you extend Claude with custom skills, h
 
 Without ai-config, you're running `claude plugin install` and `claude plugin marketplace add` commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.
 
-ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, and OpenCode.
+ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, OpenCode, and Pi.
 
 Or more simply, run `ai-config init` and it writes the config for you.
 
@@ -53,7 +53,7 @@ Installs/uninstalls plugins to match your config. Run this after editing `config
 ai-config convert ./my-plugin --target codex
 ```
 
-Converts a Claude Code plugin to work with Codex, Cursor, or OpenCode. You can also set up automatic conversion on sync via the `conversion` config section.
+Converts a Claude Code plugin to work with Codex, Cursor, OpenCode, or Pi. You can also set up automatic conversion on sync via the `conversion` config section.
 
 **4. Check status**
 

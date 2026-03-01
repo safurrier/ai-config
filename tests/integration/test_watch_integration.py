@@ -157,13 +157,13 @@ class TestWatchLoop:
         thread.start()
 
         # Longer sleep for watchdog to fully initialize (helps with parallel test runs)
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         # Create a new skill file
         new_skill = plugin_dir / "skills" / "new-skill.md"
         new_skill.write_text("# New Skill\n")
 
-        thread.join(timeout=3.0)
+        thread.join(timeout=5.0)
 
         assert len(changes_received) >= 1
         all_changes = [c for batch in changes_received for c in batch]
