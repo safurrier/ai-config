@@ -1031,11 +1031,13 @@ class PiEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Pi format (Agent Skills standard)."""
-        skill_dir = self._base_dir / "skills" / f"{plugin_id}-{skill.name}"
+        # Pi requires frontmatter name to match the parent directory name
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = self._base_dir / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
         # Build frontmatter — Pi supports the Agent Skills standard fields
-        meta: dict[str, Any] = {"name": skill.name}
+        meta: dict[str, Any] = {"name": dir_name}
         if skill.description:
             meta["description"] = skill.description
         if skill.disable_model_invocation:
