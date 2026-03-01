@@ -463,6 +463,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-idea" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The idea
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#whats-next" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -639,6 +650,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-idea" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The idea
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#whats-next" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -670,11 +692,15 @@
 
 
 <h1 id="ai-config">ai-config<a class="headerlink" href="#ai-config" title="Permanent link">&para;</a></h1>
-<p>Declarative plugin manager for Claude Code — with cross-tool plugin conversion.</p>
+<p>Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.</p>
 <h2 id="why-this-exists">Why This Exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
-<p>Claude Code plugins are useful. They let you extend Claude with custom skills, hooks, and MCP servers. The problem is managing them.</p>
-<p>Without ai-config, you're running <code>claude plugin install</code> and <code>claude plugin marketplace add</code> commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.</p>
-<p>ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools like Codex, Cursor, OpenCode, and Pi.</p>
+<p>You've spent time customizing your AI coding setup — skills, MCP servers, hooks, workflows. Then you want to try a different tool, and you're starting from scratch. Or you set up a new machine and can't remember what you installed.</p>
+<p>ai-config solves both problems:</p>
+<ul>
+<li><strong>Reproducible setup</strong> — define your plugins in one YAML file, run <code>ai-config sync</code>, done. Works the same on every machine.</li>
+<li><strong>No tool lock-in</strong> — your customizations convert automatically to Codex, Cursor, OpenCode, and Pi. Try a new tool without re-doing your config.</li>
+<li><strong>Version-controlled</strong> — check your <code>.ai-config/config.yaml</code> into git and share it with your team.</li>
+</ul>
 <p>Or more simply, run <code>ai-config init</code> and it writes the config for you.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>git+https://github.com/safurrier/ai-config
@@ -703,6 +729,16 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-config<span class="w"> </span>status
 </code></pre></div>
 <p>Shows what's installed vs what's in config.</p>
+<h2 id="the-idea">The idea<a class="headerlink" href="#the-idea" title="Permanent link">&para;</a></h2>
+<p>You define your setup once. <code>ai-config sync</code> installs your Claude plugins and generates equivalent config for every other tool:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config sync
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  → Claude Code: plugins installed
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  → Codex:       ~/.codex/skills/, ~/.codex/mcp-config.toml
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  → Cursor:      ~/.cursor/rules/, ~/.cursor/mcp.json
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  → OpenCode:    ~/.opencode/skills/, ~/opencode.json
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/
+</code></pre></div>
+<p>Check your <code>.ai-config/config.yaml</code> into your dotfiles. Run <code>ai-config sync</code> on any machine. Want to try a new tool? Add it to <code>conversion.targets</code> and re-sync — your skills are already there.</p>
 <h2 id="whats-next">What's Next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="commands/">Commands</a> — Full command reference</li>
