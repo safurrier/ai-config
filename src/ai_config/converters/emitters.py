@@ -128,6 +128,12 @@ class EmitResult:
         for f in self.files:
             full_path = output_dir / f.path
             if not dry_run:
+                # Remove broken symlinks in the parent chain so mkdir can proceed
+                for parent in reversed(full_path.parent.parents):
+                    if parent.is_symlink() and not parent.exists():
+                        parent.unlink()
+                if full_path.parent.is_symlink() and not full_path.parent.exists():
+                    full_path.parent.unlink()
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 if f.binary:
                     full_path.write_bytes(f.content)  # type: ignore[arg-type]

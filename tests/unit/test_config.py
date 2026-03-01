@@ -325,6 +325,84 @@ class TestLoadConfig:
         with pytest.raises(ConfigValidationError, match="Config must be a dict"):
             load_config(config_file)
 
+    def test_marketplace_path_expandvars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Environment variables in marketplace path are expanded."""
+        monkeypatch.setenv("MY_REPO", str(tmp_path / "my-repo"))
+        config_dir = tmp_path / ".ai-config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(
+            dedent("""
+            version: 1
+            targets:
+              - type: claude
+                config:
+                  marketplaces:
+                    my-mp:
+                      source: local
+                      path: $MY_REPO/plugins
+            """)
+        )
+        config = load_config(config_file)
+        mp = config.targets[0].config.marketplaces["my-mp"]
+        assert "$" not in mp.path
+        expected = str((tmp_path / "my-repo" / "plugins").resolve())
+        assert mp.path == expected
+
+    def test_marketplace_path_expanduser(self, tmp_path: Path) -> None:
+        """Tilde in marketplace path is expanded."""
+        config_dir = tmp_path / ".ai-config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(
+            dedent("""
+            version: 1
+            targets:
+              - type: claude
+                config:
+                  marketplaces:
+                    my-mp:
+                      source: local
+                      path: ~/my-plugins
+            """)
+        )
+        config = load_config(config_file)
+        mp = config.targets[0].config.marketplaces["my-mp"]
+        assert "~" not in mp.path
+        assert mp.path == str(Path.home() / "my-plugins")
+
+    def test_conversion_output_dir_expandvars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Environment variables in conversion output_dir are expanded."""
+        monkeypatch.setenv("OUTPUT_BASE", str(tmp_path / "output"))
+        config_dir = tmp_path / ".ai-config"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text(
+            dedent("""
+            version: 1
+            targets:
+              - type: claude
+                config:
+                  plugins:
+                    - id: my-plugin
+                  conversion:
+                    enabled: true
+                    targets: [codex]
+                    output_dir: $OUTPUT_BASE/converted
+            """)
+        )
+        config = load_config(config_file)
+        conversion = config.targets[0].config.conversion
+        assert conversion is not None
+        assert conversion.output_dir is not None
+        assert "$" not in conversion.output_dir
+        expected = str((tmp_path / "output" / "converted").resolve())
+        assert conversion.output_dir == expected
+
 
 class TestValidateMarketplaceReferences:
     """Tests for validate_marketplace_references function."""

@@ -7,6 +7,7 @@ This module provides the `ai-config init` command that creates a new
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +33,18 @@ class GoBack(Exception):
 
 # Sentinel return value for go-back
 GO_BACK: object = object()
+
+
+@dataclass(frozen=True)
+class _ResolvedPath:
+    """A resolved path paired with the raw user input for config portability.
+
+    ``resolved`` is used for filesystem operations (exists, discovery).
+    ``raw`` is preserved in config.yaml (e.g. ``$DOTS_REPO/plugins``).
+    """
+
+    resolved: Path
+    raw: str
 
 
 # ---------------------------------------------------------------------------
@@ -511,58 +524,52 @@ def prompt_path_with_search(
     """
     search_path = search_from or Path.cwd()
 
-    # First, offer to search for existing marketplaces
-    should_search = prompter.confirm(
-        f"Search for marketplaces in {search_path}?",
-        default=True,
+    # Search for marketplaces in current directory first
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Searching for marketplaces...", total=None)
+        found = find_local_marketplaces(search_path)
+
+    # Build choices: found marketplaces + manual entry option
+    choices: list[str] = [str(p) for p in found]
+    choices.append("Enter a different path (local path, env var like $MY_REPO, etc.)")
+
+    if found:
+        console.print(f"  Found {len(found)} marketplace(s) in {search_path}")
+        console.print()
+
+    selected = prompter.select(
+        "Select a marketplace or enter a different path:",
+        choices,
     )
 
-    if should_search is GO_BACK:
+    if selected is GO_BACK:
         return GO_BACK
-    if should_search is None:
+    if selected is None:
         return None
 
-    if should_search:
-        console.print()
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task("Searching for marketplaces...", total=None)
-            found = find_local_marketplaces(search_path)
-
-        if found:
-            console.print(f"  Found {len(found)} marketplace(s)")
-            console.print()
-
-            # Build choices from found marketplaces
-            choices = [str(p) for p in found]
-            choices.append("Enter path manually")
-
-            selected = prompter.select("Select a marketplace:", choices)
-
-            if selected is GO_BACK:
-                return GO_BACK
-            if selected is None:
-                return None
-
-            assert isinstance(selected, str)
-            if selected != "Enter path manually":
-                return Path(selected)
+    assert isinstance(selected, str)
+    if not selected.startswith("Enter a different path"):
+        return Path(selected)
 
     # Manual path entry
     console.print()
-    path_str = prompter.text("Enter local path:")
+    console.print("  [dim]Tip: You can use env vars ($MY_REPO) or ~ in paths.[/dim]")
+    console.print("  [dim]Env vars are preserved in the config for portability.[/dim]")
+    raw_path = prompter.text("Enter local path:")
 
-    if path_str is GO_BACK:
+    if raw_path is GO_BACK:
         return GO_BACK
-    if path_str is None:
+    if raw_path is None:
         return None
 
-    assert isinstance(path_str, str)
-    return Path(path_str).expanduser().resolve()
+    assert isinstance(raw_path, str)
+    resolved = Path(os.path.expandvars(raw_path)).expanduser().resolve()
+    return _ResolvedPath(resolved, raw_path)
 
 
 def generate_config_yaml(init_config: InitConfig) -> str:
@@ -672,12 +679,15 @@ def prompt_conversion_targets(
         prompter = QuestionaryPrompter()
     console.print()
     console.print("[subheader]Plugin Conversion[/subheader]")
-    console.print("You can convert your Claude plugins to work with other AI coding tools.")
+    console.print(
+        "ai-config can auto-generate config for other AI coding tools"
+        " so they share your Claude plugins."
+    )
     console.print()
 
-    # Ask if user wants to convert
+    # Ask if user wants to convert — GO_BACK here propagates to caller
     wants_conversion = prompter.confirm(
-        "Convert plugins to other tools (Codex, Cursor, OpenCode)?",
+        "Also generate config for Codex, Cursor, or OpenCode?",
         default=False,
     )
 
@@ -689,64 +699,84 @@ def prompt_conversion_targets(
     if not wants_conversion:
         return ConversionChoice(enabled=False)
 
-    # Select targets
+    # Sub-steps loop — GO_BACK within these re-prompts conversion, not the caller
     target_choices = [
         ("codex", "Codex (OpenAI) - .codex/ directory"),
         ("cursor", "Cursor - .cursor/ directory"),
         ("opencode", "OpenCode - .opencode/ directory"),
     ]
 
-    selected_targets = prompter.checkbox(
-        "Select target tools:",
-        target_choices,
-        checked_by_default=True,
-    )
-
-    if selected_targets is GO_BACK:
-        return GO_BACK
-    if selected_targets is None:
-        return None  # Cancelled
-
-    assert isinstance(selected_targets, list)
-    selected_targets = cast(list[str], selected_targets)
-    if not selected_targets:
-        return ConversionChoice(enabled=False)
-
-    # Use the same scope as the plugins
+    conv_step = 0
+    selected_targets: list[str] = []
     scope = default_scope
 
-    # Show where files will be written
-    console.print()
-    if scope == "user":
-        console.print("[info]Converted files will be written to:[/info]")
-        for target in selected_targets:
-            console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
-    else:
-        console.print("[info]Converted files will be written to:[/info]")
-        for target in selected_targets:
-            console.print(f"  {SYMBOLS['bullet']} .{target}/")
+    while True:
+        if conv_step == 0:
+            result = prompter.checkbox(
+                "Which tools should get the converted config?"
+                " (↑↓ move, space toggles, a toggles all):",
+                target_choices,
+                checked_by_default=True,
+            )
 
-    # Ask if they want to customize location
-    use_custom = prompter.confirm(
-        "Use custom output directory instead?",
-        default=False,
-    )
+            if result is GO_BACK:
+                # Go back to the "want conversion?" question — re-enter from the top
+                return GO_BACK
+            if result is None:
+                return None
 
-    if use_custom is GO_BACK:
-        return GO_BACK
-    if use_custom is None:
-        return None  # Cancelled
+            assert isinstance(result, list)
+            selected_targets = cast(list[str], result)
+            if not selected_targets:
+                return ConversionChoice(enabled=False)
+
+            # Show where files will be written
+            console.print()
+            if scope == "user":
+                console.print("[info]Converted files will be written to:[/info]")
+                for target in selected_targets:
+                    console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
+            else:
+                console.print("[info]Converted files will be written to:[/info]")
+                for target in selected_targets:
+                    console.print(f"  {SYMBOLS['bullet']} .{target}/")
+
+            conv_step = 1
+            continue
+
+        if conv_step == 1:
+            use_custom = prompter.confirm(
+                "Use custom output directory instead?",
+                default=False,
+            )
+
+            if use_custom is GO_BACK:
+                conv_step = 0
+                continue
+            if use_custom is None:
+                return None
+
+            if not use_custom:
+                break  # done
+
+            conv_step = 2
+            continue
+
+        if conv_step == 2:
+            output_dir_str = prompter.text(
+                "Output directory for all converted files:",
+                default=".",
+            )
+            if output_dir_str is GO_BACK:
+                conv_step = 1
+                continue
+            if output_dir_str is None:
+                return None
+            assert isinstance(output_dir_str, str)
+            break  # done
 
     custom_output_dir = None
-    if use_custom:
-        output_dir_str = prompter.text(
-            "Output directory for all converted files:",
-            default=".",
-        )
-        if output_dir_str is GO_BACK:
-            return GO_BACK
-        if output_dir_str is None:
-            return None  # Cancelled
+    if conv_step == 2:
         assert isinstance(output_dir_str, str)
         custom_output_dir = Path(output_dir_str)
 
@@ -864,7 +894,14 @@ def _run_marketplace_loop(
             if path is None:
                 return None
 
-            assert isinstance(path, Path)
+            # Unpack result: _ResolvedPath from manual entry, Path from search
+            if isinstance(path, _ResolvedPath):
+                raw_input = path.raw
+                path = path.resolved
+            else:
+                assert isinstance(path, Path)
+                raw_input = str(path)
+
             if not path.exists():
                 console.print(f"[warning]Path does not exist: {path}[/warning]")
                 add_anyway = prompter.confirm("Add anyway?", default=True)
@@ -873,7 +910,36 @@ def _run_marketplace_loop(
                 if not add_anyway:
                     continue
 
-            actual_name = get_marketplace_name(path)
+            # Auto-discover: if path is not itself a marketplace, search inside
+            marketplace_path = path
+            config_path_str = raw_input  # what goes into config.yaml
+            if path.exists() and not (path / ".claude-plugin" / "marketplace.json").exists():
+                nested = find_local_marketplaces(path)
+                if len(nested) == 1:
+                    marketplace_path = nested[0]
+                    console.print(f"  [info]Found marketplace at:[/info] {marketplace_path}")
+                elif len(nested) > 1:
+                    console.print(f"  Found {len(nested)} marketplace(s) in {path.name}")
+                    console.print()
+                    mp_choices = [str(p) for p in nested]
+                    mp_selected = prompter.select("Select a marketplace:", mp_choices)
+                    if mp_selected is GO_BACK:
+                        continue  # back to sub-step 0
+                    if mp_selected is None:
+                        return None
+                    assert isinstance(mp_selected, str)
+                    marketplace_path = Path(mp_selected)
+
+                # Reconstruct config path: replace resolved prefix with raw input
+                # e.g. raw="$DOTS_REPO", resolved="/home/alex/dots",
+                #   found="/home/alex/dots/config/plugins" → "$DOTS_REPO/config/plugins"
+                try:
+                    sub = marketplace_path.relative_to(path)
+                    config_path_str = str(Path(raw_input) / sub)
+                except ValueError:
+                    config_path_str = str(marketplace_path)
+
+            actual_name = get_marketplace_name(marketplace_path)
 
             if actual_name:
                 console.print(
@@ -882,7 +948,7 @@ def _run_marketplace_loop(
                 name = actual_name
             else:
                 console.print("  [warning]Could not read marketplace name from manifest[/warning]")
-                suggested_name = path.name
+                suggested_name = marketplace_path.name
                 name = prompter.text("Marketplace name:", default=suggested_name)
                 if name is GO_BACK:
                     continue
@@ -890,7 +956,7 @@ def _run_marketplace_loop(
                     return None
                 assert isinstance(name, str)
 
-            marketplace = MarketplaceChoice(name=name, source="local", path=str(path))
+            marketplace = MarketplaceChoice(name=name, source="local", path=config_path_str)
 
         init_config.marketplaces.append(marketplace)
 
@@ -905,6 +971,12 @@ def _run_marketplace_loop(
             console.print(f"    Source: local ({marketplace.path})")
 
         # --- sub-step 2: plugin selection ---
+        # Use resolved path for filesystem operations (marketplace.path may contain env vars)
+        resolved_mp_path = (
+            str(Path(os.path.expandvars(marketplace.path)).expanduser().resolve())
+            if marketplace.source == "local"
+            else ""
+        )
         while True:  # loop to allow go-back from scope → plugin selection
             console.print()
             console.print("Discovering plugins...")
@@ -918,7 +990,7 @@ def _run_marketplace_loop(
                 plugins = fetch_marketplace_plugins(
                     marketplace.source,
                     marketplace.repo,
-                    marketplace.path,
+                    resolved_mp_path,
                 )
 
             if not plugins:
@@ -939,7 +1011,7 @@ def _run_marketplace_loop(
             ]
 
             selected = prompter.checkbox(
-                "Select plugins to enable:",
+                "Select plugins to enable (↑↓ move, space toggles, a toggles all, enter confirms):",
                 choices,
                 checked_by_default=False,
             )
@@ -1145,7 +1217,7 @@ def run_init_wizard(
 
                 conversion_choice = prompt_conversion_targets(console, prompter, default_scope)
                 if conversion_choice is GO_BACK:
-                    step = 2
+                    # Re-prompt conversion (preserves marketplace state)
                     continue
                 if conversion_choice is None:
                     return None
