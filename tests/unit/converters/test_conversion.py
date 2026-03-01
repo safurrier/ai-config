@@ -529,6 +529,27 @@ class TestPiEmitter:
         assert "name" in frontmatter
         assert "description" in frontmatter
 
+    def test_skill_name_matches_directory(self, ir, tmp_path: Path) -> None:
+        """Pi requires frontmatter name to match directory name (regression)."""
+        import yaml
+
+        emitter = PiEmitter()
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        skills_dir = tmp_path / ".pi" / "skills"
+        for skill_dir in skills_dir.iterdir():
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            assert skill_md.exists()
+            content = skill_md.read_text()
+            parts = content.split("---", 2)
+            frontmatter = yaml.safe_load(parts[1])
+            assert frontmatter["name"] == skill_dir.name, (
+                f"Frontmatter name '{frontmatter['name']}' != directory '{skill_dir.name}'"
+            )
+
     def test_emit_commands_as_prompts(self, ir, tmp_path: Path) -> None:
         """Test commands are emitted as Pi prompt templates."""
         emitter = PiEmitter()
