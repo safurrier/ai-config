@@ -4,20 +4,77 @@ This module provides the `ai-config init` command that creates a new
 .ai-config/config.yaml file through an interactive wizard experience.
 """
 
+from __future__ import annotations
+
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 import questionary
 import requests
 import yaml
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from ai_config.cli_theme import SYMBOLS
+
+
+class GoBack(Exception):
+    """Raised when user presses Escape to go back one step."""
+
+    pass
+
+
+# Sentinel return value for go-back
+GO_BACK: object = object()
+
+
+@dataclass(frozen=True)
+class _ResolvedPath:
+    """A resolved path paired with the raw user input for config portability.
+
+    ``resolved`` is used for filesystem operations (exists, discovery).
+    ``raw`` is preserved in config.yaml (e.g. ``$DOTS_REPO/plugins``).
+    """
+
+    resolved: Path
+    raw: str
+
+
+# ---------------------------------------------------------------------------
+# Prompter protocol — injectable interface for all user prompts
+# ---------------------------------------------------------------------------
+
+
+class Prompter(Protocol):
+    """Interface for prompting the user during the init wizard.
+
+    Production code uses ``QuestionaryPrompter`` (the default).
+    Tests inject a ``ScriptedPrompter`` that returns canned answers.
+    All methods return ``GO_BACK`` on Escape, ``None`` on Ctrl+C.
+    """
+
+    def select(
+        self, message: str, choices: list[str], default: str | None = None
+    ) -> str | None | object: ...
+
+    def checkbox(
+        self,
+        message: str,
+        choices: list[tuple[str, str]],
+        checked_by_default: bool = True,
+    ) -> list[str] | None | object: ...
+
+    def text(self, message: str, default: str = "") -> str | None | object: ...
+
+    def confirm(self, message: str, default: bool = True) -> bool | None | object: ...
+
 
 # Scope choices with descriptions for user selection
 SCOPE_CHOICES: dict[str, str] = {
@@ -200,6 +257,34 @@ def get_marketplace_name(path: Path) -> str | None:
         return None
 
 
+def get_marketplace_name_from_github(repo: str) -> str | None:
+    """Get the marketplace name from a GitHub repo's marketplace.json.
+
+    Fetches .claude-plugin/marketplace.json from the repo and reads the name field.
+    Tries 'main' branch first, then 'master'.
+
+    Args:
+        repo: GitHub repo in owner/repo format.
+
+    Returns:
+        The marketplace name, or None if it can't be fetched.
+    """
+    branches = ["main", "master"]
+
+    for branch in branches:
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/.claude-plugin/marketplace.json"
+
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("name")
+        except Exception:
+            continue
+
+    return None
+
+
 def discover_plugins_from_local(path: Path) -> list[PluginInfo]:
     """Discover plugins from a local marketplace directory.
 
@@ -326,133 +411,165 @@ def fetch_marketplace_plugins(
         return discover_plugins_from_local(Path(path))
 
 
-def prompt_select(message: str, choices: list[str], default: str | None = None) -> str | None:
-    """Interactive select prompt using questionary.
+def _add_escape_binding(question: questionary.Question) -> questionary.Question:
+    """Add ESC key binding to a questionary prompt.
 
-    Args:
-        message: The prompt message.
-        choices: List of choices to display.
-        default: Default selection.
-
-    Returns:
-        Selected choice string, or None if cancelled.
+    Pressing ESC will raise GoBack (go back one step).
+    Ctrl+C still raises KeyboardInterrupt (cancel wizard).
     """
-    return questionary.select(
-        message,
-        choices=choices,
-        default=default,
-    ).ask()
+    extra = KeyBindings()
+
+    @extra.add(Keys.Escape, eager=True)
+    def _escape(event):
+        event.app.exit(exception=GoBack(), style="class:aborting")
+
+    original = question.application.key_bindings
+    if original is not None:
+        question.application.key_bindings = merge_key_bindings([original, extra])
+    else:
+        question.application.key_bindings = extra
+    return question
+
+
+class QuestionaryPrompter:
+    """Production prompter that uses questionary for interactive terminal prompts."""
+
+    def select(
+        self, message: str, choices: list[str], default: str | None = None
+    ) -> str | None | object:
+        question = questionary.select(message, choices=choices, default=default)
+        _add_escape_binding(question)
+        try:
+            return question.ask()
+        except GoBack:
+            return GO_BACK
+
+    def checkbox(
+        self,
+        message: str,
+        choices: list[tuple[str, str]],
+        checked_by_default: bool = True,
+    ) -> list[str] | None | object:
+        q_choices = [
+            questionary.Choice(title=label, value=value, checked=checked_by_default)
+            for value, label in choices
+        ]
+        question = questionary.checkbox(message, choices=q_choices)
+        _add_escape_binding(question)
+        try:
+            return question.ask()
+        except GoBack:
+            return GO_BACK
+
+    def text(self, message: str, default: str = "") -> str | None | object:
+        question = questionary.text(message, default=default)
+        _add_escape_binding(question)
+        try:
+            return question.ask()
+        except GoBack:
+            return GO_BACK
+
+    def confirm(self, message: str, default: bool = True) -> bool | None | object:
+        question = questionary.confirm(message, default=default)
+        _add_escape_binding(question)
+        try:
+            return question.ask()
+        except GoBack:
+            return GO_BACK
+
+
+# Module-level convenience functions for backwards compatibility
+def prompt_select(
+    message: str, choices: list[str], default: str | None = None
+) -> str | None | object:
+    """Interactive select prompt using questionary."""
+    return QuestionaryPrompter().select(message, choices, default)
 
 
 def prompt_checkbox(
     message: str,
     choices: list[tuple[str, str]],
     checked_by_default: bool = True,
-) -> list[str] | None:
-    """Interactive checkbox prompt using questionary.
-
-    Args:
-        message: The prompt message.
-        choices: List of (value, label) tuples.
-        checked_by_default: Whether items are checked by default.
-
-    Returns:
-        List of selected values, or None if cancelled.
-    """
-    q_choices = [
-        questionary.Choice(title=label, value=value, checked=checked_by_default)
-        for value, label in choices
-    ]
-    return questionary.checkbox(message, choices=q_choices).ask()
+) -> list[str] | None | object:
+    """Interactive checkbox prompt using questionary."""
+    return QuestionaryPrompter().checkbox(message, choices, checked_by_default)
 
 
-def prompt_text(message: str, default: str = "") -> str | None:
-    """Interactive text prompt using questionary.
-
-    Args:
-        message: The prompt message.
-        default: Default value.
-
-    Returns:
-        Entered text, or None if cancelled.
-    """
-    return questionary.text(message, default=default).ask()
+def prompt_text(message: str, default: str = "") -> str | None | object:
+    """Interactive text prompt using questionary."""
+    return QuestionaryPrompter().text(message, default)
 
 
-def prompt_confirm(message: str, default: bool = True) -> bool | None:
-    """Interactive confirm prompt using questionary.
-
-    Args:
-        message: The prompt message.
-        default: Default value.
-
-    Returns:
-        True/False, or None if cancelled.
-    """
-    return questionary.confirm(message, default=default).ask()
+def prompt_confirm(message: str, default: bool = True) -> bool | None | object:
+    """Interactive confirm prompt using questionary."""
+    return QuestionaryPrompter().confirm(message, default)
 
 
 def prompt_path_with_search(
     console: Console,
+    prompter: Prompter,
     search_from: Path | None = None,
-) -> Path | None:
+) -> Path | None | object:
     """Prompt for a local path with optional marketplace search.
 
     Offers to search for existing marketplace.json files.
 
     Args:
         console: Rich console for output.
+        prompter: Prompter implementation to use.
         search_from: Directory to search from (defaults to cwd).
 
     Returns:
-        Selected path, or None if cancelled.
+        Selected path, None if cancelled (Ctrl+C), or GO_BACK if Escape pressed.
     """
     search_path = search_from or Path.cwd()
 
-    # First, offer to search for existing marketplaces
-    should_search = prompt_confirm(
-        f"Search for marketplaces in {search_path}?",
-        default=True,
+    # Search for marketplaces in current directory first
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Searching for marketplaces...", total=None)
+        found = find_local_marketplaces(search_path)
+
+    # Build choices: found marketplaces + manual entry option
+    choices: list[str] = [str(p) for p in found]
+    choices.append("Enter a different path (local path, env var like $MY_REPO, etc.)")
+
+    if found:
+        console.print(f"  Found {len(found)} marketplace(s) in {search_path}")
+        console.print()
+
+    selected = prompter.select(
+        "Select a marketplace or enter a different path:",
+        choices,
     )
 
-    if should_search is None:
+    if selected is GO_BACK:
+        return GO_BACK
+    if selected is None:
         return None
 
-    if should_search:
-        console.print()
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task("Searching for marketplaces...", total=None)
-            found = find_local_marketplaces(search_path)
-
-        if found:
-            console.print(f"  Found {len(found)} marketplace(s)")
-            console.print()
-
-            # Build choices from found marketplaces
-            choices = [str(p) for p in found]
-            choices.append("Enter path manually")
-
-            selected = prompt_select("Select a marketplace:", choices)
-
-            if selected is None:
-                return None
-
-            if selected != "Enter path manually":
-                return Path(selected)
+    assert isinstance(selected, str)
+    if not selected.startswith("Enter a different path"):
+        return Path(selected)
 
     # Manual path entry
     console.print()
-    path_str = prompt_text("Enter local path:")
+    console.print("  [dim]Tip: You can use env vars ($MY_REPO) or ~ in paths.[/dim]")
+    console.print("  [dim]Env vars are preserved in the config for portability.[/dim]")
+    raw_path = prompter.text("Enter local path:")
 
-    if path_str is None:
+    if raw_path is GO_BACK:
+        return GO_BACK
+    if raw_path is None:
         return None
 
-    return Path(path_str).expanduser().resolve()
+    assert isinstance(raw_path, str)
+    resolved = Path(os.path.expandvars(raw_path)).expanduser().resolve()
+    return _ResolvedPath(resolved, raw_path)
 
 
 def generate_config_yaml(init_config: InitConfig) -> str:
@@ -543,84 +660,124 @@ def write_config(init_config: InitConfig) -> Path:
 
 
 def prompt_conversion_targets(
-    console: Console, default_scope: str = "user"
-) -> ConversionChoice | None:
+    console: Console,
+    prompter: Prompter | None = None,
+    default_scope: str = "user",
+) -> ConversionChoice | None | object:
     """Prompt user for conversion target selection.
 
     Args:
         console: Rich console for output.
+        prompter: Prompter implementation (defaults to QuestionaryPrompter).
         default_scope: Default scope from plugin selection ("user" or "project").
 
     Returns:
-        ConversionChoice with user selections, or None if cancelled.
+        ConversionChoice with user selections, None if cancelled (Ctrl+C),
+        or GO_BACK if Escape pressed.
     """
+    if prompter is None:
+        prompter = QuestionaryPrompter()
     console.print()
     console.print("[subheader]Plugin Conversion[/subheader]")
-    console.print("You can convert your Claude plugins to work with other AI coding tools.")
+    console.print(
+        "ai-config can auto-generate config for other AI coding tools"
+        " so they share your Claude plugins."
+    )
     console.print()
 
-    # Ask if user wants to convert
-    wants_conversion = prompt_confirm(
-        "Convert plugins to other tools (Codex, Cursor, OpenCode)?",
+    # Ask if user wants to convert — GO_BACK here propagates to caller
+    wants_conversion = prompter.confirm(
+        "Also generate config for Codex, Cursor, or OpenCode?",
         default=False,
     )
 
+    if wants_conversion is GO_BACK:
+        return GO_BACK
     if wants_conversion is None:
         return None  # Cancelled
 
     if not wants_conversion:
         return ConversionChoice(enabled=False)
 
-    # Select targets
+    # Sub-steps loop — GO_BACK within these re-prompts conversion, not the caller
     target_choices = [
         ("codex", "Codex (OpenAI) - .codex/ directory"),
         ("cursor", "Cursor - .cursor/ directory"),
         ("opencode", "OpenCode - .opencode/ directory"),
     ]
 
-    selected_targets = prompt_checkbox(
-        "Select target tools:",
-        target_choices,
-        checked_by_default=True,
-    )
-
-    if selected_targets is None:
-        return None  # Cancelled
-
-    if not selected_targets:
-        return ConversionChoice(enabled=False)
-
-    # Use the same scope as the plugins
+    conv_step = 0
+    selected_targets: list[str] = []
     scope = default_scope
 
-    # Show where files will be written
-    console.print()
-    if scope == "user":
-        console.print("[info]Converted files will be written to:[/info]")
-        for target in selected_targets:
-            console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
-    else:
-        console.print("[info]Converted files will be written to:[/info]")
-        for target in selected_targets:
-            console.print(f"  {SYMBOLS['bullet']} .{target}/")
+    while True:
+        if conv_step == 0:
+            result = prompter.checkbox(
+                "Which tools should get the converted config?"
+                " (↑↓ move, space toggles, a toggles all):",
+                target_choices,
+                checked_by_default=True,
+            )
 
-    # Ask if they want to customize location
-    use_custom = prompt_confirm(
-        "Use custom output directory instead?",
-        default=False,
-    )
+            if result is GO_BACK:
+                # Go back to the "want conversion?" question — re-enter from the top
+                return GO_BACK
+            if result is None:
+                return None
 
-    if use_custom is None:
-        return None  # Cancelled
+            assert isinstance(result, list)
+            selected_targets = cast(list[str], result)
+            if not selected_targets:
+                return ConversionChoice(enabled=False)
+
+            # Show where files will be written
+            console.print()
+            if scope == "user":
+                console.print("[info]Converted files will be written to:[/info]")
+                for target in selected_targets:
+                    console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
+            else:
+                console.print("[info]Converted files will be written to:[/info]")
+                for target in selected_targets:
+                    console.print(f"  {SYMBOLS['bullet']} .{target}/")
+
+            conv_step = 1
+            continue
+
+        if conv_step == 1:
+            use_custom = prompter.confirm(
+                "Use custom output directory instead?",
+                default=False,
+            )
+
+            if use_custom is GO_BACK:
+                conv_step = 0
+                continue
+            if use_custom is None:
+                return None
+
+            if not use_custom:
+                break  # done
+
+            conv_step = 2
+            continue
+
+        if conv_step == 2:
+            output_dir_str = prompter.text(
+                "Output directory for all converted files:",
+                default=".",
+            )
+            if output_dir_str is GO_BACK:
+                conv_step = 1
+                continue
+            if output_dir_str is None:
+                return None
+            assert isinstance(output_dir_str, str)
+            break  # done
 
     custom_output_dir = None
-    if use_custom:
-        output_dir_str = prompt_text(
-            "Output directory for all converted files:",
-            default=".",
-        )
-        if output_dir_str is None:
-            return None  # Cancelled
+    if conv_step == 2:
+        assert isinstance(output_dir_str, str)
         custom_output_dir = Path(output_dir_str)
 
     return ConversionChoice(
@@ -631,16 +788,331 @@ def prompt_conversion_targets(
     )
 
 
-def run_init_wizard(console: Console, output_path: Path | None = None) -> InitConfig | None:
+def _run_marketplace_loop(
+    console: Console,
+    prompter: Prompter,
+    init_config: InitConfig,
+) -> bool | object | None:
+    """Run the marketplace collection loop with go-back support.
+
+    Handles the inner sub-steps of marketplace addition:
+      sub-step 0: "Add a marketplace?" (GitHub/Local/Skip)
+      sub-step 1: Repo URL or local path entry
+      sub-step 2: Plugin selection (checkbox)
+      sub-step 3: Scope selection
+      sub-step 4: "Add another marketplace?"
+
+    Args:
+        console: Rich console for output.
+        prompter: Prompter implementation to use.
+        init_config: Config being built (marketplaces/plugins mutated in place).
+
+    Returns:
+        True when the loop completes normally (user chose Skip or declined adding more).
+        GO_BACK when the user presses Escape from the first sub-step with no marketplaces yet.
+        None when the user presses Ctrl+C to cancel the wizard.
+    """
+    while True:
+        # --- sub-step 0: marketplace source selection ---
+        mp_source = prompter.select(
+            "Add a marketplace? (marketplaces contain plugins you can install)",
+            choices=[
+                "GitHub repository",
+                "Local directory",
+                "Skip (no more marketplaces)",
+            ],
+            default="GitHub repository",
+        )
+
+        if mp_source is GO_BACK:
+            if not init_config.marketplaces:
+                # Nothing added yet → go back to previous main step
+                return GO_BACK
+            else:
+                # Undo last marketplace + its plugins and re-ask "add another?"
+                last_mp = init_config.marketplaces.pop()
+                init_config.plugins = [
+                    p for p in init_config.plugins if p.marketplace != last_mp.name
+                ]
+                continue
+        if mp_source is None or mp_source == "Skip (no more marketplaces)":
+            return True
+
+        console.print()
+
+        # --- sub-step 1: get marketplace details ---
+        marketplace: MarketplaceChoice | None = None
+
+        if mp_source == "GitHub repository":
+            repo_input = prompter.text("GitHub repo (owner/repo or full URL):")
+
+            if repo_input is GO_BACK:
+                continue  # back to sub-step 0
+            if repo_input is None:
+                return None
+
+            assert isinstance(repo_input, str)
+            repo = parse_github_repo(repo_input)
+            if repo is None:
+                console.print("[warning]Invalid format. Examples:[/warning]")
+                console.print("  - owner/repo")
+                console.print("  - https://github.com/owner/repo")
+                continue
+
+            console.print()
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task("Reading marketplace name...", total=None)
+                actual_name = get_marketplace_name_from_github(repo)
+
+            if actual_name:
+                console.print(
+                    f"  [info]Found marketplace name in manifest:[/info] [key]{actual_name}[/key]"
+                )
+                name = actual_name
+            else:
+                console.print("  [warning]Could not read marketplace name from manifest[/warning]")
+                suggested_name = repo.replace("/", "-")
+                name = prompter.text("Marketplace name:", default=suggested_name)
+                if name is GO_BACK:
+                    continue  # back to sub-step 0
+                if name is None:
+                    return None
+                assert isinstance(name, str)
+
+            marketplace = MarketplaceChoice(name=name, source="github", repo=repo)
+
+        else:  # Local directory
+            path = prompt_path_with_search(console, prompter)
+
+            if path is GO_BACK:
+                continue  # back to sub-step 0
+            if path is None:
+                return None
+
+            # Unpack result: _ResolvedPath from manual entry, Path from search
+            if isinstance(path, _ResolvedPath):
+                raw_input = path.raw
+                path = path.resolved
+            else:
+                assert isinstance(path, Path)
+                raw_input = str(path)
+
+            if not path.exists():
+                console.print(f"[warning]Path does not exist: {path}[/warning]")
+                add_anyway = prompter.confirm("Add anyway?", default=True)
+                if add_anyway is GO_BACK:
+                    continue
+                if not add_anyway:
+                    continue
+
+            # Auto-discover: if path is not itself a marketplace, search inside
+            marketplace_path = path
+            config_path_str = raw_input  # what goes into config.yaml
+            if path.exists() and not (path / ".claude-plugin" / "marketplace.json").exists():
+                nested = find_local_marketplaces(path)
+                if len(nested) == 1:
+                    marketplace_path = nested[0]
+                    console.print(f"  [info]Found marketplace at:[/info] {marketplace_path}")
+                elif len(nested) > 1:
+                    console.print(f"  Found {len(nested)} marketplace(s) in {path.name}")
+                    console.print()
+                    mp_choices = [str(p) for p in nested]
+                    mp_selected = prompter.select("Select a marketplace:", mp_choices)
+                    if mp_selected is GO_BACK:
+                        continue  # back to sub-step 0
+                    if mp_selected is None:
+                        return None
+                    assert isinstance(mp_selected, str)
+                    marketplace_path = Path(mp_selected)
+
+                # Reconstruct config path: replace resolved prefix with raw input
+                # e.g. raw="$DOTS_REPO", resolved="/home/alex/dots",
+                #   found="/home/alex/dots/config/plugins" → "$DOTS_REPO/config/plugins"
+                try:
+                    sub = marketplace_path.relative_to(path)
+                    config_path_str = str(Path(raw_input) / sub)
+                except ValueError:
+                    config_path_str = str(marketplace_path)
+
+            actual_name = get_marketplace_name(marketplace_path)
+
+            if actual_name:
+                console.print(
+                    f"  [info]Found marketplace name in manifest:[/info] [key]{actual_name}[/key]"
+                )
+                name = actual_name
+            else:
+                console.print("  [warning]Could not read marketplace name from manifest[/warning]")
+                suggested_name = marketplace_path.name
+                name = prompter.text("Marketplace name:", default=suggested_name)
+                if name is GO_BACK:
+                    continue
+                if name is None:
+                    return None
+                assert isinstance(name, str)
+
+            marketplace = MarketplaceChoice(name=name, source="local", path=config_path_str)
+
+        init_config.marketplaces.append(marketplace)
+
+        # Show marketplace added confirmation
+        console.print()
+        console.print(
+            f"[success]{SYMBOLS['pass']}[/success] Added marketplace: [key]{marketplace.name}[/key]"
+        )
+        if marketplace.source == "github":
+            console.print(f"    Source: github ({marketplace.repo})")
+        else:
+            console.print(f"    Source: local ({marketplace.path})")
+
+        # --- sub-step 2: plugin selection ---
+        # Use resolved path for filesystem operations (marketplace.path may contain env vars)
+        resolved_mp_path = (
+            str(Path(os.path.expandvars(marketplace.path)).expanduser().resolve())
+            if marketplace.source == "local"
+            else ""
+        )
+        while True:  # loop to allow go-back from scope → plugin selection
+            console.print()
+            console.print("Discovering plugins...")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task(f"Fetching plugins from {marketplace.name}...", total=None)
+                plugins = fetch_marketplace_plugins(
+                    marketplace.source,
+                    marketplace.repo,
+                    resolved_mp_path,
+                )
+
+            if not plugins:
+                console.print(
+                    f"  [warning]{SYMBOLS['warn']}[/warning] No plugins found in marketplace.json"
+                )
+                console.print("    (The marketplace was added but contains no plugins yet)")
+                break
+
+            console.print(f"  [success]{SYMBOLS['pass']}[/success] Found {len(plugins)} plugin(s):")
+            for p in plugins:
+                desc = f" - {p.description}" if p.description else ""
+                console.print(f"    {SYMBOLS['bullet']} {p.id}{desc}")
+            console.print()
+
+            choices = [
+                (p.id, f"{p.id} - {p.description}" if p.description else p.id) for p in plugins
+            ]
+
+            selected = prompter.checkbox(
+                "Select plugins to enable (↑↓ move, space toggles, a toggles all, enter confirms):",
+                choices,
+                checked_by_default=False,
+            )
+
+            if selected is GO_BACK:
+                # Remove the marketplace we just added and go back to sub-step 0
+                init_config.marketplaces.remove(marketplace)
+                break  # breaks inner while, outer while re-prompts sub-step 0
+            if selected is None:
+                return None
+
+            assert isinstance(selected, list)
+            selected = cast(list[str], selected)
+            if not selected:
+                break  # no plugins selected, move on
+
+            # --- sub-step 3: scope selection ---
+            console.print()
+            scope_choices = [f"{scope} - {desc}" for scope, desc in SCOPE_CHOICES.items()]
+            scope_selection = prompter.select(
+                "Where should plugins be installed?",
+                choices=scope_choices,
+                default=scope_choices[0],
+            )
+
+            if scope_selection is GO_BACK:
+                # Go back to plugin selection (re-loop inner while)
+                continue
+            if scope_selection is None:
+                return None
+
+            assert isinstance(scope_selection, str)
+            selected_scope = scope_selection.split(" - ")[0]
+
+            for plugin_id in selected:
+                init_config.plugins.append(
+                    PluginChoice(
+                        id=plugin_id,
+                        marketplace=marketplace.name,
+                        enabled=True,
+                        scope=selected_scope,
+                    )
+                )
+            break  # done with this marketplace's plugins
+
+        # If marketplace was removed by go-back from plugin selection, restart loop
+        if marketplace not in init_config.marketplaces:
+            continue
+
+        # --- sub-step 4: add another? ---
+        console.print()
+        add_another = prompter.confirm("Add another marketplace?", default=False)
+
+        if add_another is GO_BACK:
+            # Remove this iteration's plugins, go back to plugin selection
+            init_config.plugins = [
+                p for p in init_config.plugins if p.marketplace != marketplace.name
+            ]
+            # Keep marketplace in list but re-do plugin selection
+            # Actually, per plan: remove plugins, re-prompt plugin selection
+            # We need to re-enter the plugin sub-step for this marketplace
+            # Simplest: remove marketplace too and continue (re-prompt sub-step 0)
+            init_config.marketplaces.remove(marketplace)
+            continue
+        if add_another is None or not add_another:
+            return True
+
+        console.print()
+
+    # Should not reach here, but just in case
+    return True
+
+
+def run_init_wizard(
+    console: Console,
+    output_path: Path | None = None,
+    prompter: Prompter | None = None,
+) -> InitConfig | None:
     """Run the interactive init wizard.
+
+    Uses a step-based state machine so Escape goes back one step
+    while Ctrl+C cancels the entire wizard.
+
+    Steps:
+        0: Config location
+        1: Overwrite check (conditional)
+        2: Marketplace loop
+        3: Conversion targets (conditional — only if plugins selected)
+        4: Preview + confirm write
+        5: Run sync? (conditional — only if conversion enabled)
 
     Args:
         console: Rich console for output.
         output_path: Optional explicit output path.
+        prompter: Prompter implementation (defaults to QuestionaryPrompter).
 
     Returns:
         InitConfig with collected choices, or None if cancelled.
     """
+    if prompter is None:
+        prompter = QuestionaryPrompter()
     # Header
     console.print()
     console.print(Panel.fit("[header]ai-config init[/header]", border_style="cyan"))
@@ -662,259 +1134,147 @@ def run_init_wizard(console: Console, output_path: Path | None = None) -> InitCo
 
     console.print()
 
-    # Choose config location
-    if output_path:
-        config_path = output_path
-        console.print(f"Config will be created at: {config_path}")
-    else:
-        location = prompt_select(
-            "Where should the config be created?",
-            choices=[
-                ".ai-config/config.yaml (this project)",
-                "~/.ai-config/config.yaml (global)",
-            ],
-            default=".ai-config/config.yaml (this project)",
-        )
+    # State accumulated across steps
+    config_path: Path | None = None
+    init_config: InitConfig | None = None
 
-        if location is None:
-            return None
-
-        if "this project" in location:
-            config_path = Path.cwd() / ".ai-config" / "config.yaml"
-        else:
-            config_path = Path.home() / ".ai-config" / "config.yaml"
-
-    # Check for existing config
-    if config_path.exists():
-        console.print()
-        console.print(f"[warning]Config already exists at {config_path}[/warning]")
-        overwrite = prompt_confirm("Overwrite existing config?", default=False)
-        if not overwrite:
-            return None
-
-    console.print()
-    console.print("━" * 40)
-    console.print()
-
-    # Collect marketplaces and plugins
-    init_config = InitConfig(config_path=config_path)
-
-    while True:
-        mp_source = prompt_select(
-            "Add a marketplace? (marketplaces contain plugins you can install)",
-            choices=[
-                "GitHub repository",
-                "Local directory",
-                "Skip (no more marketplaces)",
-            ],
-            default="GitHub repository",
-        )
-
-        if mp_source is None or mp_source == "Skip (no more marketplaces)":
-            break
-
-        console.print()
-
-        if mp_source == "GitHub repository":
-            repo_input = prompt_text(
-                "GitHub repo (owner/repo or full URL):",
-            )
-
-            if repo_input is None:
-                return None
-
-            repo = parse_github_repo(repo_input)
-            if repo is None:
-                console.print("[warning]Invalid format. Examples:[/warning]")
-                console.print("  - owner/repo")
-                console.print("  - https://github.com/owner/repo")
+    step = 0
+    while step <= 5:
+        # ── Step 0: Config location ──────────────────────────────────
+        if step == 0:
+            if output_path:
+                config_path = output_path
+                console.print(f"Config will be created at: {config_path}")
+                step += 1
                 continue
 
-            # Suggest marketplace name from repo
-            suggested_name = repo.replace("/", "-")
-            name = prompt_text("Marketplace name:", default=suggested_name)
-
-            if name is None:
-                return None
-
-            marketplace = MarketplaceChoice(
-                name=name,
-                source="github",
-                repo=repo,
+            location = prompter.select(
+                "Where should the config be created?",
+                choices=[
+                    ".ai-config/config.yaml (this project)",
+                    "~/.ai-config/config.yaml (global)",
+                ],
+                default=".ai-config/config.yaml (this project)",
             )
 
-        else:  # Local directory
-            path = prompt_path_with_search(console)
-
-            if path is None:
+            if location is GO_BACK:
+                return None  # nothing before step 0
+            if location is None:
                 return None
 
-            if not path.exists():
-                console.print(f"[warning]Path does not exist: {path}[/warning]")
-                add_anyway = prompt_confirm("Add anyway?", default=True)
-                if not add_anyway:
-                    continue
-
-            # Read the actual marketplace name from marketplace.json
-            # Claude CLI uses this name, not user-provided names
-            actual_name = get_marketplace_name(path)
-
-            if actual_name:
-                console.print(
-                    f"  [info]Found marketplace name in manifest:[/info] [key]{actual_name}[/key]"
-                )
-                name = actual_name
+            assert isinstance(location, str)
+            if "this project" in location:
+                config_path = Path.cwd() / ".ai-config" / "config.yaml"
             else:
-                # Fallback to directory name if we can't read marketplace.json
-                console.print("  [warning]Could not read marketplace name from manifest[/warning]")
-                suggested_name = path.name
-                name = prompt_text("Marketplace name:", default=suggested_name)
+                config_path = Path.home() / ".ai-config" / "config.yaml"
 
-                if name is None:
+            step += 1
+            continue
+
+        # ── Step 1: Overwrite check (conditional) ────────────────────
+        if step == 1:
+            assert config_path is not None
+            if config_path.exists():
+                console.print()
+                console.print(f"[warning]Config already exists at {config_path}[/warning]")
+                overwrite = prompter.confirm("Overwrite existing config?", default=False)
+                if overwrite is GO_BACK:
+                    step = 0
+                    continue
+                if not overwrite:
                     return None
+            # Either no existing file or user confirmed overwrite
+            step += 1
+            continue
 
-            marketplace = MarketplaceChoice(
-                name=name,
-                source="local",
-                path=str(path),
-            )
-
-        init_config.marketplaces.append(marketplace)
-
-        # Show marketplace added confirmation
-        console.print()
-        console.print(
-            f"[success]{SYMBOLS['pass']}[/success] Added marketplace: [key]{marketplace.name}[/key]"
-        )
-        if marketplace.source == "github":
-            console.print(f"    Source: github ({marketplace.repo})")
-        else:
-            console.print(f"    Source: local ({marketplace.path})")
-
-        # Fetch and select plugins from this marketplace
-        console.print()
-        console.print("Discovering plugins...")
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task(f"Fetching plugins from {marketplace.name}...", total=None)
-            plugins = fetch_marketplace_plugins(
-                marketplace.source,
-                marketplace.repo,
-                marketplace.path,
-            )
-
-        if plugins:
-            console.print(f"  [success]{SYMBOLS['pass']}[/success] Found {len(plugins)} plugin(s):")
-            for p in plugins:
-                desc = f" - {p.description}" if p.description else ""
-                console.print(f"    {SYMBOLS['bullet']} {p.id}{desc}")
+        # ── Step 2: Marketplace loop ─────────────────────────────────
+        if step == 2:
+            assert config_path is not None
+            console.print()
+            console.print("━" * 40)
             console.print()
 
-            # Build checkbox choices
-            choices = [
-                (p.id, f"{p.id} - {p.description}" if p.description else p.id) for p in plugins
-            ]
+            init_config = InitConfig(config_path=config_path)
 
-            selected = prompt_checkbox(
-                "Select plugins to enable:",
-                choices,
-                checked_by_default=True,
-            )
-
-            if selected is None:
+            result = _run_marketplace_loop(console, prompter, init_config)
+            if result is GO_BACK:
+                step = 0 if not output_path else 1
+                continue
+            if result is None:
                 return None
 
-            if selected:
-                # Ask for scope with explanation
-                console.print()
-                scope_choices = [f"{scope} - {desc}" for scope, desc in SCOPE_CHOICES.items()]
-                scope_selection = prompt_select(
-                    "Where should plugins be installed?",
-                    choices=scope_choices,
-                    default=scope_choices[0],  # user is first/default
-                )
+            step += 1
+            continue
 
-                if scope_selection is None:
+        # ── Step 3: Conversion targets (conditional) ─────────────────
+        if step == 3:
+            assert init_config is not None
+            if init_config.plugins:
+                console.print()
+                console.print("━" * 40)
+
+                default_scope = init_config.plugins[0].scope if init_config.plugins else "user"
+
+                conversion_choice = prompt_conversion_targets(console, prompter, default_scope)
+                if conversion_choice is GO_BACK:
+                    # Re-prompt conversion (preserves marketplace state)
+                    continue
+                if conversion_choice is None:
                     return None
 
-                # Extract scope from selection (first word)
-                selected_scope = scope_selection.split(" - ")[0]
+                init_config.conversion = conversion_choice
+            step += 1
+            continue
 
-                for plugin_id in selected:
-                    init_config.plugins.append(
-                        PluginChoice(
-                            id=plugin_id,
-                            marketplace=marketplace.name,
-                            enabled=True,
-                            scope=selected_scope,
-                        )
-                    )
-        else:
-            console.print(
-                f"  [warning]{SYMBOLS['warn']}[/warning] No plugins found in marketplace.json"
-            )
-            console.print("    (The marketplace was added but contains no plugins yet)")
+        # ── Step 4: Preview + confirm write ──────────────────────────
+        if step == 4:
+            assert init_config is not None
+            console.print()
+            console.print("━" * 40)
+            console.print()
 
-        console.print()
+            console.print("[subheader]Config preview:[/subheader]")
+            console.print()
+            yaml_preview = generate_config_yaml(init_config)
+            console.print(yaml_preview)
 
-        add_another = prompt_confirm("Add another marketplace?", default=False)
-        if not add_another:
-            break
+            if init_config.conversion and init_config.conversion.enabled:
+                console.print()
+                console.print("[subheader]Conversion preview:[/subheader]")
+                console.print(f"  Targets: {', '.join(init_config.conversion.targets)}")
+                console.print(f"  Scope: {init_config.conversion.scope}")
+                if init_config.conversion.custom_output_dir:
+                    console.print(f"  Output: {init_config.conversion.custom_output_dir}")
+                else:
+                    for target in init_config.conversion.targets:
+                        out = init_config.conversion.get_output_dir(target) / f".{target}"
+                        console.print(f"  {SYMBOLS['bullet']} {target}: {out}")
 
-        console.print()
+            write_ok = prompter.confirm(f"Write config to {init_config.config_path}?", default=True)
+            if write_ok is GO_BACK:
+                # Go back to conversion if plugins exist, else marketplace loop
+                step = 3 if init_config.plugins else 2
+                continue
+            if not write_ok:
+                return None
 
-    # Ask about conversion if plugins were selected
-    if init_config.plugins:
-        console.print()
-        console.print("━" * 40)
+            step += 1
+            continue
 
-        # Use the scope from the first plugin (they should all be the same)
-        default_scope = init_config.plugins[0].scope if init_config.plugins else "user"
+        # ── Step 5: Run sync? (conditional) ──────────────────────────
+        if step == 5:
+            assert init_config is not None
+            if init_config.conversion and init_config.conversion.enabled:
+                run_sync = prompter.confirm("Run ai-config sync now?", default=True)
+                if run_sync is GO_BACK:
+                    step = 4
+                    continue
+                if run_sync is None:
+                    return None
+                init_config.run_sync = bool(run_sync)
 
-        conversion_choice = prompt_conversion_targets(console, default_scope)
-        if conversion_choice is None:
-            return None
-
-        init_config.conversion = conversion_choice
-
-    console.print()
-    console.print("━" * 40)
-    console.print()
-
-    # Show preview
-    console.print("[subheader]Config preview:[/subheader]")
-    console.print()
-    yaml_preview = generate_config_yaml(init_config)
-    console.print(yaml_preview)
-
-    # Show conversion preview if enabled
-    if init_config.conversion and init_config.conversion.enabled:
-        console.print()
-        console.print("[subheader]Conversion preview:[/subheader]")
-        console.print(f"  Targets: {', '.join(init_config.conversion.targets)}")
-        console.print(f"  Scope: {init_config.conversion.scope}")
-        if init_config.conversion.custom_output_dir:
-            console.print(f"  Output: {init_config.conversion.custom_output_dir}")
-        else:
-            for target in init_config.conversion.targets:
-                output_path = init_config.conversion.get_output_dir(target) / f".{target}"
-                console.print(f"  {SYMBOLS['bullet']} {target}: {output_path}")
-
-    # Confirm write
-    write_ok = prompt_confirm(f"Write config to {config_path}?", default=True)
-    if not write_ok:
-        return None
-
-    # Offer to run sync now if conversion enabled
-    if init_config.conversion and init_config.conversion.enabled:
-        run_sync = prompt_confirm("Run ai-config sync now?", default=True)
-        if run_sync is None:
-            return None
-        init_config.run_sync = run_sync
+            step += 1
+            continue
 
     return init_config
 

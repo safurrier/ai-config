@@ -1,5 +1,8 @@
 """Configuration loading and validation for ai-config."""
 
+from __future__ import annotations
+
+import os
 from pathlib import Path
 from typing import Any
 
@@ -101,8 +104,8 @@ def _parse_marketplace(
                 f"Marketplace '{name}' must have 'path' field for local source"
             )
 
-        # Resolve relative paths against base_dir
-        path = Path(path_str)
+        # Expand env vars / tilde, then resolve relative paths against base_dir
+        path = Path(os.path.expandvars(path_str)).expanduser()
         if not path.is_absolute() and base_dir is not None:
             path = (base_dir / path).resolve()
         else:
@@ -207,7 +210,7 @@ def _parse_conversion(
             raise ConfigValidationError(
                 f"Conversion output_dir must be a string, got: {type(output_dir)}"
             )
-        path = Path(output_dir)
+        path = Path(os.path.expandvars(output_dir)).expanduser()
         if not path.is_absolute() and base_dir is not None:
             path = (base_dir / path).resolve()
         else:

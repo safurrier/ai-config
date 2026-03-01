@@ -1,5 +1,7 @@
 """Validation context for sharing state across validators."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,18 +15,18 @@ if TYPE_CHECKING:
 class ValidationContext:
     """Shared context passed to all validators."""
 
-    config: "AIConfig"
+    config: AIConfig
     config_path: Path
     target_type: str = "claude"
 
     # Cached data from Claude CLI (lazy-loaded)
-    _installed_plugins: list["InstalledPlugin"] | None = field(default=None, repr=False)
-    _installed_marketplaces: list["InstalledMarketplace"] | None = field(default=None, repr=False)
+    _installed_plugins: list[InstalledPlugin] | None = field(default=None, repr=False)
+    _installed_marketplaces: list[InstalledMarketplace] | None = field(default=None, repr=False)
     _known_marketplaces_json: dict | None = field(default=None, repr=False)
     _errors: list[str] = field(default_factory=list, repr=False)
 
     @property
-    def installed_plugins(self) -> list["InstalledPlugin"]:
+    def installed_plugins(self) -> list[InstalledPlugin]:
         """Lazy-load installed plugins from Claude CLI."""
         if self._installed_plugins is None:
             from ai_config.adapters import claude
@@ -35,7 +37,7 @@ class ValidationContext:
         return self._installed_plugins
 
     @property
-    def installed_marketplaces(self) -> list["InstalledMarketplace"]:
+    def installed_marketplaces(self) -> list[InstalledMarketplace]:
         """Lazy-load installed marketplaces from Claude CLI."""
         if self._installed_marketplaces is None:
             from ai_config.adapters import claude

@@ -31,7 +31,7 @@ src/ai_config/
     ├── plugin/      # plugin validators
     └── target/      # converted output validators (codex, cursor, opencode)
 tests/
-├── unit/            # Fast unit tests (516 tests)
+├── unit/            # Fast unit tests (551 tests)
 ├── integration/     # Integration tests (8 tests, marked)
 ├── e2e/             # Docker-based E2E tests (76 tests)
 │   ├── conftest.py             # Docker fixtures + exec_in_container()
@@ -89,7 +89,7 @@ Enforced by tooling—don't memorize rules, run the tools:
 - **Types**: `ty check` with strict mode
 
 Conventions:
-- Python 3.9+ syntax
+- Python 3.10+ syntax
 - Type annotations required
 - Imports: stdlib → third-party → local (enforced by ruff isort)
 

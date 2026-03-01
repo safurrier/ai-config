@@ -1,5 +1,7 @@
 """Base types and protocol for ai-config validators."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
@@ -43,6 +45,6 @@ class Validator(Protocol):
     name: str
     description: str
 
-    async def validate(self, context: "ValidationContext") -> list[ValidationResult]:
+    async def validate(self, context: ValidationContext) -> list[ValidationResult]:
         """Run validation checks and return results."""
         ...

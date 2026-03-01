@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -107,7 +107,7 @@ class BinaryFile(BaseModel):
     executable: bool = False
 
 
-AnyFile = Union[TextFile, BinaryFile]
+AnyFile = TextFile | BinaryFile
 
 
 # --- Component Types ---
@@ -241,7 +241,7 @@ class LspServer(BaseModel):
     initialization_options: dict[str, Any] = Field(default_factory=dict)
 
 
-Component = Union[Skill, Command, Hook, McpServer, Agent, LspServer]
+Component = Skill | Command | Hook | McpServer | Agent | LspServer
 
 
 class PluginIR(BaseModel):

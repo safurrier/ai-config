@@ -1,11 +1,11 @@
 [project]
 name = "ai-config-cli"
-version = "0.1.0"
+version = "0.3.0"
 description = "Declarative plugin manager for Claude Code"
 authors = [
     { name = "Alex Furrier", email = "afurrier@gmail.com" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 readme = "README.md"
 license = { text = "MIT" }
 
@@ -18,7 +18,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -74,7 +73,7 @@ packages = ["src/ai_config"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 src = ["src"]
 
 [tool.ruff.lint]
@@ -100,7 +99,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.environment]
-python-version = "3.9"
+python-version = "3.10"
 
 [tool.ty.src]
 include = ["src"]

@@ -7,7 +7,7 @@ and trigger conversion after plugin selection.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from ai_config.init import (
     ConversionChoice,
@@ -16,6 +16,7 @@ from ai_config.init import (
     PluginChoice,
     prompt_conversion_targets,
 )
+from tests.unit.test_init import ScriptedPrompter
 
 
 class TestConversionChoice:
@@ -116,32 +117,23 @@ class TestInitConfigWithConversion:
 
 
 class TestPromptConversionTargets:
-    """Test prompt_conversion_targets function."""
+    """Test prompt_conversion_targets function using ScriptedPrompter."""
 
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_conversion_declined(self, mock_confirm: MagicMock) -> None:
+    def test_prompt_conversion_declined(self) -> None:
         """User declines conversion prompt."""
-        mock_confirm.return_value = False
-
-        result = prompt_conversion_targets(MagicMock())
-
+        p = ScriptedPrompter([False])  # No to conversion
+        result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is not None
         assert result.enabled is False
 
-    @patch("ai_config.init.prompt_checkbox")
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_conversion_accepted_with_targets(
-        self,
-        mock_confirm: MagicMock,
-        mock_checkbox: MagicMock,
-    ) -> None:
+    def test_prompt_conversion_accepted_with_targets(self) -> None:
         """User accepts conversion and selects targets with default scope."""
-        # First confirm: wants conversion, second confirm: use custom dir (no)
-        mock_confirm.side_effect = [True, False]
-        mock_checkbox.return_value = ["codex", "cursor"]
-
-        result = prompt_conversion_targets(MagicMock(), default_scope="user")
-
+        p = ScriptedPrompter([
+            True,  # wants conversion
+            ["codex", "cursor"],  # target checkbox
+            False,  # custom dir? no
+        ])
+        result = prompt_conversion_targets(MagicMock(), prompter=p, default_scope="user")
         assert result is not None
         assert result.enabled is True
         assert "codex" in result.targets
@@ -149,67 +141,43 @@ class TestPromptConversionTargets:
         assert result.scope == "user"
         assert result.custom_output_dir is None
 
-    @patch("ai_config.init.prompt_text")
-    @patch("ai_config.init.prompt_checkbox")
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_conversion_with_custom_dir(
-        self,
-        mock_confirm: MagicMock,
-        mock_checkbox: MagicMock,
-        mock_text: MagicMock,
-    ) -> None:
+    def test_prompt_conversion_with_custom_dir(self) -> None:
         """User accepts conversion with custom output directory."""
-        # First confirm: wants conversion, second confirm: use custom dir (yes)
-        mock_confirm.side_effect = [True, True]
-        mock_checkbox.return_value = ["codex", "cursor", "opencode"]
-        mock_text.return_value = "./converted"
-
-        result = prompt_conversion_targets(MagicMock())
-
+        p = ScriptedPrompter([
+            True,  # wants conversion
+            ["codex", "cursor", "opencode"],  # targets
+            True,  # custom dir? yes
+            "./converted",  # dir path
+        ])
+        result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is not None
         assert result.enabled is True
         assert len(result.targets) == 3
         assert result.custom_output_dir == Path("./converted")
 
-    @patch("ai_config.init.prompt_checkbox")
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_conversion_no_targets_selected(
-        self,
-        mock_confirm: MagicMock,
-        mock_checkbox: MagicMock,
-    ) -> None:
-        """User accepts but selects no targets."""
-        mock_confirm.return_value = True
-        mock_checkbox.return_value = []  # No targets selected
-
-        result = prompt_conversion_targets(MagicMock())
-
-        # Should treat as disabled
+    def test_prompt_conversion_no_targets_selected(self) -> None:
+        """User accepts but selects no targets → treated as disabled."""
+        p = ScriptedPrompter([
+            True,  # wants conversion
+            [],  # no targets selected
+        ])
+        result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is not None
         assert result.enabled is False
 
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_conversion_cancelled(self, mock_confirm: MagicMock) -> None:
-        """User cancels conversion prompt."""
-        mock_confirm.return_value = None  # Ctrl+C
-
-        result = prompt_conversion_targets(MagicMock())
-
-        # Should return None on cancel
+    def test_prompt_conversion_cancelled(self) -> None:
+        """User cancels conversion prompt (Ctrl+C)."""
+        p = ScriptedPrompter([None])  # Ctrl+C
+        result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is None
 
-    @patch("ai_config.init.prompt_checkbox")
-    @patch("ai_config.init.prompt_confirm")
-    def test_prompt_uses_default_scope(
-        self,
-        mock_confirm: MagicMock,
-        mock_checkbox: MagicMock,
-    ) -> None:
+    def test_prompt_uses_default_scope(self) -> None:
         """Conversion uses the scope passed from plugin selection."""
-        mock_confirm.side_effect = [True, False]  # Yes convert, No custom dir
-        mock_checkbox.return_value = ["codex"]
-
-        result = prompt_conversion_targets(MagicMock(), default_scope="project")
-
+        p = ScriptedPrompter([
+            True,  # wants conversion
+            ["codex"],  # targets
+            False,  # custom dir? no
+        ])
+        result = prompt_conversion_targets(MagicMock(), prompter=p, default_scope="project")
         assert result is not None
         assert result.scope == "project"

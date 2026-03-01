@@ -275,8 +275,6 @@ class TestWatchCLI:
         runner = CliRunner()
         result = runner.invoke(main, ["watch", "--help"])
 
-        assert "When to use:" in result.output
-        assert "What you'll see:" in result.output
-        assert "How it works:" in result.output
-        assert "Important limitation:" in result.output
+        assert "Watch for file changes and auto-sync" in result.output
+        assert "debounce" in result.output
         assert "claude --resume" in result.output

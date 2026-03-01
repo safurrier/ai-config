@@ -1,23 +1,84 @@
 """Tests for ai_config.init module."""
 
+from __future__ import annotations
+
+from collections import deque
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from click.testing import CliRunner
+from rich.console import Console
 
 from ai_config.cli import main
 from ai_config.init import (
+    GO_BACK,
     ConversionChoice,
     InitConfig,
     MarketplaceChoice,
     PluginChoice,
+    Prompter,
+    _ResolvedPath,
+    _add_escape_binding,
     check_claude_cli,
     create_minimal_config,
     generate_config_yaml,
+    prompt_path_with_search,
+    run_init_wizard,
     write_config,
 )
+
+
+class ScriptedPrompter:
+    """Fake prompter that returns pre-scripted answers and records prompts shown.
+
+    Each call pops the next answer from the script. If the script runs out,
+    the test fails with a clear message showing which prompt was unexpected.
+
+    Usage::
+
+        p = ScriptedPrompter([
+            GO_BACK,                                    # first prompt → go back
+            ".ai-config/config.yaml (this project)",    # second prompt → select
+            "Skip (no more marketplaces)",              # third prompt → select
+            True,                                       # fourth prompt → confirm
+        ])
+        result = run_init_wizard(console, prompter=p)
+        assert p.prompts_shown[0] == "Where should the config be created?"
+    """
+
+    def __init__(self, script: list[object]) -> None:
+        self._script: deque[object] = deque(script)
+        self.prompts_shown: list[str] = []
+
+    def _next(self, message: str) -> object:
+        self.prompts_shown.append(message)
+        if not self._script:
+            raise AssertionError(
+                f"ScriptedPrompter ran out of answers at prompt #{len(self.prompts_shown)}: "
+                f"{message!r}"
+            )
+        return self._script.popleft()
+
+    def select(
+        self, message: str, choices: list[str], default: str | None = None
+    ) -> str | None | object:
+        return self._next(message)
+
+    def checkbox(
+        self,
+        message: str,
+        choices: list[tuple[str, str]],
+        checked_by_default: bool = True,
+    ) -> list[str] | None | object:
+        return self._next(message)
+
+    def text(self, message: str, default: str = "") -> str | None | object:
+        return self._next(message)
+
+    def confirm(self, message: str, default: bool = True) -> bool | None | object:
+        return self._next(message)
 
 
 @pytest.fixture
@@ -269,7 +330,7 @@ class TestInitCommand:
         result = runner.invoke(main, ["init", "--help"])
 
         assert result.exit_code == 0
-        assert "Create a new ai-config configuration file" in result.output
+        assert "Set up a new ai-config configuration" in result.output
         assert "--non-interactive" in result.output
         assert "--output" in result.output
 
@@ -687,3 +748,510 @@ class TestGetMarketplaceName:
 
         name = get_marketplace_name(tmp_path)
         assert name is None
+
+
+class TestGetMarketplaceNameFromGithub:
+    """Tests for get_marketplace_name_from_github function."""
+
+    def test_success(self) -> None:
+        """Reads name from GitHub marketplace.json."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"name": "my-marketplace", "plugins": []}
+
+        with patch("ai_config.init.requests.get", return_value=mock_response):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name == "my-marketplace"
+
+    def test_fallback_to_master(self) -> None:
+        """Falls back to master branch when main returns 404."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        def mock_get(url: str, timeout: int) -> MagicMock:
+            response = MagicMock()
+            if "main" in url:
+                response.status_code = 404
+            else:  # master
+                response.status_code = 200
+                response.json.return_value = {"name": "master-marketplace"}
+            return response
+
+        with patch("ai_config.init.requests.get", side_effect=mock_get):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name == "master-marketplace"
+
+    def test_network_error_returns_none(self) -> None:
+        """Returns None on network error."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        with patch("ai_config.init.requests.get") as mock_get:
+            mock_get.side_effect = Exception("Network error")
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name is None
+
+    def test_missing_name_field_returns_none(self) -> None:
+        """Returns None when name field is missing."""
+        from ai_config.init import get_marketplace_name_from_github
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"plugins": []}
+
+        with patch("ai_config.init.requests.get", return_value=mock_response):
+            name = get_marketplace_name_from_github("owner/repo")
+
+        assert name is None
+
+
+class TestAddEscapeBinding:
+    """Tests for _add_escape_binding helper."""
+
+    def test_adds_escape_key_binding(self):
+        """ESC key binding is added to question's key bindings."""
+        import questionary
+
+        question = questionary.text("test")
+        original_bindings = question.application.key_bindings
+        _add_escape_binding(question)
+        # After adding, the key bindings should be a merged set
+        # (different object from original since merge creates new)
+        assert question.application.key_bindings is not original_bindings
+
+    def test_escape_binding_preserves_original(self):
+        """Original key bindings are preserved after adding ESC."""
+        import questionary
+
+        question = questionary.text("test")
+        _add_escape_binding(question)
+        # The merged bindings should still work (not None, not empty)
+        assert question.application.key_bindings is not None
+
+
+class TestGoBack:
+    """Tests for Escape-to-go-back behavior in the init wizard.
+
+    Uses ScriptedPrompter (injected fake) instead of patching module-level functions.
+    Tests verify observable behavior: what the wizard returns, what prompts are shown,
+    and what state is accumulated — not internal call order.
+    """
+
+    def _console(self) -> Console:
+        """Real console with output suppressed."""
+        return Console(quiet=True)
+
+    def test_go_back_from_config_location_cancels(self) -> None:
+        """Escape at the first prompt (config location) cancels the wizard."""
+        p = ScriptedPrompter([GO_BACK])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+        assert "config be created" in p.prompts_shown[0]
+
+    def test_go_back_from_overwrite_returns_to_config_location(self) -> None:
+        """Escape at overwrite → re-prompts config location."""
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            GO_BACK,  # overwrite confirm → go back
+            GO_BACK,  # config location again → cancel
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+        # Config location was asked twice
+        assert p.prompts_shown.count("Where should the config be created?") == 2
+
+    def test_go_back_from_marketplace_no_marketplaces_returns_to_config(self) -> None:
+        """Escape at marketplace source (empty) goes back to config location."""
+        p = ScriptedPrompter([
+            "~/.ai-config/config.yaml (global)",  # config location (non-existent path)
+            GO_BACK,  # marketplace source → go back to step 0
+            GO_BACK,  # config location → cancel
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is None
+
+    def test_go_back_from_repo_entry_returns_to_marketplace_source(self, tmp_path: Path) -> None:
+        """Escape at repo entry → re-prompts marketplace source, then skip finishes."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",  # marketplace source
+            GO_BACK,  # repo entry → back to source
+            "Skip (no more marketplaces)",  # skip
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+
+    def test_go_back_from_plugin_selection_removes_marketplace(self, tmp_path: Path) -> None:
+        """Escape at plugin checkbox removes marketplace and goes back to source."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            GO_BACK,  # plugin checkbox → go back (removes marketplace)
+            "Skip (no more marketplaces)",  # skip
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+        assert result.plugins == []
+
+    def test_go_back_from_scope_returns_to_plugin_selection(self, tmp_path: Path) -> None:
+        """Escape at scope selection → re-shows plugin checkbox."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            ["p1"],  # plugin checkbox (1st)
+            GO_BACK,  # scope select → back to plugins
+            ["p1"],  # plugin checkbox (2nd — re-shown)
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            False,  # add another? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert len(result.plugins) == 1
+        # Plugin selection prompt was shown twice
+        plugin_prompts = [m for m in p.prompts_shown if "plugins to enable" in m.lower()]
+        assert len(plugin_prompts) == 2
+
+    def test_go_back_from_add_another_removes_marketplace_and_plugins(self, tmp_path: Path) -> None:
+        """Escape at 'add another?' undoes the marketplace and its plugins."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",  # marketplace source
+            "owner/repo",  # repo text
+            ["p1"],  # plugin checkbox
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            GO_BACK,  # add another? → undo marketplace+plugins
+            "Skip (no more marketplaces)",  # now skip
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert result.marketplaces == []
+        assert result.plugins == []
+
+    def test_go_back_from_conversion_re_prompts_conversion(self, tmp_path: Path) -> None:
+        """Escape at conversion → re-prompts conversion (preserves marketplaces)."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            GO_BACK,  # conversion prompt → re-prompt conversion
+            False,  # conversion? no (second time)
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert len(result.marketplaces) == 1
+        assert len(result.plugins) == 1
+
+    def test_go_back_from_confirm_write_returns_to_conversion(self, tmp_path: Path) -> None:
+        """Escape at confirm-write goes back to conversion step."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            False,  # conversion? no
+            GO_BACK,  # confirm write → back to conversion
+            False,  # conversion? no (second time)
+            True,  # confirm write
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert len(result.plugins) == 1
+
+    def test_go_back_from_confirm_write_no_plugins_returns_to_marketplace(
+        self, tmp_path: Path
+    ) -> None:
+        """Escape at confirm-write (no plugins) goes back to marketplace loop."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "Skip (no more marketplaces)",  # first pass
+            GO_BACK,  # confirm write → back to marketplace
+            "Skip (no more marketplaces)",  # second pass
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert result.plugins == []
+
+    def test_ctrl_c_still_cancels(self, tmp_path: Path) -> None:
+        """None return (Ctrl+C) cancels the wizard at any point."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",
+            None,  # Ctrl+C at repo entry
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is None
+
+    def test_go_back_from_sync_returns_to_confirm(self, tmp_path: Path) -> None:
+        """Escape at run-sync → re-prompts confirm-write."""
+        output = tmp_path / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "GitHub repository",
+            "owner/repo",
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,  # add another? no
+            True,  # conversion? yes
+            ["codex"],  # target checkbox
+            False,  # custom dir? no
+            True,  # confirm write
+            GO_BACK,  # run sync? → back to confirm write
+            True,  # confirm write (again)
+            True,  # run sync? yes
+        ])
+        with (
+            patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
+            patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
+            patch("ai_config.init.get_marketplace_name_from_github", return_value="test-mp"),
+            patch(
+                "ai_config.init.fetch_marketplace_plugins",
+                return_value=[MagicMock(id="p1", description="d1")],
+            ),
+        ):
+            result = run_init_wizard(self._console(), output_path=output, prompter=p)
+        assert result is not None
+        assert result.run_sync is True
+
+
+class TestPromptPathWithSearch:
+    """Tests for prompt_path_with_search environment variable handling."""
+
+    def test_expands_env_vars_in_manual_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Environment variables in manually entered path are expanded."""
+        monkeypatch.setenv("DOTS_REPO", str(tmp_path / "dots"))
+        console = Console(quiet=True)
+        p = ScriptedPrompter([
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            "$DOTS_REPO/plugins",  # manual path text
+        ])
+        result = prompt_path_with_search(console, p)
+        assert isinstance(result, _ResolvedPath)
+        assert "$" not in str(result.resolved)
+        expected = (tmp_path / "dots" / "plugins").resolve()
+        assert result.resolved == expected
+        assert result.raw == "$DOTS_REPO/plugins"
+
+    def test_expands_tilde_in_manual_path(self) -> None:
+        """Tilde in manually entered path is expanded."""
+        console = Console(quiet=True)
+        p = ScriptedPrompter([
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            "~/my-plugins",  # manual path text
+        ])
+        result = prompt_path_with_search(console, p)
+        assert isinstance(result, _ResolvedPath)
+        assert "~" not in str(result.resolved)
+        assert result.resolved == (Path.home() / "my-plugins").resolve()
+        assert result.raw == "~/my-plugins"
+
+
+class TestMarketplaceAutoDiscovery:
+    """Tests for automatic marketplace discovery from repo root."""
+
+    def _console(self) -> Console:
+        return Console(quiet=True)
+
+    def _make_marketplace(self, path: Path, name: str, plugins: list[str]) -> None:
+        """Create a minimal marketplace structure at the given path."""
+        cp_dir = path / ".claude-plugin"
+        cp_dir.mkdir(parents=True)
+        import json
+
+        manifest = {
+            "name": name,
+            "owner": {"name": "test"},
+            "plugins": [{"name": p, "description": f"Plugin {p}"} for p in plugins],
+        }
+        (cp_dir / "marketplace.json").write_text(json.dumps(manifest))
+
+    def test_auto_discovers_single_nested_marketplace(self, tmp_path: Path) -> None:
+        """When path is a repo root with one nested marketplace, auto-selects it."""
+        mp_dir = tmp_path / "config" / "plugins"
+        self._make_marketplace(mp_dir, "my-plugins", ["p1"])
+
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "Local directory",  # marketplace source
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            str(tmp_path),  # enter repo root path
+            ["p1"],  # plugin checkbox
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            False,  # add another marketplace? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert len(result.marketplaces) == 1
+        assert result.marketplaces[0].name == "my-plugins"
+        # Raw input is preserved with discovered sub-path appended
+        assert result.marketplaces[0].path == str(Path(str(tmp_path)) / "config" / "plugins")
+        assert len(result.plugins) == 1
+
+    def test_env_var_preserved_with_auto_discovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env var in path is preserved in config even after auto-discovery."""
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        monkeypatch.setenv("MY_REPO", str(repo_dir))
+        mp_dir = repo_dir / "config" / "plugins"
+        self._make_marketplace(mp_dir, "my-plugins", ["p1"])
+
+        # Use a tmp output path to avoid overwrite prompt for existing config
+        output_path = tmp_path / "output" / ".ai-config" / "config.yaml"
+        p = ScriptedPrompter([
+            "Local directory",
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            "$MY_REPO",  # env var as path
+            ["p1"],
+            "user - Available in all projects (~/.claude/plugins/)",
+            False,
+            False,
+            True,
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), output_path=output_path, prompter=p)
+        assert result is not None
+        # Config path should use the env var, not the resolved absolute path
+        assert result.marketplaces[0].path == "$MY_REPO/config/plugins"
+
+    def test_multiple_nested_marketplaces_presents_choice(self, tmp_path: Path) -> None:
+        """When multiple nested marketplaces found, user selects one."""
+        mp1_dir = tmp_path / "mp1"
+        mp2_dir = tmp_path / "mp2"
+        self._make_marketplace(mp1_dir, "first-mp", ["p1"])
+        self._make_marketplace(mp2_dir, "second-mp", ["p2"])
+
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "Local directory",  # marketplace source
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            str(tmp_path),  # enter repo root path
+            str(mp1_dir),  # select first marketplace from auto-discovery
+            ["p1"],  # plugin checkbox
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            False,  # add another marketplace? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces[0].name == "first-mp"
+        assert result.marketplaces[0].path == str(mp1_dir)
+
+    def test_direct_marketplace_path_skips_discovery(self, tmp_path: Path) -> None:
+        """When user provides exact marketplace path, no search is needed."""
+        self._make_marketplace(tmp_path, "direct-mp", ["p1"])
+
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "Local directory",  # marketplace source
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            str(tmp_path),  # this IS the marketplace dir
+            ["p1"],  # plugin checkbox
+            "user - Available in all projects (~/.claude/plugins/)",  # scope
+            False,  # add another marketplace? no
+            False,  # conversion? no
+            True,  # confirm write
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces[0].name == "direct-mp"
+        assert result.marketplaces[0].path == str(tmp_path)
+
+    def test_no_nested_marketplaces_continues(self, tmp_path: Path) -> None:
+        """When no marketplaces found in subdirs, proceeds with original path."""
+        (tmp_path / "some-dir").mkdir()  # no marketplace.json anywhere
+
+        p = ScriptedPrompter([
+            ".ai-config/config.yaml (this project)",  # config location
+            "Local directory",  # marketplace source
+            "Enter a different path (local path, env var like $MY_REPO, etc.)",
+            str(tmp_path),  # repo root with no marketplaces
+            "empty-mp",  # marketplace name (prompted because no manifest found)
+            False,  # add another marketplace? no (no plugins found, but still asked)
+            True,  # confirm write (no conversion prompt — skipped since no plugins)
+        ])
+        with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
+            result = run_init_wizard(self._console(), prompter=p)
+        assert result is not None
+        assert result.marketplaces[0].name == "empty-mp"
+        assert result.marketplaces[0].path == str(tmp_path)

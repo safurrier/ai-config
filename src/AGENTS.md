@@ -11,6 +11,7 @@ ai_config/
 ├── operations.py    # sync/update/status + sync-driven conversion
 ├── init.py          # Interactive setup wizard
 ├── types.py         # Frozen dataclasses for config schema
+├── scaffold.py      # Plugin scaffold generation
 ├── watch.py         # File watcher for dev mode
 ├── adapters/        # External tool wrappers
 │   └── claude.py    # Claude CLI subprocess calls
@@ -56,6 +57,14 @@ ai_config/
 - Emitters use duck typing (same `emit(ir) -> EmitResult` shape) with a `get_emitter()` factory
 - Diagnostic accumulation over exceptions — parsing/emitting never raises, collects `Diagnostic` objects
 - `MappingStatus` tracks conversion fidelity per component (`native` → `unsupported`)
+
+**Init wizard — Prompter protocol** (`init.py`)
+- `Prompter` protocol defines `select`, `checkbox`, `text`, `confirm` methods
+- `QuestionaryPrompter` is the production implementation (wraps questionary + escape binding)
+- Tests inject a `ScriptedPrompter` fake — no mocking/patching of prompts needed
+- `GoBack` exception + `GO_BACK` sentinel distinguish Escape (go back) from Ctrl+C (cancel)
+- `run_init_wizard` uses a step-based state machine (steps 0–5); go-back decrements the step
+- `_run_marketplace_loop` extracted as a helper with its own sub-step tracking
 
 **Target output validators** (`validators/target/`)
 - `CodexOutputValidator`, `CursorOutputValidator`, `OpenCodeOutputValidator`

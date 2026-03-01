@@ -48,14 +48,13 @@ clean:
 build:
     uv build
 
-# Install in development mode
+# Install in development mode (editable, as uv tool)
 dev:
-    uv pip install -e .
+    uv tool install -e . --force
 
 # Ensure local editable install (source, not PyPI)
 dev-install:
-    uv pip uninstall ai-config-cli -y || true
-    uv pip install -e .
+    uv tool install -e . --force
 
 # Verify module path resolves to local repo
 dev-check:

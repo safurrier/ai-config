@@ -7,6 +7,8 @@ Adapted from the reference implementation:
 https://github.com/agentskills/agentskills/blob/main/skills-ref/src/skills_ref/validator.py
 """
 
+from __future__ import annotations
+
 import re
 import unicodedata
 from pathlib import Path

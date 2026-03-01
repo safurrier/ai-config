@@ -761,3 +761,43 @@ class TestVerifySync:
             discrepancies = verify_sync(sample_config)
 
             assert any("should be enabled" in d for d in discrepancies)
+
+
+class TestSyncMarketplaceNameMismatch:
+    """Tests for marketplace name mismatch detection."""
+
+    def test_detects_name_mismatch(self, sample_config: AIConfig) -> None:
+        """Detects when registered name differs from config key."""
+        # Config uses "my-marketplace" as key, but CLI registers as "actual-name"
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                side_effect=[
+                    ([], []),  # Initial: no marketplaces
+                    ([], []),  # Pre-add baseline
+                    (  # After add: registered under different name
+                        [
+                            InstalledMarketplace(
+                                name="actual-name",
+                                source=PluginSource.GITHUB,
+                                repo="owner/repo",
+                                install_location="/path",
+                            ),
+                        ],
+                        [],
+                    ),
+                ],
+            ),
+            patch(
+                "ai_config.operations.claude.add_marketplace",
+                return_value=CommandResult(success=True, stdout="", stderr="", returncode=0),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=([], []),
+            ),
+        ):
+            result = sync_target(sample_config.targets[0])
+
+            # Should have an error about name mismatch
+            assert any("actual-name" in e and "my-marketplace" in e for e in result.errors)
