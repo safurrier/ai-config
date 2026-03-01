@@ -67,7 +67,7 @@ class ConversionConfig:
     """Configuration for plugin conversion targets."""
 
     enabled: bool = True
-    targets: tuple[Literal["codex", "cursor", "opencode"], ...] = field(default_factory=tuple)
+    targets: tuple[Literal["codex", "cursor", "opencode", "pi"], ...] = field(default_factory=tuple)
     scope: Literal["user", "project"] = "project"
     output_dir: str | None = None
     commands_as_skills: bool = False
@@ -77,7 +77,7 @@ class ConversionConfig:
             return
         if not self.targets:
             raise ValueError("Conversion targets cannot be empty")
-        valid_targets = {"codex", "cursor", "opencode"}
+        valid_targets = {"codex", "cursor", "opencode", "pi"}
         for target in self.targets:
             if target not in valid_targets:
                 raise ValueError(f"Invalid conversion target: {target}")

@@ -16,6 +16,7 @@ from ai_config.converters.emitters import (
     CursorEmitter,
     EmitResult,
     OpenCodeEmitter,
+    PiEmitter,
     get_emitter,
     skill_to_markdown,
 )
@@ -56,6 +57,14 @@ class TestEmitterProtocol:
         assert emitter.target == TargetTool.OPENCODE
         assert emitter.scope == InstallScope.PROJECT
 
+    def test_pi_emitter_has_required_attributes(self) -> None:
+        """PiEmitter has target and scope attributes."""
+        emitter = PiEmitter()
+        assert hasattr(emitter, "target")
+        assert hasattr(emitter, "scope")
+        assert emitter.target == TargetTool.PI
+        assert emitter.scope == InstallScope.PROJECT
+
     def test_emitters_have_emit_method(self) -> None:
         """All emitters have an emit method that returns EmitResult."""
         ir = PluginIR(
@@ -63,7 +72,7 @@ class TestEmitterProtocol:
             components=[],
         )
 
-        for emitter_class in [CodexEmitter, CursorEmitter, OpenCodeEmitter]:
+        for emitter_class in [CodexEmitter, CursorEmitter, OpenCodeEmitter, PiEmitter]:
             emitter = emitter_class()
             assert hasattr(emitter, "emit")
             assert callable(emitter.emit)
@@ -80,6 +89,9 @@ class TestEmitterProtocol:
         assert emitter.scope == InstallScope.USER
 
         emitter = OpenCodeEmitter(scope=InstallScope.USER)
+        assert emitter.scope == InstallScope.USER
+
+        emitter = PiEmitter(scope=InstallScope.USER)
         assert emitter.scope == InstallScope.USER
 
 

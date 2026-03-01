@@ -51,5 +51,6 @@ site/
 .codex/
 .cursor/
 .opencode/
+.pi/
 opencode.json
 opencode.lsp.json

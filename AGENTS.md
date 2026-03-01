@@ -6,7 +6,7 @@ Declarative plugin manager for Claude Code — with cross-tool plugin conversion
 
 Claude Code plugins let you extend Claude with custom skills, hooks, and MCP servers. Managing them manually (`claude plugin install`, `claude plugin marketplace add`) doesn't scale across machines or teams.
 
-ai-config provides a YAML config file for declarative plugin management. Define what you want, run `ai-config sync`, done. It also converts Claude plugins to other AI coding tools (Codex, Cursor, OpenCode) via `ai-config convert`.
+ai-config provides a YAML config file for declarative plugin management. Define what you want, run `ai-config sync`, done. It also converts Claude plugins to other AI coding tools (Codex, Cursor, OpenCode, Pi) via `ai-config convert`.
 
 ## Repo Map
 
@@ -22,18 +22,18 @@ src/ai_config/
 ├── converters/      # Plugin conversion pipeline (parse → IR → emit)
 │   ├── ir.py            # Tool-agnostic intermediate representation
 │   ├── claude_parser.py # Claude plugin → PluginIR
-│   ├── emitters.py      # PluginIR → target files (Codex, Cursor, OpenCode)
+│   ├── emitters.py      # PluginIR → target files (Codex, Cursor, OpenCode, Pi)
 │   ├── convert.py       # Orchestrator (ties parse + emit + report)
 │   └── report.py        # Conversion reports (JSON, Markdown)
 └── validators/      # Validation framework
     ├── component/   # skill, hook, mcp validators
     ├── marketplace/ # marketplace validators
     ├── plugin/      # plugin validators
-    └── target/      # converted output validators (codex, cursor, opencode)
+    └── target/      # converted output validators (codex, cursor, opencode, pi)
 tests/
-├── unit/            # Fast unit tests (551 tests)
+├── unit/            # Fast unit tests (577 tests)
 ├── integration/     # Integration tests (8 tests, marked)
-├── e2e/             # Docker-based E2E tests (76 tests)
+├── e2e/             # Docker-based E2E tests (79 tests)
 │   ├── conftest.py             # Docker fixtures + exec_in_container()
 │   ├── tmux_helper.py          # TmuxTestSession for interactive CLI testing
 │   ├── test_conversion.py      # Conversion CLI + per-target output
@@ -42,7 +42,7 @@ tests/
 │   └── test_tool_validation.py # Interactive CLI introspection via tmux
 ├── docker/          # Docker test infrastructure
 │   ├── Dockerfile.claude-only  # Fast image with Claude Code only
-│   ├── Dockerfile.all-tools    # Full image with 4 AI tools
+│   ├── Dockerfile.all-tools    # Full image with 5 AI tools
 │   └── test_in_docker.py       # CLI for local Docker testing
 └── fixtures/
     ├── sample-plugins/complete-plugin/  # Full plugin fixture (skills, hooks, MCP, LSP)
@@ -108,7 +108,7 @@ E2E tests run in Docker containers to validate ai-config works with real AI codi
 
 | Image | Tools | Use Case |
 |-------|-------|----------|
-| `all-tools` | Claude, Codex, OpenCode, Cursor | Default - full multi-tool validation |
+| `all-tools` | Claude, Codex, OpenCode, Cursor, Pi | Default - full multi-tool validation |
 | `claude-only` | Claude Code | Fast local testing |
 
 **Running E2E tests locally:**
@@ -146,6 +146,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 | OpenAI Codex | `npm install -g @openai/codex` | `codex` |
 | OpenCode | `npm install -g opencode-ai` | `opencode` |
 | Cursor CLI | `curl -fsSL https://cursor.com/install \| bash` | `cursor-agent` |
+| Pi | `npm install -g @mariozechner/pi-coding-agent` | `pi` |
 
 ## Releases
 
@@ -160,7 +161,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 4. Create PR, merge to main
 5. Create GitHub release with tag `vX.Y.Z` (this auto-publishes to PyPI)
 
-Version is in `pyproject.toml` (currently `0.1.0`). Tags use `v` prefix (e.g., `v0.1.0`).
+Version is in `pyproject.toml` (currently `0.3.0`). Tags use `v` prefix (e.g., `v0.3.0`).
 
 ### PyPI Publishing
 
@@ -182,6 +183,7 @@ Module-specific docs (auto-discovered by Claude Code):
 Cross-cutting docs in `ai_agent_docs/`:
 - `ai_agent_docs/conversion-pipeline.md` — Converter architecture (Parse → IR → Emit)
 - `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
+- `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
 
 ## Gotchas
 
@@ -192,4 +194,4 @@ Cross-cutting docs in `ai_agent_docs/`:
 - **Cursor CLI binary is `cursor-agent`** — not `cursor` (the desktop app uses `cursor`)
 - **E2E tests are class-scoped** — tests in the same class share a container, different classes get fresh containers
 - **E2E sync configs need absolute paths** — config written to `~/.ai-config/` resolves relative paths from `~`, not the repo. Use `/home/testuser/ai-config/...` in Docker tests.
-- **Conversion artifacts are gitignored** — `.codex/`, `.cursor/`, `.opencode/`, `opencode.json`, `opencode.lsp.json` are local output, not committed
+- **Conversion artifacts are gitignored** — `.codex/`, `.cursor/`, `.opencode/`, `.pi/`, `opencode.json`, `opencode.lsp.json` are local output, not committed

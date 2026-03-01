@@ -95,7 +95,7 @@ def main() -> None:
     help="Path to config file. Default: auto-detected .ai-config/config.yaml.",
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be done without making changes.")
-@click.option("--fresh", is_flag=True, help="Clear cache before syncing.")
+@click.option("--fresh", "--force", is_flag=True, help="Clear cache before syncing.")
 @click.option(
     "--force-convert",
     is_flag=True,
@@ -296,7 +296,7 @@ def status(
     "  ai-config update --all --fresh      Clear cache, then update",
 )
 @click.option("--all", "update_all", is_flag=True, help="Update all plugins.")
-@click.option("--fresh", is_flag=True, help="Clear cache before updating.")
+@click.option("--fresh", "--force", is_flag=True, help="Clear cache before updating.")
 @click.argument("plugins", nargs=-1)
 def update(
     update_all: bool,
@@ -520,7 +520,7 @@ def init(output: Path | None, non_interactive: bool) -> None:
 @click.option(
     "--target",
     "-t",
-    type=click.Choice(["codex", "cursor", "opencode", "all"]),
+    type=click.Choice(["codex", "cursor", "opencode", "pi", "all"]),
     help="Validate converted output for a target tool instead of plugin health.",
 )
 @click.argument("output_dir", type=click.Path(exists=True, path_type=Path), required=False)
@@ -623,7 +623,7 @@ def _doctor_target_mode(
 
     # Determine which targets to validate
     if target == "all":
-        targets = ["codex", "cursor", "opencode"]
+        targets = ["codex", "cursor", "opencode", "pi"]
     else:
         targets = [target]
 
@@ -738,7 +738,7 @@ def _doctor_target_mode(
     "-t",
     "targets",
     multiple=True,
-    type=click.Choice(["codex", "cursor", "opencode", "all"]),
+    type=click.Choice(["codex", "cursor", "opencode", "pi", "all"]),
     default=["all"],
     show_default=True,
     help="Target tool(s) to convert to (repeatable).",
@@ -823,7 +823,7 @@ def convert(
 
     # Resolve targets
     if "all" in targets:
-        target_list = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE]
+        target_list = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI]
     else:
         target_list = [TargetTool(t) for t in targets]
 

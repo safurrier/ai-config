@@ -56,6 +56,9 @@ RUN npm install -g opencode-ai || echo "OpenCode npm install failed, trying curl
 # We'll install as root first, then ensure PATH is set
 RUN curl -fsSL https://cursor.com/install | bash || echo "Cursor install skipped - installer may not be available"
 
+# 5. Pi - npm package (@mariozechner/pi-coding-agent)
+RUN npm install -g @mariozechner/pi-coding-agent || echo "Pi install failed"
+
 # Ensure all tool binaries are in PATH
 ENV PATH="/root/.local/bin:/usr/local/bin:$PATH"
 
@@ -98,6 +101,7 @@ RUN echo "=== Tool Installation Status ===" && \
     echo "OpenAI Codex:" && (codex --version 2>&1 || echo "  NOT INSTALLED") && \
     echo "OpenCode:" && (opencode --version 2>&1 || echo "  NOT INSTALLED") && \
     echo "Cursor:" && (cursor-agent --version 2>&1 || cursor --version 2>&1 || echo "  NOT INSTALLED") && \
+    echo "Pi:" && (pi --version 2>&1 || echo "  NOT INSTALLED") && \
     echo "ai-config:" && uv run ai-config --version
 
 # Default command: shell for interactive debugging

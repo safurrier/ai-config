@@ -32,6 +32,7 @@ class TestConversionCLI:
         assert "codex" in output
         assert "cursor" in output
         assert "opencode" in output
+        assert "pi" in output
 
     def test_convert_dry_run(self, claude_container: Container) -> None:
         """Test conversion dry-run mode."""
@@ -97,6 +98,13 @@ class TestConversionCLI:
             "test -d /tmp/converted/.opencode",
         )
         assert exit_code == 0, "OpenCode output directory not created"
+
+        # Pi output
+        exit_code, _ = exec_in_container(
+            claude_container,
+            "test -d /tmp/converted/.pi",
+        )
+        assert exit_code == 0, "Pi output directory not created"
 
 
 @pytest.mark.e2e
@@ -512,6 +520,68 @@ class TestDoctorTargetValidation:
         assert "codex" in output_lower
         assert "cursor" in output_lower
         assert "opencode" in output_lower
+        assert "pi" in output_lower
+
+    def test_convert_pi_skills(self, claude_container: Container) -> None:
+        """Test Pi conversion produces skills with valid frontmatter."""
+        exec_in_container(claude_container, "rm -rf /tmp/pi-test && mkdir -p /tmp/pi-test")
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/pi-test",
+        )
+        assert exit_code == 0, f"Conversion failed: {output}"
+
+        # Check skills directory exists with SKILL.md
+        exit_code, _ = exec_in_container(
+            claude_container,
+            "test -f /tmp/pi-test/.pi/skills/dev-tools-code-review/SKILL.md",
+        )
+        assert exit_code == 0, "Pi skill SKILL.md not created"
+
+        # Verify frontmatter has name and description
+        exit_code, content = exec_in_container(
+            claude_container,
+            "cat /tmp/pi-test/.pi/skills/dev-tools-code-review/SKILL.md",
+        )
+        assert exit_code == 0
+        assert "name:" in content
+        assert "description:" in content
+
+    def test_convert_pi_prompts(self, claude_container: Container) -> None:
+        """Test Pi conversion produces prompt templates from commands."""
+        exec_in_container(claude_container, "rm -rf /tmp/pi-prompts && mkdir -p /tmp/pi-prompts")
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/pi-prompts",
+        )
+        assert exit_code == 0, f"Conversion failed: {output}"
+
+        # Check prompts directory has .md files
+        exit_code, listing = exec_in_container(
+            claude_container,
+            "ls /tmp/pi-prompts/.pi/prompts/",
+        )
+        assert exit_code == 0, "Pi prompts directory not created"
+        assert ".md" in listing
+
+    def test_doctor_target_pi_valid(self, claude_container: Container) -> None:
+        """Test doctor validates Pi converted output."""
+        exec_in_container(
+            claude_container, "rm -rf /tmp/doctor-pi && mkdir -p /tmp/doctor-pi"
+        )
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/doctor-pi",
+        )
+        assert exit_code == 0, f"Conversion failed: {output}"
+
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config doctor --target pi /tmp/doctor-pi",
+        )
+        assert exit_code == 0, f"Doctor validation failed: {output}"
+        assert "pi" in output.lower()
+        assert "pass" in output.lower()
 
     def test_doctor_target_json_output(self, claude_container: Container) -> None:
         """Test doctor target can output JSON."""

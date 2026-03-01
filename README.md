@@ -190,6 +190,7 @@ ai-config converts Claude plugins to work with:
 | Codex (OpenAI) | `.codex/` | `codex` |
 | Cursor | `.cursor/` | `cursor-agent` |
 | OpenCode | `.opencode/` | `opencode` |
+| Pi | `.pi/` | `pi` |
 
 Skills, commands, hooks, and MCP servers are mapped to each tool's native format. Not everything maps 1:1 — conversion reports show what was native, approximated, or unsupported.
 

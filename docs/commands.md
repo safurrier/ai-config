@@ -171,7 +171,7 @@ ai-config doctor
 |--------|-------------|
 | `-c, --config PATH` | Path to config file |
 | `--category CATEGORY` | Run only specific validation categories (can be repeated) |
-| `-t, --target TARGET` | Validate converted output: `codex`, `cursor`, `opencode`, or `all` |
+| `-t, --target TARGET` | Validate converted output: `codex`, `cursor`, `opencode`, `pi`, or `all` |
 | `--json` | Output as JSON |
 | `-v, --verbose` | Show all checks including passed |
 
@@ -214,7 +214,7 @@ ai-config convert PLUGIN_PATH
 
 | Option | Description |
 |--------|-------------|
-| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `all` (default: `all`) |
+| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `pi`, `all` (default: `all`) |
 | `-o, --output DIR` | Output directory (default: based on `--scope`) |
 | `--scope SCOPE` | `user` or `project` — controls default output path |
 | `--dry-run` | Preview changes without writing files |
@@ -235,6 +235,7 @@ Supported targets:
 - **codex** — OpenAI Codex (`.codex/` dir with TOML config + skills)
 - **cursor** — Cursor (`.cursor/` dir with rules + MCP config)
 - **opencode** — OpenCode (`opencode.json` + `.opencode/` skills dir)
+- **pi** — Pi (`.pi/` dir with skills + prompt templates)
 
 Multiple targets can be specified: `-t codex -t cursor`
 

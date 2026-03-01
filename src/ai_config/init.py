@@ -704,6 +704,7 @@ def prompt_conversion_targets(
         ("codex", "Codex (OpenAI) - .codex/ directory"),
         ("cursor", "Cursor - .cursor/ directory"),
         ("opencode", "OpenCode - .opencode/ directory"),
+        ("pi", "Pi - .pi/ directory"),
     ]
 
     conv_step = 0

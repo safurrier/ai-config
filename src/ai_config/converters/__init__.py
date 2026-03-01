@@ -1,7 +1,7 @@
 """Plugin conversion module for ai-config.
 
 This module provides functionality to convert Claude Code plugins
-to equivalent artifacts for other AI coding tools (Codex, Cursor, OpenCode).
+to equivalent artifacts for other AI coding tools (Codex, Cursor, OpenCode, Pi).
 """
 
 from ai_config.converters.claude_parser import parse_claude_plugin
@@ -15,6 +15,7 @@ from ai_config.converters.emitters import (
     CursorEmitter,
     EmitResult,
     OpenCodeEmitter,
+    PiEmitter,
     get_emitter,
 )
 from ai_config.converters.ir import (
@@ -42,6 +43,7 @@ __all__ = [
     "CodexEmitter",
     "CursorEmitter",
     "OpenCodeEmitter",
+    "PiEmitter",
     "EmitResult",
     # Report
     "ConversionReport",
