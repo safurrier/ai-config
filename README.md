@@ -1,14 +1,17 @@
 # ai-config
 
-Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, and OpenCode.
+Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.
 
 ## Why this exists
 
-Claude Code plugins are useful. They let you extend Claude with custom skills, hooks, and MCP servers. The problem is managing them.
+You've spent time building up your AI coding setup — custom skills, MCP servers, hooks, workflows. Then you want to try Codex or Pi, and you're starting from scratch. Or you get a new machine and have to remember what you installed.
 
-Without ai-config, you're running `claude plugin install` and `claude plugin marketplace add` commands by hand across machines. There's no config file. No way to version control your setup. No way to share it.
+ai-config solves both problems. You define your setup in one YAML file, and it:
 
-ai-config fixes that. You write a YAML file describing what plugins you want, and it handles the rest. It also converts your Claude plugins to work with other AI coding tools so you don't have to maintain separate configs.
+1. **Installs your plugins** across machines reproducibly (`ai-config sync`)
+2. **Converts your setup** to work with other tools automatically — same skills, same config, no manual porting
+
+No more vendor lock-in because your customizations are trapped in one tool's config directory. No more juggling dotfiles across `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, and `.pi/`. Write it once, sync everywhere.
 
 Or more simply, run `ai-config init` and it walks you through everything.
 
@@ -92,6 +95,42 @@ ai-config doctor
 
 Validates marketplaces, plugins, skills, hooks, and MCP servers. Shows fix hints for any issues.
 
+## Example: one config, five tools
+
+Say you have a plugin marketplace with your coding skills and MCP servers. Here's the full config:
+
+```yaml
+version: 1
+targets:
+  - type: claude
+    config:
+      marketplaces:
+        my-plugins:
+          source: github
+          repo: myorg/ai-plugins
+      plugins:
+        - id: code-review@my-plugins
+          scope: user
+        - id: test-writer@my-plugins
+          scope: user
+      conversion:
+        enabled: true
+        targets: [codex, cursor, opencode, pi]
+        scope: user
+```
+
+Run `ai-config sync` and you get:
+
+- **Claude Code**: plugins installed via `claude plugin install`
+- **Codex**: skills in `~/.codex/skills/`, MCP in `~/.codex/mcp-config.toml`
+- **Cursor**: rules in `~/.cursor/rules/`, MCP in `~/.cursor/mcp.json`
+- **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
+- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`
+
+Same skills, same setup, every tool. Check this config into your dotfiles and run `ai-config sync` on any machine.
+
+Want to try Pi for the first time? Just add `pi` to the targets list and re-sync. Your skills are already there.
+
 ## What it does
 
 **Declarative config** - Define your plugins in `.ai-config/config.yaml`:
@@ -114,7 +153,7 @@ targets:
           enabled: true
       conversion:
         enabled: true
-        targets: [codex, cursor, opencode]
+        targets: [codex, cursor, opencode, pi]
         scope: user
 ```
 

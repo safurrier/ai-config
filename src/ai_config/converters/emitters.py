@@ -982,6 +982,8 @@ class PiEmitter:
 
     def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
         self.scope = scope
+        # Pi user-scope resources live under ~/.pi/agent/, project-scope under .pi/
+        self._base_dir = Path(".pi") / "agent" if scope == InstallScope.USER else Path(".pi")
 
     def emit(self, ir: PluginIR) -> EmitResult:
         result = EmitResult(target=self.target)
@@ -1029,7 +1031,7 @@ class PiEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Pi format (Agent Skills standard)."""
-        skill_dir = Path(".pi") / "skills" / f"{plugin_id}-{skill.name}"
+        skill_dir = self._base_dir / "skills" / f"{plugin_id}-{skill.name}"
         skill_path = skill_dir / "SKILL.md"
 
         # Build frontmatter — Pi supports the Agent Skills standard fields
@@ -1078,7 +1080,7 @@ class PiEmitter:
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
         """Emit a command as a Pi prompt template."""
         prompt_name = f"{plugin_id}-{cmd.name}"
-        prompt_path = Path(".pi") / "prompts" / f"{prompt_name}.md"
+        prompt_path = self._base_dir / "prompts" / f"{prompt_name}.md"
 
         # Build frontmatter
         meta: dict[str, Any] = {}

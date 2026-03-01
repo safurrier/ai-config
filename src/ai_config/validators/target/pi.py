@@ -23,11 +23,33 @@ class PiOutputValidator:
     description = "Validates Pi converted output"
 
     def validate_skills(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate skills in .pi/skills/ directory."""
+        """Validate skills in .pi/skills/ and/or .pi/agent/skills/ directories."""
         results: list[ValidationResult] = []
-        skills_dir = output_dir / ".pi" / "skills"
+        # Check both project (.pi/skills/) and user (.pi/agent/skills/) locations
+        skills_dirs = [
+            output_dir / ".pi" / "skills",
+            output_dir / ".pi" / "agent" / "skills",
+        ]
+        found_any = False
 
-        if not skills_dir.exists():
+        for skills_dir in skills_dirs:
+            if not skills_dir.exists():
+                continue
+            found_any = True
+            skill_dirs = [d for d in skills_dir.iterdir() if d.is_dir()]
+            if not skill_dirs:
+                results.append(
+                    ValidationResult(
+                        check_name="pi_skills_empty",
+                        status="warn",
+                        message=f"Pi skills directory exists but is empty: {skills_dir}",
+                    )
+                )
+                continue
+            for skill_dir in skill_dirs:
+                results.extend(self._validate_skill(skill_dir))
+
+        if not found_any:
             results.append(
                 ValidationResult(
                     check_name="pi_skills_dir",
@@ -35,22 +57,6 @@ class PiOutputValidator:
                     message="No Pi skills directory (ok if no skills converted)",
                 )
             )
-            return results
-
-        skill_dirs = [d for d in skills_dir.iterdir() if d.is_dir()]
-
-        if not skill_dirs:
-            results.append(
-                ValidationResult(
-                    check_name="pi_skills_empty",
-                    status="warn",
-                    message="Pi skills directory exists but is empty",
-                )
-            )
-            return results
-
-        for skill_dir in skill_dirs:
-            results.extend(self._validate_skill(skill_dir))
 
         return results
 
@@ -176,20 +182,24 @@ class PiOutputValidator:
             return None
 
     def validate_prompts(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate prompt templates in .pi/prompts/ directory."""
+        """Validate prompt templates in .pi/prompts/ and/or .pi/agent/prompts/ directories."""
         results: list[ValidationResult] = []
-        prompts_dir = output_dir / ".pi" / "prompts"
+        prompts_dirs = [
+            output_dir / ".pi" / "prompts",
+            output_dir / ".pi" / "agent" / "prompts",
+        ]
 
-        if not prompts_dir.exists():
-            return results  # No prompts is fine
+        total_prompts = 0
+        for prompts_dir in prompts_dirs:
+            if prompts_dir.exists():
+                total_prompts += len(list(prompts_dir.glob("*.md")))
 
-        prompt_files = list(prompts_dir.glob("*.md"))
-        if prompt_files:
+        if total_prompts > 0:
             results.append(
                 ValidationResult(
                     check_name="pi_prompts_valid",
                     status="pass",
-                    message=f"Found {len(prompt_files)} prompt template(s)",
+                    message=f"Found {total_prompts} prompt template(s)",
                 )
             )
 
