@@ -85,7 +85,8 @@ def main() -> None:
     "  ai-config sync --dry-run        Preview changes before applying\n"
     "  ai-config sync                  Apply changes\n"
     "  ai-config sync --verify         Apply and verify result\n"
-    "  ai-config sync --fresh          Clear cache, then sync from scratch",
+    "  ai-config sync --force          Full rebuild: clear cache + reconvert all\n"
+    "  ai-config sync --force-convert   Reconvert only (skip cache clear)",
 )
 @click.option(
     "--config",
@@ -95,11 +96,13 @@ def main() -> None:
     help="Path to config file. Default: auto-detected .ai-config/config.yaml.",
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be done without making changes.")
-@click.option("--fresh", "--force", is_flag=True, help="Clear cache before syncing.")
+@click.option(
+    "--fresh", "--force", is_flag=True, help="Full clean rebuild: clear cache + reconvert all."
+)
 @click.option(
     "--force-convert",
     is_flag=True,
-    help="Force conversion even if sources appear unchanged.",
+    help="Force conversion only (without clearing plugin cache).",
 )
 @click.option("--verify", is_flag=True, help="Verify installed state matches config after sync.")
 def sync(
@@ -129,6 +132,10 @@ def sync(
         for error in ref_errors:
             error_console.print(f"  {SYMBOLS['bullet']} {error}")
         sys.exit(1)
+
+    # --fresh/--force implies --force-convert (full clean rebuild)
+    if fresh:
+        force_convert = True
 
     if dry_run:
         console.print("[warning]Dry run mode - no changes will be made[/warning]")

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-02
+
+### Changed
+
+- `--force` now does a full rebuild: clears plugin cache AND re-converts all targets
+- `--force-convert` remains available for conversion-only rebuilds
+
 ## [0.4.1] - 2026-03-01
 
 ### Fixed

@@ -132,13 +132,19 @@ This checks that the converted files have valid structure, required fields, and 
 
 ## Conversion Cache
 
-Sync-driven conversion uses content hashing to skip re-conversion when plugin sources haven't changed. To force re-conversion:
+Sync-driven conversion uses content hashing to skip re-conversion when plugin sources haven't changed.
+
+`--force` does a full rebuild (clears plugin cache + re-converts everything):
+
+```bash
+ai-config sync --force
+```
+
+`--force-convert` re-converts without clearing the plugin cache (useful after adding a new target or updating the converter):
 
 ```bash
 ai-config sync --force-convert
 ```
-
-This is useful after updating the converter itself or when you want to regenerate output regardless of source changes.
 
 ## Examples
 

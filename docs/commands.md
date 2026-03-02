@@ -64,8 +64,8 @@ ai-config sync
 |--------|-------------|
 | `-c, --config PATH` | Path to config file |
 | `--dry-run` | Show what would change without doing it |
-| `--fresh` | Clear cache before syncing |
-| `--force-convert` | Force conversion even if sources appear unchanged |
+| `--fresh`, `--force` | Full rebuild: clear cache + reconvert everything |
+| `--force-convert` | Reconvert only (without clearing plugin cache) |
 | `--verify` | Verify sync state after completion |
 
 What it does:
