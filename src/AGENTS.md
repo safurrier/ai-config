@@ -53,7 +53,7 @@ ai_config/
 - Never raises raw subprocess exceptions
 
 **Converter pipeline** (`converters/`)
-- Parse → IR → Emit architecture; see `ai_agent_docs/conversion-pipeline.md` for details
+- Parse → IR → Emit architecture; see `docs/conversion-pipeline.md` for details
 - Emitters use duck typing (same `emit(ir) -> EmitResult` shape) with a `get_emitter()` factory
 - Diagnostic accumulation over exceptions — parsing/emitting never raises, collects `Diagnostic` objects
 - `MappingStatus` tracks conversion fidelity per component (`native` → `unsupported`)
@@ -82,7 +82,7 @@ Example: `validators/component/skill.py`
 
 ## Adding a New Target Emitter
 
-See `ai_agent_docs/adding-a-target.md` for the full checklist (19 files). Summary:
+See `docs/adding-a-target.md` for the full checklist (19 files). Summary:
 
 1. Add to `TargetTool` enum in `converters/ir.py`
 2. Create emitter class in `converters/emitters.py`, register in `get_emitter()` factory
@@ -104,4 +104,4 @@ See `ai_agent_docs/adding-a-target.md` for the full checklist (19 files). Summar
 - Test frozen dataclasses with valid and invalid inputs
 - Test validators with mock `ValidationContext`
 - Integration tests in `tests/integration/` (marked, may need fixtures)
-- E2E tests in `tests/e2e/` — see `ai_agent_docs/e2e-testing.md`
+- E2E tests in `tests/e2e/` — see `docs/e2e-testing.md`

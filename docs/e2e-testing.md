@@ -1,3 +1,20 @@
+---
+id: e2e-testing
+title: E2E Testing Infrastructure
+description: >
+  Docker-based E2E tests that validate ai-config against real AI coding tool CLIs.
+  Covers Docker images, fixture hierarchy, tmux helpers, and test suites.
+index:
+  - id: docker-images
+  - id: fixture-hierarchy-testse2econftestpy
+  - id: helper-functions
+  - id: tmux-helper-testse2etmux-helperpy
+  - id: test-suites
+  - id: writing-new-e2e-tests
+  - id: config-path-gotcha
+  - id: running-locally
+---
+
 # E2E Testing Infrastructure
 
 Docker-based E2E tests that validate ai-config against real AI coding tool CLIs.
