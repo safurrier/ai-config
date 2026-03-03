@@ -1,17 +1,3 @@
----
-id: index
-title: ai-config
-description: >
-  Landing page for ai-config documentation. Overview of declarative plugin
-  management and cross-tool conversion for Claude Code.
-index:
-  - id: why-this-exists
-  - id: installation
-  - id: quick-start
-  - id: the-idea
-  - id: whats-next
----
-
 # ai-config
 
 Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.

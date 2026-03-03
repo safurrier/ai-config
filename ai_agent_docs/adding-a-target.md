@@ -1,18 +1,3 @@
----
-id: adding-a-target
-title: Adding a New Conversion Target
-description: >
-  Step-by-step guide for adding a new AI coding tool as a conversion target.
-  Covers the 18-file checklist, emitter pattern, validator pattern, and verification.
-index:
-  - id: prerequisites
-  - id: files-to-modify-checklist
-  - id: emitter-pattern
-  - id: validator-pattern
-  - id: verification
-  - id: reference-pi-implementation
----
-
 # Adding a New Conversion Target
 
 Step-by-step guide for adding a new AI coding tool as a conversion target. Based on the Pi target implementation.

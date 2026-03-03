@@ -1,21 +1,3 @@
----
-id: config
-title: Configuration
-description: >
-  YAML configuration reference for ai-config. Covers config file location,
-  structure, targets, marketplaces, plugins, conversion settings, and validation.
-index:
-  - id: config-file-location
-  - id: config-structure
-  - id: targets
-  - id: marketplaces
-  - id: plugins
-  - id: conversion
-  - id: full-example
-  - id: environment-variables
-  - id: validation
----
-
 # Configuration
 
 ai-config uses a YAML file to declare your plugins, marketplaces, and conversion settings.

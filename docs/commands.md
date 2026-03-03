@@ -1,23 +1,3 @@
----
-id: commands
-title: Commands
-description: >
-  Complete reference for all ai-config CLI commands including init, sync,
-  status, watch, update, doctor, convert, plugin create, and cache clear.
-index:
-  - id: overview
-  - id: global-options
-  - id: init
-  - id: sync
-  - id: status
-  - id: watch
-  - id: update
-  - id: doctor
-  - id: convert
-  - id: plugin-create
-  - id: cache-clear
----
-
 # Commands
 
 Complete reference for all ai-config commands.

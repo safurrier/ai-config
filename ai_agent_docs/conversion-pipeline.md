@@ -1,18 +1,3 @@
----
-id: conversion-pipeline
-title: Conversion Pipeline
-description: >
-  Architecture for converting Claude Code plugins to other AI coding tools.
-  Covers the Parse-IR-Emit pipeline stages, key types, emitters, and orchestrator.
-index:
-  - id: pipeline-stages
-  - id: key-types-convertersirpy
-  - id: emitters-convertersemitterspy
-  - id: orchestrator-convertersconvertpy
-  - id: reports-convertersreportpy
-  - id: adding-a-new-target
----
-
 # Conversion Pipeline
 
 Architecture for converting Claude Code plugins to other AI coding tools.

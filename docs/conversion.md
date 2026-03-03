@@ -1,20 +1,3 @@
----
-id: conversion
-title: Conversion
-description: >
-  Guide to converting Claude Code plugins to other AI coding tools (Codex,
-  Cursor, OpenCode, Pi). Covers sync-driven conversion, component mapping, and options.
-index:
-  - id: overview
-  - id: quick-start
-  - id: sync-driven-conversion
-  - id: component-mapping
-  - id: options-reference
-  - id: validating-output
-  - id: conversion-cache
-  - id: examples
----
-
 # Conversion
 
 Convert Claude Code plugins to work with other AI coding tools.

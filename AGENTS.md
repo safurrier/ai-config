@@ -175,22 +175,15 @@ Publishing is automated via GitHub Actions (`.github/workflows/publish.yml`):
 2. Add trusted publisher: GitHub, `safurrier/ai-config`, workflow `publish.yml`, environment `pypi`
 3. Go to GitHub repo → Settings → Environments → Create `pypi` environment
 
-## Task-Specific Docs
+## Nested Docs
 
-### Nested module docs
+Module-specific docs (auto-discovered by Claude Code):
+- `src/AGENTS.md` — Code patterns, module overview, extension guides
 
-| Path | Topic |
-|------|-------|
-| `src/AGENTS.md` | Code patterns, module overview, extension guides |
-
-### Cross-cutting docs
-
-| Doc | Topic |
-|-----|-------|
-| `docs/AGENTS.md` | Agent routing index for all docs/ files |
-| `docs/conversion-pipeline.md` | Converter architecture (Parse -> IR -> Emit) |
-| `docs/e2e-testing.md` | Docker E2E infrastructure, fixtures, tmux helpers |
-| `docs/adding-a-target.md` | Step-by-step guide for adding a new conversion target |
+Cross-cutting docs in `ai_agent_docs/`:
+- `ai_agent_docs/conversion-pipeline.md` — Converter architecture (Parse → IR → Emit)
+- `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
+- `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
 
 ## Gotchas
 
