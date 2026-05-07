@@ -847,7 +847,11 @@ def convert(
         )
         console.print()
         preview = preview_conversion(
-            plugin_path, target_list, output_dir, commands_as_skills=commands_as_skills
+            plugin_path,
+            target_list,
+            output_dir,
+            scope=install_scope,
+            commands_as_skills=commands_as_skills,
         )
         console.print(preview)
         return

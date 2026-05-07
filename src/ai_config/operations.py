@@ -13,6 +13,7 @@ from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
     ConversionConfig,
+    PluginConfig,
     PluginSource,
     PluginStatus,
     StatusResult,
@@ -67,6 +68,9 @@ def _conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str
 
 def _compute_plugin_hash(plugin_path: Path) -> str | None:
     """Compute a hash of all files in a plugin directory."""
+    if not plugin_path.is_dir():
+        return None
+
     hasher = hashlib.sha256()
     try:
         for file_path in sorted(plugin_path.rglob("*")):
@@ -81,6 +85,36 @@ def _compute_plugin_hash(plugin_path: Path) -> str | None:
         return hasher.hexdigest()
     except OSError:
         return None
+
+
+def _resolve_plugin_conversion_path(
+    config: ClaudeTargetConfig,
+    plugin_config: PluginConfig,
+    installed: claude.InstalledPlugin,
+) -> Path | None:
+    """Resolve the source path to use for cross-tool conversion.
+
+    Claude plugin list can report an installPath under its plugin cache even
+    after that cache was cleared. Prefer a live installPath, but fall back to
+    the configured local marketplace source path when possible.
+    """
+    installed_path = Path(installed.install_path) if installed.install_path else None
+    if installed_path is not None and installed_path.is_dir():
+        return installed_path
+
+    marketplace_name = plugin_config.marketplace
+    if marketplace_name is None:
+        return installed_path
+
+    marketplace = config.marketplaces.get(marketplace_name)
+    if marketplace is None or marketplace.source != PluginSource.LOCAL:
+        return installed_path
+
+    source_path = Path(marketplace.path) / plugin_config.plugin_name
+    if source_path.is_dir():
+        return source_path
+
+    return None
 
 
 def _sync_marketplaces(
@@ -312,7 +346,15 @@ def _sync_conversions(
         installed = installed_by_id.get(plugin_config.id)
         if not installed:
             continue
-        plugin_path = Path(installed.install_path)
+        plugin_path = _resolve_plugin_conversion_path(config, plugin_config, installed)
+        if plugin_path is None:
+            install_path = installed.install_path or "<missing>"
+            errors.append(
+                f"Conversion skipped for {plugin_config.id}: plugin source path not found "
+                f"(installPath={install_path})"
+            )
+            continue
+
         plugin_hash = _compute_plugin_hash(plugin_path)
         if not force_convert and plugin_hash is not None:
             signature_map = cache_entries.get(str(plugin_path), {})
@@ -330,14 +372,25 @@ def _sync_conversions(
                 best_effort=True,
                 commands_as_skills=conversion.commands_as_skills,
             )
+            report_errors = [
+                f"{target.value}: {diagnostic.message}"
+                for target, report in reports.items()
+                for diagnostic in report.errors
+            ]
+            if report_errors:
+                errors.extend(
+                    f"Conversion failed for {plugin_config.id}: {message}"
+                    for message in report_errors
+                )
+                continue
+
             if not dry_run and plugin_hash is not None:
-                if not any(report.has_errors() for report in reports.values()):
-                    signature_map = cache_entries.setdefault(str(plugin_path), {})
-                    signature_map[signature] = {
-                        "hash": plugin_hash,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    cache_dirty = True
+                signature_map = cache_entries.setdefault(str(plugin_path), {})
+                signature_map[signature] = {
+                    "hash": plugin_hash,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                cache_dirty = True
         except Exception as e:
             errors.append(f"Conversion failed for {plugin_config.id}: {e}")
 

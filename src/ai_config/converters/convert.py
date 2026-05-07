@@ -197,6 +197,7 @@ def preview_conversion(
     plugin_path: Path | str,
     targets: list[str] | list[TargetTool],
     output_dir: Path | str | None = None,
+    scope: InstallScope = InstallScope.PROJECT,
     commands_as_skills: bool = False,
 ) -> str:
     """Preview what conversion would produce without writing files.
@@ -205,6 +206,7 @@ def preview_conversion(
         plugin_path: Path to the Claude plugin directory
         targets: List of target tools
         output_dir: Optional output directory for path display
+        scope: Installation scope to preview
         commands_as_skills: For Codex, convert commands to skills instead of prompts.
 
     Returns:
@@ -240,7 +242,7 @@ def preview_conversion(
         lines.append("")
 
         try:
-            emitter = get_emitter(target, commands_as_skills=commands_as_skills)
+            emitter = get_emitter(target, scope=scope, commands_as_skills=commands_as_skills)
             result = emitter.emit(ir)
             lines.append(result.preview(output_dir if output_dir is None else Path(output_dir)))
         except Exception as e:
