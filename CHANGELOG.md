@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ai-config sync --force-convert` now falls back to local marketplace source paths when Claude's cached plugin `installPath` is stale or missing, so Pi/Codex/OpenCode conversions refresh after cache clears.
+- Sync-driven conversion errors from conversion reports are now surfaced in sync output instead of being silently ignored.
+- `ai-config convert --dry-run --scope user -t pi` now previews Pi user-scope paths under `~/.pi/agent/` instead of project-scope `~/.pi/` paths.
+
+## [0.4.2] - 2026-03-02
+
+### Changed
+
+- `--force` now does a full rebuild: clears plugin cache AND re-converts all targets
+- `--force-convert` remains available for conversion-only rebuilds
+
+## [0.4.1] - 2026-03-01
+
+### Fixed
+
+- Pi skill frontmatter `name` now matches directory name (Pi requires this)
+
 ## [0.4.0] - 2026-03-01
 
 ### Added

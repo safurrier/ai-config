@@ -235,26 +235,18 @@ Skills, commands, hooks, and MCP servers are mapped to each tool's native format
 
 ## Troubleshooting
 
-**Plugin installed but not showing up in / commands**
-
-Clear the plugin cache and re-sync:
+**Something not working? Force a full rebuild:**
 
 ```bash
 ai-config sync --force
 ```
 
-**Added a new conversion target but nothing happened**
+This clears the plugin cache and re-converts everything from scratch. Use it when plugins aren't showing up, you've added a new conversion target, or things are just out of sync.
 
-Conversion caches results by content hash. Force re-conversion:
+If you only want to redo conversions without clearing the plugin cache:
 
 ```bash
 ai-config sync --force-convert
-```
-
-**Full clean rebuild** (clear plugin cache + re-convert everything):
-
-```bash
-ai-config sync --force --force-convert
 ```
 
 **Something's broken and Claude Code won't help**

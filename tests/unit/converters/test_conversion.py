@@ -18,11 +18,11 @@ from ai_config.converters.ir import (
     BinaryFile,
     InstallScope,
     LspServer,
+    MappingStatus,
     McpServer,
     McpTransport,
     PluginIdentity,
     PluginIR,
-    MappingStatus,
     Skill,
     TargetTool,
     TextFile,
@@ -953,6 +953,18 @@ class TestPreviewConversion:
         )
 
         assert str(tmp_path) in preview or ".codex" in preview
+
+    def test_preview_respects_user_scope_for_pi(self, tmp_path: Path) -> None:
+        """Pi user-scope preview should show ~/.pi/agent paths, not ~/.pi paths."""
+        preview = preview_conversion(
+            FIXTURES_DIR / "complete-plugin",
+            [TargetTool.PI],
+            output_dir=tmp_path,
+            scope=InstallScope.USER,
+        )
+
+        assert str(tmp_path / ".pi" / "agent" / "skills") in preview
+        assert str(tmp_path / ".pi" / "skills") not in preview
 
 
 class TestBestEffort:
