@@ -122,10 +122,10 @@ targets:
 Run `ai-config sync` and you get:
 
 - **Claude Code**: plugins installed via `claude plugin install`
-- **Codex**: skills in `~/.codex/skills/`, MCP in `~/.codex/mcp-config.toml`
-- **Cursor**: rules in `~/.cursor/rules/`, MCP in `~/.cursor/mcp.json`
+- **Codex**: Agent Skills in `~/.agents/skills/`, MCP in `~/.codex/config.toml`, supported hooks in `~/.codex/hooks.json`
+- **Cursor**: skills in `~/.cursor/skills/`, MCP in `~/.cursor/mcp.json`, hooks in `~/.cursor/hooks.json`
 - **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
-- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`
+- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`, hook extensions in `~/.pi/agent/extensions/`
 
 Same skills, same setup, every tool. Check this config into your dotfiles and run `ai-config sync` on any machine.
 

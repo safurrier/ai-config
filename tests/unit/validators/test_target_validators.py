@@ -18,8 +18,8 @@ class TestCodexValidator:
         """Test that skills directory validation passes when present."""
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        # Create valid Codex structure
-        skills_dir = tmp_path / ".codex" / "skills" / "my-skill"
+        # Create valid Codex Agent Skills structure
+        skills_dir = tmp_path / ".agents" / "skills" / "my-skill"
         skills_dir.mkdir(parents=True)
         (skills_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: A test skill\n---\n# My Skill"
@@ -38,7 +38,7 @@ class TestCodexValidator:
         from ai_config.validators.target.codex import CodexOutputValidator
 
         # Create directory without SKILL.md
-        skills_dir = tmp_path / ".codex" / "skills" / "my-skill"
+        skills_dir = tmp_path / ".agents" / "skills" / "my-skill"
         skills_dir.mkdir(parents=True)
 
         validator = CodexOutputValidator()
@@ -52,7 +52,7 @@ class TestCodexValidator:
         from ai_config.validators.target.codex import CodexOutputValidator
 
         # Create skill with uppercase name (invalid)
-        skills_dir = tmp_path / ".codex" / "skills" / "MySkill"
+        skills_dir = tmp_path / ".agents" / "skills" / "MySkill"
         skills_dir.mkdir(parents=True)
         (skills_dir / "SKILL.md").write_text(
             "---\nname: MySkill\ndescription: Invalid name\n---\n# Bad"
@@ -78,7 +78,7 @@ class TestCodexValidator:
 command = "npx"
 args = ["-y", "test-server"]
 """
-        (codex_dir / "mcp-config.toml").write_text(config_content)
+        (codex_dir / "config.toml").write_text(config_content)
 
         validator = CodexOutputValidator()
         results = validator.validate_mcp(tmp_path)
@@ -95,7 +95,7 @@ args = ["-y", "test-server"]
         codex_dir.mkdir(parents=True)
 
         # Invalid TOML
-        (codex_dir / "mcp-config.toml").write_text("this is not valid toml {{{")
+        (codex_dir / "config.toml").write_text("this is not valid toml {{{")
 
         validator = CodexOutputValidator()
         results = validator.validate_mcp(tmp_path)

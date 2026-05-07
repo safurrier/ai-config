@@ -821,9 +821,10 @@ def convert(
 
     \b
     Targets:
-      codex      OpenAI Codex (skills as prompts, MCP as TOML)
+      codex      OpenAI Codex (Agent Skills, prompts, MCP, supported command hooks)
       cursor     Cursor (skills, commands, hooks, MCP)
       opencode   OpenCode (skills, commands, MCP, LSP)
+      pi         Pi (skills, prompt templates, supported hook extensions)
       all        All of the above (default)
     """
     from ai_config.converters import InstallScope, TargetTool, convert_plugin, preview_conversion

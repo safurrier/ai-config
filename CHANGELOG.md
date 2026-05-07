@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Codex hook conversion now emits supported Claude command hooks to `.codex/hooks.json` and enables `features.codex_hooks` in `.codex/config.toml`.
+- Pi hook conversion now emits TypeScript extensions under `.pi/extensions/` or `.pi/agent/extensions/` for supported command hooks.
+- Real-tool validation coverage now checks Codex Agent Skill discovery via `codex debug prompt-input`, Codex MCP loading via isolated `CODEX_HOME`, and Pi extension execution before model/API completion.
+
+### Changed
+
+- Codex skill conversion now targets Agent Skills discovery paths (`.agents/skills/` and `$HOME/.agents/skills/`) instead of the stale `.codex/skills/` location.
+- Codex MCP conversion now writes `[mcp_servers.*]` entries to `.codex/config.toml` instead of `.codex/mcp-config.toml`.
+- Docker all-tools E2E now installs Pi from the current `@earendil-works/pi-coding-agent` package.
+
 ### Fixed
 
 - `ai-config sync --force-convert` now falls back to local marketplace source paths when Claude's cached plugin `installPath` is stale or missing, so Pi/Codex/OpenCode conversions refresh after cache clears.

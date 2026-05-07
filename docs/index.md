@@ -72,10 +72,10 @@ You define your setup once. `ai-config sync` installs your Claude plugins and ge
 ```
 ai-config sync
   → Claude Code: plugins installed
-  → Codex:       ~/.codex/skills/, ~/.codex/mcp-config.toml
-  → Cursor:      ~/.cursor/rules/, ~/.cursor/mcp.json
+  → Codex:       ~/.agents/skills/, ~/.codex/config.toml, ~/.codex/hooks.json
+  → Cursor:      ~/.cursor/skills/, ~/.cursor/mcp.json, ~/.cursor/hooks.json
   → OpenCode:    ~/.opencode/skills/, ~/opencode.json
-  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/
+  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/, ~/.pi/agent/extensions/
 ```
 
 Check your `.ai-config/config.yaml` into your dotfiles. Run `ai-config sync` on any machine. Want to try a new tool? Add it to `conversion.targets` and re-sync — your skills are already there.

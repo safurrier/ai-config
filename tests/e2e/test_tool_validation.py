@@ -145,7 +145,7 @@ class TestCodexToolValidation:
     - codex mcp list: List configured MCP servers
     - codex features list: List feature flags
     - Config: ~/.codex/config.toml (TOML format)
-    - Skills: ~/.codex/skills/ directory
+    - Skills: ~/.agents/skills/ directory
     """
 
     def test_codex_version_check(self, all_tools_container: Container) -> None:
@@ -161,7 +161,7 @@ class TestCodexToolValidation:
         assert "codex" in output.lower() or exit_code == 0
 
     def test_codex_skills_directory_recognized(self, all_tools_container: Container) -> None:
-        """Test Codex recognizes skills in .codex/skills/ after conversion."""
+        """Test Codex recognizes skills in .agents/skills/ after conversion."""
         # Convert a test plugin to Codex format
         exit_code, output = exec_in_container(
             all_tools_container,
@@ -173,10 +173,17 @@ class TestCodexToolValidation:
         # Verify skills directory was created
         exit_code, output = exec_in_container(
             all_tools_container,
-            "ls /tmp/codex-test/.codex/skills/",
+            "ls /tmp/codex-test/.agents/skills/",
         )
         assert exit_code == 0, f"Skills directory not created: {output}"
         assert "dev-tools" in output  # Plugin ID should be in skill name
+
+        # Verify real Codex prompt construction discovers the converted Agent Skill.
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "codex -C /tmp/codex-test debug prompt-input 'test' | grep -q 'dev-tools-code-review'",
+        )
+        assert exit_code == 0, f"Codex did not discover converted skill: {output}"
 
     def test_codex_mcp_config_valid_toml(self, all_tools_container: Container) -> None:
         """Test Codex MCP config is valid TOML."""
@@ -191,7 +198,7 @@ class TestCodexToolValidation:
         # Check if MCP config exists
         exit_code, output = exec_in_container(
             all_tools_container,
-            "cat /tmp/codex-mcp-test/.codex/mcp-config.toml 2>/dev/null || echo 'NO_MCP'",
+            "cat /tmp/codex-mcp-test/.codex/config.toml 2>/dev/null || echo 'NO_MCP'",
         )
         if "NO_MCP" in output:
             pytest.skip("Test plugin has no MCP servers")
@@ -199,7 +206,7 @@ class TestCodexToolValidation:
         # Validate TOML syntax with Python
         exit_code, output = exec_in_container(
             all_tools_container,
-            "python3 -c \"import tomllib; tomllib.load(open('/tmp/codex-mcp-test/.codex/mcp-config.toml', 'rb'))\"",
+            "python3 -c \"import tomllib; tomllib.load(open('/tmp/codex-mcp-test/.codex/config.toml', 'rb'))\"",
         )
         assert exit_code == 0, f"Invalid TOML: {output}"
 
@@ -214,22 +221,22 @@ class TestCodexToolValidation:
         if exit_code != 0:
             pytest.skip("Codex CLI not available")
 
-        # Convert plugin with MCP servers to user location
+        # Convert plugin with MCP servers to an isolated Codex home.
         exit_code, output = exec_in_container(
             all_tools_container,
+            "rm -rf /tmp/codex-home && mkdir -p /tmp/codex-home && "
             "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-            "-t codex -o /home/testuser/.codex",
+            "-t codex -o /tmp/codex-home",
         )
         assert exit_code == 0, f"Conversion failed: {output}"
 
-        # Run codex mcp list
+        # Run codex mcp list against the generated config.toml.
         exit_code, output = exec_in_container(
             all_tools_container,
-            "codex mcp list",
+            "CODEX_HOME=/tmp/codex-home/.codex codex mcp list",
         )
-        # Should succeed regardless of whether servers are configured
-        # Either shows servers or "No MCP servers configured"
-        assert exit_code == 0 or "No MCP servers" in output, f"Unexpected error: {output}"
+        assert exit_code == 0, f"Unexpected error: {output}"
+        assert "dev-tools-database" in output or "dev-tools-github" in output
 
     def test_codex_features_list_command(self, all_tools_container: Container) -> None:
         """Test codex features list works after conversion.
@@ -248,6 +255,41 @@ class TestCodexToolValidation:
         assert exit_code == 0, f"Features list failed: {output}"
         # Should contain some feature flags
         assert "stable" in output or "beta" in output or "experimental" in output
+
+
+@pytest.mark.slow
+class TestPiToolValidation:
+    """Validate Pi CLI recognizes generated extension output."""
+
+    def test_pi_version_check(self, all_tools_container: Container) -> None:
+        """Test Pi CLI is installed and accessible."""
+        exit_code, output = exec_in_container(all_tools_container, "pi --version")
+        if exit_code != 0:
+            pytest.skip(f"Pi CLI not available: {output}")
+        assert exit_code == 0
+
+    def test_pi_generated_extension_executes_session_start_hook(
+        self, all_tools_container: Container
+    ) -> None:
+        """Generated Pi extension should load and execute a session_start hook."""
+        exit_code, _ = exec_in_container(all_tools_container, "pi --version")
+        if exit_code != 0:
+            pytest.skip("Pi CLI not available")
+
+        setup = r'''
+rm -rf /tmp/pi-hook-e2e && mkdir -p /tmp/pi-hook-e2e/plugin/.claude-plugin /tmp/pi-hook-e2e/plugin/hooks
+cat > /tmp/pi-hook-e2e/plugin/.claude-plugin/plugin.json <<'EOF'
+{"name":"marker-plugin","hooks":"hooks/hooks.json"}
+EOF
+cat > /tmp/pi-hook-e2e/plugin/hooks/hooks.json <<'EOF'
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"sh -c 'echo ran > /tmp/pi-hook-e2e/marker'"}]}]}}
+EOF
+uv run ai-config convert /tmp/pi-hook-e2e/plugin -t pi -o /tmp/pi-hook-e2e/out
+PI_OFFLINE=1 pi --offline --extension /tmp/pi-hook-e2e/out/.pi/extensions/marker-plugin-hooks.ts --provider openai --model gpt-4o-mini --api-key fake -p test >/tmp/pi-hook-e2e/pi.out 2>/tmp/pi-hook-e2e/pi.err || true
+test -f /tmp/pi-hook-e2e/marker
+'''
+        exit_code, output = exec_in_container(all_tools_container, setup)
+        assert exit_code == 0, f"Pi generated extension did not execute: {output}"
 
 
 @pytest.mark.slow
@@ -797,7 +839,7 @@ class TestInteractiveCodexSkillDiscovery:
 
         try:
             # Convert plugin to Codex format
-            # Output to /home/testuser so .codex/skills/ gets created at the right location
+            # Output to /home/testuser so .agents/skills/ gets created at the right location
             exit_code, output = exec_in_container(
                 all_tools_container,
                 "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
@@ -805,29 +847,24 @@ class TestInteractiveCodexSkillDiscovery:
             )
             assert exit_code == 0, f"Conversion failed: {output}"
 
-            # Verify skills directory exists (emitter creates .codex/skills/ in output dir)
+            # Verify skills directory exists (emitter creates .agents/skills/ in output dir)
             exit_code, output = exec_in_container(
                 all_tools_container,
-                "ls /home/testuser/.codex/skills/",
+                "ls /home/testuser/.agents/skills/",
             )
             assert exit_code == 0, f"Skills directory not created: {output}"
 
-            # Start Codex in tmux with a simple non-interactive command
-            # We use --help to verify it starts without skill loading errors
+            # Use Codex's debug prompt-input command to prove skill discovery without API auth.
             exec_in_container_tmux(
                 all_tools_container,
                 session_name,
-                "codex --help",
+                "codex -C /home/testuser debug prompt-input 'test' | grep dev-tools-code-review",
             )
 
-            # Wait for output
             time.sleep(3)
             output = capture_tmux_pane(all_tools_container, session_name)
 
-            # Verify no skill-related errors
-            assert "error" not in output.lower() or "skill" not in output.lower(), (
-                f"Unexpected skill error: {output}"
-            )
+            assert "dev-tools-code-review" in output, f"Expected Codex skill discovery, got: {output}"
 
         finally:
             cleanup_tmux_session(all_tools_container, session_name)
@@ -858,7 +895,7 @@ class TestInteractiveCodexSkillDiscovery:
             exec_in_container_tmux(
                 all_tools_container,
                 session_name,
-                "ls -la /home/testuser/.codex/skills/",
+                "ls -la /home/testuser/.agents/skills/",
             )
 
             time.sleep(2)
@@ -870,7 +907,7 @@ class TestInteractiveCodexSkillDiscovery:
             # Check a specific skill file exists
             exec_in_container(
                 all_tools_container,
-                f"tmux send-keys -t {session_name} 'cat /home/testuser/.codex/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
+                f"tmux send-keys -t {session_name} 'cat /home/testuser/.agents/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
             )
             time.sleep(2)
             output = capture_tmux_pane(all_tools_container, session_name)

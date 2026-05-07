@@ -72,8 +72,27 @@ class ClaudePluginParser:
         self._parse_hooks(ir, manifest)
         self._parse_mcp_servers(ir, manifest)
         self._parse_lsp_servers(ir, manifest)
+        self._diagnose_known_unparsed_fields(ir, manifest)
 
         return ir
+
+    def _diagnose_known_unparsed_fields(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
+        """Surface modern Claude plugin fields that are not yet represented in IR."""
+        known_unparsed_fields = {
+            "outputStyles": "Claude output styles are recognized but not converted yet",
+            "monitors": "Claude monitors are recognized but not converted yet",
+            "themes": "Claude themes are recognized but not converted yet",
+            "channels": "Claude channels are recognized but not converted yet",
+        }
+        for field, message in known_unparsed_fields.items():
+            if field in manifest:
+                ir.diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.WARN,
+                        message=message,
+                        component_ref=f"manifest:{field}",
+                    )
+                )
 
     def _find_manifest(self) -> Path | None:
         """Find plugin.json in standard locations."""

@@ -128,20 +128,47 @@ class TestCodexConversion:
         # Check skill directories exist
         exit_code, _ = exec_in_container(
             claude_container,
-            "test -f /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
+            "test -f /tmp/codex-test/.agents/skills/dev-tools-code-review/SKILL.md",
         )
         assert exit_code == 0, "SKILL.md not created for code-review"
 
         # Check SKILL.md content
         exit_code, content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
+            "cat /tmp/codex-test/.agents/skills/dev-tools-code-review/SKILL.md",
         )
         assert exit_code == 0
         assert "name:" in content
         assert "description:" in content
         # Claude-specific fields should be stripped
         assert "allowed-tools:" not in content
+
+    def test_hooks_config_created(self, claude_container: Container) -> None:
+        """Test Codex conversion emits hooks.json and enables the hooks feature."""
+        exit_code, _ = exec_in_container(
+            claude_container,
+            "rm -rf /tmp/codex-hooks && mkdir -p /tmp/codex-hooks",
+        )
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t codex -o /tmp/codex-hooks",
+        )
+        assert exit_code == 0, f"Conversion failed: {output}"
+
+        exit_code, hooks_content = exec_in_container(
+            claude_container,
+            "cat /tmp/codex-hooks/.codex/hooks.json",
+        )
+        assert exit_code == 0
+        assert "PreToolUse" in hooks_content
+        assert "PostToolUse" in hooks_content
+
+        exit_code, config_content = exec_in_container(
+            claude_container,
+            "cat /tmp/codex-hooks/.codex/config.toml",
+        )
+        assert exit_code == 0
+        assert "codex_hooks = true" in config_content
 
     def test_mcp_config_created(self, claude_container: Container) -> None:
         """Test that MCP config is created in TOML format for Codex."""
@@ -159,7 +186,7 @@ class TestCodexConversion:
         # Check MCP config exists
         exit_code, content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-mcp/.codex/mcp-config.toml",
+            "cat /tmp/codex-mcp/.codex/config.toml",
         )
         assert exit_code == 0
         assert "[mcp_servers." in content
@@ -391,7 +418,7 @@ class TestBinarySkillAssets:
             claude_container,
             "python - <<'PY'\n"
             "from pathlib import Path\n"
-            "p = Path('/tmp/bin-out/.codex/skills/bin-plugin-bin-skill/asset.bin')\n"
+            "p = Path('/tmp/bin-out/.agents/skills/bin-plugin-bin-skill/asset.bin')\n"
             "print(p.stat().st_size)\n"
             "PY",
         )
@@ -547,6 +574,24 @@ class TestDoctorTargetValidation:
         assert "name:" in content
         assert "description:" in content
 
+    def test_convert_pi_extensions(self, claude_container: Container) -> None:
+        """Test Pi conversion produces extension wrappers from supported command hooks."""
+        exec_in_container(claude_container, "rm -rf /tmp/pi-ext && mkdir -p /tmp/pi-ext")
+        exit_code, output = exec_in_container(
+            claude_container,
+            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/pi-ext",
+        )
+        assert exit_code == 0, f"Conversion failed: {output}"
+
+        exit_code, content = exec_in_container(
+            claude_container,
+            "cat /tmp/pi-ext/.pi/extensions/dev-tools-hooks.ts",
+        )
+        assert exit_code == 0
+        assert "export default function" in content
+        assert "pi.on" in content
+        assert "check-dangerous-commands.sh" in content
+
     def test_convert_pi_prompts(self, claude_container: Container) -> None:
         """Test Pi conversion produces prompt templates from commands."""
         exec_in_container(claude_container, "rm -rf /tmp/pi-prompts && mkdir -p /tmp/pi-prompts")
@@ -610,7 +655,7 @@ class TestDoctorTargetValidation:
         # Create a broken Codex output directory
         exit_code, _ = exec_in_container(
             claude_container,
-            "rm -rf /tmp/doctor-broken && mkdir -p /tmp/doctor-broken/.codex/skills/broken-skill",
+            "rm -rf /tmp/doctor-broken && mkdir -p /tmp/doctor-broken/.agents/skills/broken-skill",
         )
         # Create skill directory without SKILL.md
         assert exit_code == 0
