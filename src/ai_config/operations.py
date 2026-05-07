@@ -87,6 +87,44 @@ def _compute_plugin_hash(plugin_path: Path) -> str | None:
         return None
 
 
+def _resolve_local_marketplace_plugin_path(
+    marketplace_root: Path,
+    plugin_name: str,
+) -> Path | None:
+    """Resolve a plugin path from a local marketplace manifest."""
+    for manifest_path in (
+        marketplace_root / ".claude-plugin" / "marketplace.json",
+        marketplace_root / "marketplace.json",
+    ):
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        plugins = manifest.get("plugins", [])
+        if not isinstance(plugins, list):
+            continue
+        for entry in plugins:
+            if not isinstance(entry, dict) or entry.get("name") != plugin_name:
+                continue
+            source = entry.get("source")
+            if not isinstance(source, str):
+                continue
+            source_path = Path(source).expanduser()
+            if not source_path.is_absolute():
+                source_path = marketplace_root / source_path
+            if source_path.is_dir():
+                return source_path.resolve()
+
+    fallback_path = marketplace_root / plugin_name
+    if fallback_path.is_dir():
+        return fallback_path
+
+    return None
+
+
 def _resolve_plugin_conversion_path(
     config: ClaudeTargetConfig,
     plugin_config: PluginConfig,
@@ -110,11 +148,7 @@ def _resolve_plugin_conversion_path(
     if marketplace is None or marketplace.source != PluginSource.LOCAL:
         return installed_path
 
-    source_path = Path(marketplace.path) / plugin_config.plugin_name
-    if source_path.is_dir():
-        return source_path
-
-    return None
+    return _resolve_local_marketplace_plugin_path(Path(marketplace.path), plugin_config.plugin_name)
 
 
 def _sync_marketplaces(

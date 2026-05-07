@@ -472,6 +472,76 @@ class TestSyncTarget:
             assert result.errors == []
             assert mock_convert.call_args.kwargs["plugin_path"] == plugin_dir
 
+    def test_sync_conversion_uses_local_marketplace_manifest_source(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Local fallback respects marketplace.json source paths."""
+        marketplace_dir = tmp_path / "marketplace"
+        plugin_dir = marketplace_dir / "plugins" / "plugin-source"
+        plugin_dir.mkdir(parents=True)
+        (marketplace_dir / ".claude-plugin").mkdir()
+        (marketplace_dir / ".claude-plugin" / "marketplace.json").write_text(
+            '{"name":"my-marketplace","plugins":[{"name":"plugin1","source":"./plugins/plugin-source"}]}'
+        )
+        conversion = ConversionConfig(
+            enabled=True,
+            targets=("pi",),
+            scope="user",
+            output_dir=None,
+        )
+        target_config = ClaudeTargetConfig(
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(
+                    source=PluginSource.LOCAL,
+                    path=str(marketplace_dir),
+                )
+            },
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=conversion,
+        )
+        target = TargetConfig(type="claude", config=target_config)
+        installed_plugins = [
+            InstalledPlugin(
+                id="plugin1@my-marketplace",
+                version="1.0.0",
+                scope="user",
+                enabled=True,
+                install_path=str(tmp_path / "missing-cache"),
+            )
+        ]
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(
+                    [
+                        InstalledMarketplace(
+                            name="my-marketplace",
+                            source=PluginSource.LOCAL,
+                            repo=str(marketplace_dir),
+                            install_location=str(marketplace_dir),
+                        )
+                    ],
+                    [],
+                ),
+            ),
+            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch("ai_config.operations.convert_plugin") as mock_convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+            assert result.success is True
+            assert result.errors == []
+            assert mock_convert.call_args.kwargs["plugin_path"] == plugin_dir.resolve()
+
     def test_sync_conversion_reports_missing_plugin_source(
         self,
         monkeypatch: pytest.MonkeyPatch,
