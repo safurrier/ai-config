@@ -69,7 +69,7 @@ Interactive wizard walks you through adding marketplaces and plugins. Supports G
 ai-config sync
 ```
 
-Installs/uninstalls plugins to match your config. If you have conversion enabled, it also generates config for Codex, Cursor, and OpenCode.
+Installs/uninstalls plugins to match your config. If you have conversion enabled, it also generates config for Codex, Cursor, OpenCode, and Pi.
 
 If plugins seem stale or out of date:
 
@@ -122,10 +122,10 @@ targets:
 Run `ai-config sync` and you get:
 
 - **Claude Code**: plugins installed via `claude plugin install`
-- **Codex**: skills in `~/.codex/skills/`, MCP in `~/.codex/mcp-config.toml`
-- **Cursor**: rules in `~/.cursor/rules/`, MCP in `~/.cursor/mcp.json`
+- **Codex**: Agent Skills in `~/.agents/skills/`, MCP in `~/.codex/config.toml`, supported hooks in `~/.codex/hooks.json`
+- **Cursor**: skills in `~/.cursor/skills/`, MCP in `~/.cursor/mcp.json`, hooks in `~/.cursor/hooks.json`
 - **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
-- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`
+- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`, hook extensions in `~/.pi/agent/extensions/`
 
 Same skills, same setup, every tool. Check this config into your dotfiles and run `ai-config sync` on any machine.
 
@@ -226,7 +226,7 @@ ai-config converts Claude plugins to work with:
 
 | Tool | Output | Binary |
 |------|--------|--------|
-| Codex (OpenAI) | `.codex/` | `codex` |
+| Codex (OpenAI) | `.agents/skills/` + `.codex/` | `codex` |
 | Cursor | `.cursor/` | `cursor-agent` |
 | OpenCode | `.opencode/` | `opencode` |
 | Pi | `.pi/` | `pi` |

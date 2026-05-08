@@ -232,10 +232,10 @@ ai-config convert PLUGIN_PATH
 
 Supported targets:
 
-- **codex** — OpenAI Codex (`.codex/` dir with TOML config + skills)
-- **cursor** — Cursor (`.cursor/` dir with rules + MCP config)
+- **codex** — OpenAI Codex (`.agents/skills/` plus `.codex/config.toml`, prompts, and hooks)
+- **cursor** — Cursor (`.cursor/` dir with skills, commands, hooks, and MCP config)
 - **opencode** — OpenCode (`opencode.json` + `.opencode/` skills dir)
-- **pi** — Pi (`.pi/` dir with skills + prompt templates)
+- **pi** — Pi (`.pi/` dir with skills, prompt templates, and extensions)
 
 Multiple targets can be specified: `-t codex -t cursor`
 

@@ -170,10 +170,10 @@ class TestCodexPlaceholder:
 
         # Document expected structure (to be implemented)
         expected_structure = """
-        Expected Codex config structure (~/.codex/):
-        - plugins/           # Plugin installation directory
-        - config.json        # Main configuration
-        - marketplace/       # Marketplace cache (if applicable)
+        Expected Codex config structure:
+        - ~/.agents/skills/  # User Agent Skills discovery directory
+        - ~/.codex/config.toml # Main Codex configuration including MCP servers
+        - ~/.codex/hooks.json  # Hooks config when codex_hooks is enabled
         """
         print(expected_structure)  # noqa: T201
 

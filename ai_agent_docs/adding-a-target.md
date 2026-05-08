@@ -111,6 +111,6 @@ uv run pytest tests/e2e/test_conversion.py -v
 Pi was added in v0.4.0. Key commits and decisions:
 - Skills map NATIVE (Agent Skills standard, same as Claude's SKILL.md format)
 - Commands map as TRANSFORM to Pi prompt templates (`.pi/prompts/<name>.md`)
-- Hooks, MCP, agents, LSP all UNSUPPORTED (Pi uses TypeScript extensions instead)
+- Hooks map as EMULATE to generated Pi TypeScript extensions for supported command hooks; MCP, agents, and LSP remain UNSUPPORTED
 - Pi requires `description` in skill frontmatter (skills without it won't load)
 - Pi supports `disable-model-invocation` (part of Agent Skills standard)

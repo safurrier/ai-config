@@ -197,6 +197,15 @@ class ConversionChoice:
         return self.custom_output_dir
 
 
+def _conversion_output_paths(target: str, base_dir: Path, scope: str) -> list[Path]:
+    """Display paths that a conversion target writes under a base output directory."""
+    if target == "codex":
+        return [base_dir / ".agents" / "skills", base_dir / ".codex"]
+    if target == "pi" and scope == "user":
+        return [base_dir / ".pi" / "agent"]
+    return [base_dir / f".{target}"]
+
+
 @dataclass
 class InitConfig:
     """Collected user choices during init wizard."""
@@ -687,7 +696,7 @@ def prompt_conversion_targets(
 
     # Ask if user wants to convert — GO_BACK here propagates to caller
     wants_conversion = prompter.confirm(
-        "Also generate config for Codex, Cursor, or OpenCode?",
+        "Also generate config for Codex, Cursor, OpenCode, or Pi?",
         default=False,
     )
 
@@ -701,10 +710,10 @@ def prompt_conversion_targets(
 
     # Sub-steps loop — GO_BACK within these re-prompts conversion, not the caller
     target_choices = [
-        ("codex", "Codex (OpenAI) - .codex/ directory"),
+        ("codex", "Codex (OpenAI) - .agents/skills + .codex/ config"),
         ("cursor", "Cursor - .cursor/ directory"),
         ("opencode", "OpenCode - .opencode/ directory"),
-        ("pi", "Pi - .pi/ directory"),
+        ("pi", "Pi - .pi/ skills, prompts, and extensions"),
     ]
 
     conv_step = 0
@@ -733,14 +742,13 @@ def prompt_conversion_targets(
 
             # Show where files will be written
             console.print()
-            if scope == "user":
-                console.print("[info]Converted files will be written to:[/info]")
-                for target in selected_targets:
-                    console.print(f"  {SYMBOLS['bullet']} ~/.{target}/")
-            else:
-                console.print("[info]Converted files will be written to:[/info]")
-                for target in selected_targets:
-                    console.print(f"  {SYMBOLS['bullet']} .{target}/")
+            console.print("[info]Converted files will be written to:[/info]")
+            base_dir = Path.home() if scope == "user" else Path.cwd()
+            for target in selected_targets:
+                paths = ", ".join(
+                    str(path) for path in _conversion_output_paths(target, base_dir, scope)
+                )
+                console.print(f"  {SYMBOLS['bullet']} {target}: {paths}")
 
             conv_step = 1
             continue
@@ -1248,8 +1256,14 @@ def run_init_wizard(
                     console.print(f"  Output: {init_config.conversion.custom_output_dir}")
                 else:
                     for target in init_config.conversion.targets:
-                        out = init_config.conversion.get_output_dir(target) / f".{target}"
-                        console.print(f"  {SYMBOLS['bullet']} {target}: {out}")
+                        base_dir = init_config.conversion.get_output_dir(target)
+                        paths = ", ".join(
+                            str(path)
+                            for path in _conversion_output_paths(
+                                target, base_dir, init_config.conversion.scope
+                            )
+                        )
+                        console.print(f"  {SYMBOLS['bullet']} {target}: {paths}")
 
             write_ok = prompter.confirm(f"Write config to {init_config.config_path}?", default=True)
             if write_ok is GO_BACK:

@@ -10,11 +10,17 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from ai_config.converters.ir import (
     BinaryFile,
@@ -137,6 +143,10 @@ class EmitResult:
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 if f.binary:
                     full_path.write_bytes(f.content)  # type: ignore[arg-type]
+                elif f.path == Path(".codex") / "config.toml":
+                    _write_merged_codex_config(full_path, f.content)  # type: ignore[arg-type]
+                elif f.path == Path(".codex") / "hooks.json":
+                    _write_merged_codex_hooks(full_path, f.content)  # type: ignore[arg-type]
                 else:
                     full_path.write_text(f.content)  # type: ignore[arg-type]
                 if f.executable:
@@ -291,6 +301,111 @@ def _transform_env_value(value: str, target: TargetTool) -> str:
     return _ENV_VAR_PATTERN.sub(replacer, value)
 
 
+def _resolve_claude_plugin_root(command: str, plugin_root: Path | None) -> str:
+    """Resolve Claude hook commands that reference ${CLAUDE_PLUGIN_ROOT}."""
+    if "${CLAUDE_PLUGIN_ROOT}" not in command:
+        return command
+    if plugin_root is None:
+        return command
+    return command.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+
+
+def _merge_dicts(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge dictionaries, with incoming values winning on conflicts."""
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+_TOML_BARE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(key: Any) -> str:
+    """Serialize a TOML key, quoting keys that are not valid bare keys."""
+    key_text = str(key)
+    if _TOML_BARE_KEY_PATTERN.fullmatch(key_text):
+        return key_text
+    return json.dumps(key_text)
+
+
+def _toml_table_path(parts: tuple[str, ...]) -> str:
+    """Serialize a dotted TOML table path without splitting quoted key names."""
+    return ".".join(_toml_key(part) for part in parts)
+
+
+def _toml_value(value: Any) -> str:
+    """Serialize a small TOML value subset used by Codex config."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + "}"
+    return json.dumps(str(value))
+
+
+def _dump_toml(data: dict[str, Any]) -> str:
+    """Dump a simple TOML document while preserving mixed scalar/nested tables."""
+    lines: list[str] = []
+
+    def add_blank() -> None:
+        if lines and lines[-1] != "":
+            lines.append("")
+
+    def emit_table(table_path: tuple[str, ...], table_value: dict[str, Any]) -> None:
+        scalars = {k: v for k, v in table_value.items() if not isinstance(v, dict)}
+        nested = {k: v for k, v in table_value.items() if isinstance(v, dict)}
+
+        if scalars:
+            add_blank()
+            lines.append(f"[{_toml_table_path(table_path)}]")
+            for key, value in scalars.items():
+                lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+
+        for nested_name, nested_value in nested.items():
+            emit_table((*table_path, str(nested_name)), nested_value)
+
+    top_level_scalars = {k: v for k, v in data.items() if not isinstance(v, dict)}
+    for key, value in top_level_scalars.items():
+        lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+
+    for table_name, table_value in data.items():
+        if isinstance(table_value, dict):
+            emit_table((str(table_name),), table_value)
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_merged_codex_config(path: Path, content: str) -> None:
+    """Merge generated Codex config into an existing config.toml."""
+    incoming = tomllib.loads(content)
+    existing: dict[str, Any] = {}
+    if path.exists():
+        existing = tomllib.loads(path.read_text())
+    path.write_text(_dump_toml(_merge_dicts(existing, incoming)))
+
+
+def _write_merged_codex_hooks(path: Path, content: str) -> None:
+    """Merge generated Codex hooks into an existing hooks.json idempotently."""
+    incoming = json.loads(content)
+    existing = {"hooks": {}}
+    if path.exists():
+        existing = json.loads(path.read_text())
+    existing_hooks = existing.setdefault("hooks", {})
+    for event_name, groups in incoming.get("hooks", {}).items():
+        event_groups = existing_hooks.setdefault(event_name, [])
+        for group in groups:
+            if group not in event_groups:
+                event_groups.append(group)
+    path.write_text(json.dumps(existing, indent=2) + "\n")
+
+
 class CodexEmitter:
     """Emit plugins in Codex format.
 
@@ -318,24 +433,15 @@ class CodexEmitter:
         for cmd in ir.commands():
             self._emit_command(result, cmd, plugin_id)
 
-        # Emit MCP servers to config.toml
+        # Emit shared Codex config for MCP servers and hook feature flags.
         mcp_servers = ir.mcp_servers()
-        if mcp_servers:
-            self._emit_mcp_config(result, mcp_servers, plugin_id)
+        hooks = ir.hooks()
+        if mcp_servers or hooks:
+            self._emit_config(result, mcp_servers, plugin_id, enable_hooks=bool(hooks))
 
-        # Hooks not supported
-        for _hook in ir.hooks():
-            result.add_mapping(
-                "hook",
-                "hooks",
-                MappingStatus.UNSUPPORTED,
-                notes="Codex does not support hooks",
-            )
-            result.add_diagnostic(
-                Severity.WARN,
-                "Hooks are not supported in Codex - consider converting to a skill",
-                component_ref="hook:*",
-            )
+        # Emit supported Codex hooks.
+        if hooks:
+            self._emit_hooks(result, hooks, plugin_root=ir.source_path)
 
         # Agents not supported
         for agent in ir.agents():
@@ -359,8 +465,8 @@ class CodexEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Codex format."""
-        # Codex skills go to .codex/skills/<name>/SKILL.md
-        skill_dir = Path(".codex") / "skills" / f"{plugin_id}-{skill.name}"
+        # Codex uses the Agent Skills standard, discovered from .agents/skills.
+        skill_dir = Path(".agents") / "skills" / f"{plugin_id}-{skill.name}"
         skill_path = skill_dir / "SKILL.md"
 
         # Convert to markdown, stripping Claude-specific fields
@@ -455,7 +561,7 @@ class CodexEmitter:
         """
         # Emit as a skill directory with SKILL.md
         skill_name = f"{plugin_id}-cmd-{cmd.name}"
-        skill_dir = Path(".codex") / "skills" / skill_name
+        skill_dir = Path(".agents") / "skills" / skill_name
         skill_path = skill_dir / "SKILL.md"
 
         # Build SKILL.md with frontmatter
@@ -496,12 +602,19 @@ class CodexEmitter:
             component_ref=f"command:{cmd.name}",
         )
 
-    def _emit_mcp_config(
-        self, result: EmitResult, servers: list[McpServer], plugin_id: str
+    def _emit_config(
+        self,
+        result: EmitResult,
+        servers: list[McpServer],
+        plugin_id: str,
+        *,
+        enable_hooks: bool = False,
     ) -> None:
-        """Emit MCP configuration as TOML."""
-        # Build TOML content (manual since tomli-w may not be available)
-        lines = [f"# MCP servers from plugin: {plugin_id}", ""]
+        """Emit Codex config.toml entries for MCP servers and features."""
+        lines = [f"# Codex config from plugin: {plugin_id}", ""]
+
+        if enable_hooks:
+            lines.extend(["[features]", "codex_hooks = true", ""])
 
         for server in servers:
             section_name = f"{plugin_id}-{server.name}"
@@ -527,16 +640,128 @@ class CodexEmitter:
                 "mcp_server",
                 server.name,
                 MappingStatus.TRANSFORM,
-                notes="Converted to TOML format",
+                notes="Converted to Codex config.toml mcp_servers format",
             )
 
-        config_path = Path(".codex") / "mcp-config.toml"
+        config_path = Path(".codex") / "config.toml"
         result.add_file(config_path, "\n".join(lines))
 
-        result.add_diagnostic(
-            Severity.INFO,
-            f"MCP config written to {config_path} - merge into ~/.codex/config.toml",
-            component_ref="mcp:*",
+        if servers:
+            result.add_diagnostic(
+                Severity.INFO,
+                f"MCP servers written to {config_path} under [mcp_servers.*]",
+                component_ref="mcp:*",
+            )
+        if enable_hooks:
+            result.add_diagnostic(
+                Severity.INFO,
+                f"Codex hooks enabled in {config_path} with features.codex_hooks",
+                component_ref="hook:*",
+            )
+        if self.scope == InstallScope.PROJECT and (servers or enable_hooks):
+            result.add_diagnostic(
+                Severity.WARN,
+                "Codex may not auto-load project .codex/config.toml or hooks.json in all runtimes; "
+                "copy/merge these files into CODEX_HOME for active MCP/hook behavior",
+                component_ref="codex:config",
+            )
+
+    def _emit_hooks(
+        self, result: EmitResult, hooks: list[Hook], *, plugin_root: Path | None = None
+    ) -> None:
+        """Emit supported Claude command hooks to Codex hooks.json."""
+        supported_events = {
+            "SessionStart",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "UserPromptSubmit",
+            "Stop",
+        }
+        codex_hooks: dict[str, list[dict[str, Any]]] = {}
+
+        for hook in hooks:
+            for event in hook.events:
+                if event.name not in supported_events:
+                    result.add_mapping(
+                        "hook",
+                        event.name,
+                        MappingStatus.UNSUPPORTED,
+                        notes="Codex has no documented equivalent for this hook event",
+                    )
+                    result.add_diagnostic(
+                        Severity.WARN,
+                        f"Hook event '{event.name}' has no Codex equivalent",
+                        component_ref=f"hook:{event.name}",
+                    )
+                    continue
+
+                command_hooks: list[dict[str, Any]] = []
+                for handler in event.handlers:
+                    if handler.type.value == "command" and handler.command:
+                        command = _resolve_claude_plugin_root(handler.command, plugin_root)
+                        if command != handler.command:
+                            result.add_diagnostic(
+                                Severity.INFO,
+                                "Resolved ${CLAUDE_PLUGIN_ROOT} in Codex hook command",
+                                component_ref=f"hook:{event.name}",
+                            )
+                        command_hook: dict[str, Any] = {
+                            "type": "command",
+                            "command": command,
+                        }
+                        if handler.timeout_sec is not None:
+                            command_hook["timeout"] = handler.timeout_sec
+                        command_hooks.append(command_hook)
+                        if handler.is_async:
+                            result.add_diagnostic(
+                                Severity.WARN,
+                                "Codex command hooks do not support Claude async hook semantics",
+                                component_ref=f"hook:{event.name}",
+                            )
+                    else:
+                        result.add_diagnostic(
+                            Severity.WARN,
+                            f"Hook handler type '{handler.type.value}' is not supported in Codex",
+                            component_ref=f"hook:{event.name}",
+                        )
+
+                if not command_hooks:
+                    continue
+
+                handler_group: dict[str, Any] = {"hooks": command_hooks}
+                if event.matcher and event.name in {
+                    "PreToolUse",
+                    "PermissionRequest",
+                    "PostToolUse",
+                }:
+                    handler_group["matcher"] = event.matcher
+                elif event.matcher:
+                    result.add_diagnostic(
+                        Severity.WARN,
+                        f"Codex ignores matchers for {event.name} hooks",
+                        component_ref=f"hook:{event.name}",
+                    )
+
+                codex_hooks.setdefault(event.name, []).append(handler_group)
+
+        if not codex_hooks:
+            result.add_mapping(
+                "hook",
+                "hooks",
+                MappingStatus.UNSUPPORTED,
+                notes="No Codex-compatible command hooks found",
+            )
+            return
+
+        hooks_path = Path(".codex") / "hooks.json"
+        result.add_file(hooks_path, json.dumps({"hooks": codex_hooks}, indent=2))
+        result.add_mapping(
+            "hook",
+            "hooks",
+            MappingStatus.TRANSFORM,
+            target_path=hooks_path,
+            notes="Converted supported Claude command hooks to Codex hooks.json",
         )
 
 
@@ -975,7 +1200,7 @@ class PiEmitter:
     """Emit plugins in Pi format.
 
     Pi implements the Agent Skills standard. Skills map natively.
-    Commands map to Pi prompt templates. Hooks and MCP are unsupported.
+    Commands map to Pi prompt templates. Hooks are emulated with TypeScript extensions.
     """
 
     target = TargetTool.PI
@@ -995,13 +1220,9 @@ class PiEmitter:
         for cmd in ir.commands():
             self._emit_command(result, cmd, plugin_id)
 
-        for _hook in ir.hooks():
-            result.add_mapping(
-                "hook",
-                "hooks",
-                MappingStatus.UNSUPPORTED,
-                notes="Pi uses TypeScript extensions for event handling",
-            )
+        hooks = ir.hooks()
+        if hooks:
+            self._emit_hooks_extension(result, hooks, plugin_id, plugin_root=ir.source_path)
 
         for server in ir.mcp_servers():
             result.add_mapping(
@@ -1117,6 +1338,114 @@ class PiEmitter:
             target_path=prompt_path,
             notes=f"Invoke with /{prompt_name}",
             lost_features=lost,
+        )
+
+    def _emit_hooks_extension(
+        self,
+        result: EmitResult,
+        hooks: list[Hook],
+        plugin_id: str,
+        *,
+        plugin_root: Path | None = None,
+    ) -> None:
+        """Emit Claude command hooks as a Pi TypeScript extension."""
+        event_map = {
+            "SessionStart": "session_start",
+            "UserPromptSubmit": "input",
+            "PreToolUse": "tool_call",
+            "PostToolUse": "tool_result",
+            "Stop": "agent_end",
+            "SessionEnd": "session_shutdown",
+            "PreCompact": "session_before_compact",
+            "PostCompact": "session_compact",
+        }
+        handlers_by_event: dict[str, list[str]] = {}
+
+        for hook in hooks:
+            for event in hook.events:
+                pi_event = event_map.get(event.name)
+                if pi_event is None:
+                    result.add_mapping(
+                        "hook",
+                        event.name,
+                        MappingStatus.UNSUPPORTED,
+                        notes="Pi extension event mapping is not known for this Claude hook event",
+                    )
+                    result.add_diagnostic(
+                        Severity.WARN,
+                        f"Hook event '{event.name}' has no Pi extension equivalent",
+                        component_ref=f"hook:{event.name}",
+                    )
+                    continue
+
+                if event.matcher:
+                    result.add_diagnostic(
+                        Severity.WARN,
+                        f"Pi extension hook for {event.name} does not preserve Claude matcher '{event.matcher}'",
+                        component_ref=f"hook:{event.name}",
+                    )
+
+                for handler in event.handlers:
+                    if handler.type.value == "command" and handler.command:
+                        command = _resolve_claude_plugin_root(handler.command, plugin_root)
+                        if command != handler.command:
+                            result.add_diagnostic(
+                                Severity.INFO,
+                                "Resolved ${CLAUDE_PLUGIN_ROOT} in Pi extension hook command",
+                                component_ref=f"hook:{event.name}",
+                            )
+                        handlers_by_event.setdefault(pi_event, []).append(command)
+                    else:
+                        result.add_diagnostic(
+                            Severity.WARN,
+                            f"Hook handler type '{handler.type.value}' is not supported in Pi extension conversion",
+                            component_ref=f"hook:{event.name}",
+                        )
+
+        if not handlers_by_event:
+            result.add_mapping(
+                "hook",
+                "hooks",
+                MappingStatus.UNSUPPORTED,
+                notes="No Pi-compatible command hooks found",
+            )
+            return
+
+        lines = [
+            'import { spawnSync } from "node:child_process";',
+            "",
+            "function runHook(command: string, payload: unknown) {",
+            "  const result = spawnSync(command, {",
+            "    shell: true,",
+            "    input: JSON.stringify(payload),",
+            '    encoding: "utf8",',
+            '    stdio: ["pipe", "inherit", "inherit"],',
+            "  });",
+            "  if ((result.status ?? 1) !== 0) {",
+            "    throw new Error(`Pi hook failed: ${command}`);",
+            "  }",
+            "}",
+            "",
+            "export default function (pi: any) {",
+        ]
+
+        for pi_event, commands in sorted(handlers_by_event.items()):
+            lines.append(f"  pi.on({json.dumps(pi_event)}, async (event: unknown) => {{")
+            for command in commands:
+                lines.append(f"    runHook({json.dumps(command)}, event);")
+            lines.append("  });")
+
+        lines.append("}")
+        lines.append("")
+
+        extension_path = self._base_dir / "extensions" / f"{plugin_id}-hooks.ts"
+        result.add_file(extension_path, "\n".join(lines))
+        result.add_mapping(
+            "hook",
+            "hooks",
+            MappingStatus.EMULATE,
+            target_path=extension_path,
+            notes="Converted supported Claude command hooks to a Pi TypeScript extension",
         )
 
 

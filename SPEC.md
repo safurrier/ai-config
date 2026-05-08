@@ -1,4 +1,4 @@
-# SPEC.md — Claude Code Plugin Conversion + Validation for Claude Code, Codex, Cursor, OpenCode
+# SPEC.md — Claude Code Plugin Conversion + Validation for Claude Code, Codex, Cursor, OpenCode, Pi
 
 ## 1) Purpose
 
@@ -10,6 +10,7 @@ Create a tool that:
    - OpenAI Codex (Codex CLI / IDE extension surfaces)
    - Cursor
    - OpenCode
+   - Pi
 4. Provides a post-conversion validator that can verify (via CLI where available, otherwise via TUI/UX steps) that each exported component is installed and functional.
 
 This spec is intentionally explicit about:
@@ -137,6 +138,7 @@ class TargetTool(str, Enum):
     CODEX = "codex"
     CURSOR = "cursor"
     OPENCODE = "opencode"
+    PI = "pi"
 
 
 class InstallScope(str, Enum):
@@ -301,14 +303,14 @@ Statuses:
 - **fallback**: degrade to a prompt/command/flattened file
 - **unsupported**: no documented equivalent in target surfaces
 
-| Component | Claude Code | Codex | Cursor | OpenCode |
-|-----------|-------------|-------|--------|----------|
-| Skill | native (Claude plugin skills) | native (skills are preferred; custom prompts deprecated) | native (Agent Skills) | native (Agent Skills + skill tool) |
-| Command | native (plugin commands exist, though skills are recommended) | fallback/transform (emit deprecated custom prompts optionally) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). |
-| Hook | native (Claude hooks in plugin system) | unsupported (no documented first-class hook surface in the cited Codex docs) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) |
-| MCP server | native (Claude plugin MCP support) | transform (Codex uses slash-command UX and configuration; MCP is a supported surface) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) |
-| Agent | native (Claude plugin agents) | unsupported (no documented matching file schema in cited sources) | unsupported | unsupported |
-| LSP | native (Claude plugin LSP servers) | unsupported | unsupported | transform (OpenCode supports LSP configuration via the lsp section in opencode.json, including custom LSP servers by command + extensions). |
+| Component | Claude Code | Codex | Cursor | OpenCode | Pi |
+|-----------|-------------|-------|--------|----------|----|
+| Skill | native (Claude plugin skills) | native (Agent Skills from `.agents/skills`) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
+| Command | native (plugin commands exist, though skills are recommended) | fallback/transform (emit deprecated custom prompts optionally, or skills with `--commands-as-skills`) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). | transform (Pi prompt templates) |
+| Hook | native (Claude hooks in plugin system) | transform (supported command hooks emit to `.codex/hooks.json` with `features.codex_hooks`) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) | emulate (generated TypeScript extension) |
+| MCP server | native (Claude plugin MCP support) | transform (Codex uses `[mcp_servers.*]` in `.codex/config.toml`) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) | unsupported |
+| Agent | native (Claude plugin agents) | unsupported (no documented matching file schema in cited sources) | unsupported | unsupported | unsupported |
+| LSP | native (Claude plugin LSP servers) | unsupported | unsupported | transform (OpenCode supports LSP configuration via the lsp section in opencode.json, including custom LSP servers by command + extensions). | unsupported |
 
 ---
 
@@ -330,7 +332,8 @@ Statuses:
 ### 7.4 Hooks emission
 - **Claude**: emit hooks as Claude plugin hooks per schema.
 - **Cursor**: emit Cursor hooks (implementation requires Cursor hook configuration schema; Cursor documents the hooks subsystem but this spec does not hardcode file formats beyond what's explicitly documented).
-- **Codex**: hooks are unsupported; generate a fallback skill/command describing the hook logic as a manual checklist.
+- **Codex**: emit supported command hooks to `.codex/hooks.json` and enable `[features] codex_hooks = true` in `.codex/config.toml`; diagnose unsupported events and non-command handlers.
+- **Pi**: emit supported command hooks as a TypeScript extension under `.pi/extensions/` or `.pi/agent/extensions/`; diagnose unsupported events and non-command handlers.
 
 ### 7.5 MCP emission
 - Convert Claude plugin MCP entries to each target's MCP configuration surface.

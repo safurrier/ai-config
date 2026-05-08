@@ -5,6 +5,7 @@ Validates that converted plugin output is valid for OpenAI Codex.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -16,7 +17,14 @@ else:
 
 from ai_config.validators.base import ValidationResult
 
-# Valid Codex hook events (Codex doesn't support hooks, but included for completeness)
+VALID_CODEX_HOOK_EVENTS = {
+    "SessionStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Stop",
+}
 VALID_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_SKILL_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
@@ -29,23 +37,28 @@ class CodexOutputValidator:
     description = "Validates Codex converted output"
 
     def validate_skills(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate skills in .codex/skills/ directory.
-
-        Args:
-            output_dir: Root output directory containing .codex/
-
-        Returns:
-            List of validation results.
-        """
+        """Validate Codex Agent Skills in .agents/skills/."""
         results: list[ValidationResult] = []
-        skills_dir = output_dir / ".codex" / "skills"
+        skills_dir = output_dir / ".agents" / "skills"
+        legacy_skills_dir = output_dir / ".codex" / "skills"
+
+        if legacy_skills_dir.exists():
+            results.append(
+                ValidationResult(
+                    check_name="codex_legacy_skills_dir",
+                    status="warn",
+                    message="Found legacy .codex/skills directory",
+                    details="Current Codex discovers Agent Skills from .agents/skills and $HOME/.agents/skills",
+                    fix_hint="Move skills to .agents/skills",
+                )
+            )
 
         if not skills_dir.exists():
             results.append(
                 ValidationResult(
                     check_name="codex_skills_dir",
                     status="pass",
-                    message="No Codex skills directory (ok if no skills converted)",
+                    message="No Codex Agent Skills directory (ok if no skills converted)",
                 )
             )
             return results
@@ -57,7 +70,7 @@ class CodexOutputValidator:
                 ValidationResult(
                     check_name="codex_skills_empty",
                     status="warn",
-                    message="Codex skills directory exists but is empty",
+                    message="Codex Agent Skills directory exists but is empty",
                 )
             )
             return results
@@ -198,32 +211,70 @@ class CodexOutputValidator:
         except yaml.YAMLError:
             return None
 
-    def validate_mcp(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate MCP configuration in .codex/mcp-config.toml.
-
-        Args:
-            output_dir: Root output directory containing .codex/
-
-        Returns:
-            List of validation results.
-        """
+    def _load_config(self, output_dir: Path) -> tuple[dict, list[ValidationResult]]:
+        """Load .codex/config.toml and return config plus validation results."""
         results: list[ValidationResult] = []
-        mcp_file = output_dir / ".codex" / "mcp-config.toml"
+        config_file = output_dir / ".codex" / "config.toml"
+        legacy_mcp_file = output_dir / ".codex" / "mcp-config.toml"
 
-        if not mcp_file.exists():
+        if legacy_mcp_file.exists():
+            results.append(
+                ValidationResult(
+                    check_name="codex_legacy_mcp_config",
+                    status="warn",
+                    message="Found legacy .codex/mcp-config.toml",
+                    details="Current Codex reads MCP servers from .codex/config.toml",
+                    fix_hint="Move MCP servers under [mcp_servers.*] in .codex/config.toml",
+                )
+            )
+
+        if not config_file.exists():
+            return {}, results
+
+        try:
+            return tomllib.loads(config_file.read_text()), results
+        except tomllib.TOMLDecodeError as e:
+            results.append(
+                ValidationResult(
+                    check_name="codex_config_parse",
+                    status="fail",
+                    message="Invalid TOML in Codex config",
+                    details=str(e),
+                    fix_hint="Fix TOML syntax errors in .codex/config.toml",
+                )
+            )
+        except Exception as e:
+            results.append(
+                ValidationResult(
+                    check_name="codex_config_error",
+                    status="fail",
+                    message="Failed to validate Codex config",
+                    details=str(e),
+                )
+            )
+
+        return {}, results
+
+    def validate_mcp(self, output_dir: Path) -> list[ValidationResult]:
+        """Validate MCP configuration in .codex/config.toml."""
+        results: list[ValidationResult] = []
+        config, config_results = self._load_config(output_dir)
+        results.extend(config_results)
+
+        if any(r.status == "fail" for r in results):
+            return results
+
+        if not config:
             results.append(
                 ValidationResult(
                     check_name="codex_mcp_config",
                     status="pass",
-                    message="No Codex MCP config (ok if no MCP servers converted)",
+                    message="No Codex config.toml (ok if no MCP servers converted)",
                 )
             )
             return results
 
         try:
-            content = mcp_file.read_text()
-            config = tomllib.loads(content)
-
             # Check for mcp_servers section
             mcp_servers = config.get("mcp_servers", {})
 
@@ -252,22 +303,12 @@ class CodexOutputValidator:
                     )
                 )
 
-        except tomllib.TOMLDecodeError as e:
-            results.append(
-                ValidationResult(
-                    check_name="codex_mcp_parse",
-                    status="fail",
-                    message="Invalid TOML in MCP config",
-                    details=str(e),
-                    fix_hint="Fix TOML syntax errors in mcp-config.toml",
-                )
-            )
         except Exception as e:
             results.append(
                 ValidationResult(
                     check_name="codex_mcp_error",
                     status="fail",
-                    message="Failed to validate MCP config",
+                    message="Failed to validate MCP servers",
                     details=str(e),
                 )
             )
@@ -321,6 +362,111 @@ class CodexOutputValidator:
 
         return results
 
+    def validate_hooks(self, output_dir: Path) -> list[ValidationResult]:
+        """Validate Codex hooks.json and feature flag in config.toml."""
+        results: list[ValidationResult] = []
+        hooks_file = output_dir / ".codex" / "hooks.json"
+
+        if not hooks_file.exists():
+            return results
+
+        config, config_results = self._load_config(output_dir)
+        results.extend(config_results)
+
+        features = config.get("features", {}) if isinstance(config, dict) else {}
+        if features.get("codex_hooks") is not True:
+            results.append(
+                ValidationResult(
+                    check_name="codex_hooks_feature_flag",
+                    status="warn",
+                    message="Codex hooks file exists but features.codex_hooks is not enabled",
+                    fix_hint="Add [features] codex_hooks = true to .codex/config.toml",
+                )
+            )
+
+        try:
+            hooks_data = json.loads(hooks_file.read_text())
+        except json.JSONDecodeError as e:
+            results.append(
+                ValidationResult(
+                    check_name="codex_hooks_parse",
+                    status="fail",
+                    message="Invalid JSON in .codex/hooks.json",
+                    details=str(e),
+                    fix_hint="Fix JSON syntax errors in .codex/hooks.json",
+                )
+            )
+            return results
+
+        hooks = hooks_data.get("hooks")
+        if not isinstance(hooks, dict):
+            results.append(
+                ValidationResult(
+                    check_name="codex_hooks_structure",
+                    status="fail",
+                    message=".codex/hooks.json must contain a hooks object",
+                )
+            )
+            return results
+
+        for event_name, groups in hooks.items():
+            if event_name not in VALID_CODEX_HOOK_EVENTS:
+                results.append(
+                    ValidationResult(
+                        check_name=f"codex_hooks_event_{event_name}",
+                        status="fail",
+                        message=f"Unsupported Codex hook event '{event_name}'",
+                    )
+                )
+                continue
+            if not isinstance(groups, list):
+                results.append(
+                    ValidationResult(
+                        check_name=f"codex_hooks_event_{event_name}_type",
+                        status="fail",
+                        message=f"Codex hook event '{event_name}' must be an array",
+                    )
+                )
+                continue
+            for i, group in enumerate(groups):
+                if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                    results.append(
+                        ValidationResult(
+                            check_name=f"codex_hooks_event_{event_name}_{i}",
+                            status="fail",
+                            message=f"Codex hook group {event_name}[{i}] must contain hooks array",
+                        )
+                    )
+                    continue
+                for j, hook in enumerate(group["hooks"]):
+                    if not isinstance(hook, dict):
+                        results.append(
+                            ValidationResult(
+                                check_name=f"codex_hooks_event_{event_name}_{i}_{j}",
+                                status="fail",
+                                message=f"Codex hook {event_name}[{i}].hooks[{j}] must be an object",
+                            )
+                        )
+                    elif hook.get("type") != "command" or not isinstance(hook.get("command"), str):
+                        results.append(
+                            ValidationResult(
+                                check_name=f"codex_hooks_event_{event_name}_{i}_{j}_command",
+                                status="fail",
+                                message=f"Codex hook {event_name}[{i}].hooks[{j}] must be a command hook",
+                            )
+                        )
+
+        if not any(r.status == "fail" for r in results):
+            results.append(
+                ValidationResult(
+                    check_name="codex_hooks_valid",
+                    status="pass",
+                    message=f"Codex hooks valid ({len(hooks)} event(s))",
+                )
+            )
+
+        return results
+
     def validate_prompts(self, output_dir: Path) -> list[ValidationResult]:
         """Validate prompts in .codex/prompts/ (deprecated but may exist).
 
@@ -361,19 +507,21 @@ class CodexOutputValidator:
         results: list[ValidationResult] = []
 
         codex_dir = output_dir / ".codex"
-        if not codex_dir.exists():
+        agents_dir = output_dir / ".agents"
+        if not codex_dir.exists() and not agents_dir.exists():
             results.append(
                 ValidationResult(
                     check_name="codex_output_exists",
                     status="warn",
-                    message="No .codex directory found",
-                    details=f"Expected .codex/ in {output_dir}",
+                    message="No Codex output found",
+                    details=f"Expected .agents/ and/or .codex/ in {output_dir}",
                 )
             )
             return results
 
         results.extend(self.validate_skills(output_dir))
         results.extend(self.validate_mcp(output_dir))
+        results.extend(self.validate_hooks(output_dir))
         results.extend(self.validate_prompts(output_dir))
 
         return results

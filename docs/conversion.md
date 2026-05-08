@@ -8,10 +8,10 @@ The `convert` command takes a Claude Code plugin directory and produces equivale
 
 | Target | Tool | Output |
 |--------|------|--------|
-| `codex` | OpenAI Codex | `.codex/` dir with TOML config + skills |
+| `codex` | OpenAI Codex | `.agents/skills/` plus `.codex/` config, prompts, and hooks |
 | `cursor` | Cursor | `.cursor/` dir with rules + MCP config |
 | `opencode` | OpenCode | `opencode.json` + `.opencode/` skills dir |
-| `pi` | Pi | `.pi/` dir with skills + prompt templates |
+| `pi` | Pi | `.pi/` dir with skills, prompt templates, and extensions |
 
 Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.
 
@@ -70,7 +70,7 @@ With this config, `ai-config sync` installs your Claude plugins and then convert
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable conversion |
 | `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
-| `scope` | string | `"project"` | `"user"` (home dir) or `"project"` (cwd) |
+| `scope` | string | `"project"` | `"user"` (home dir) or `"project"` (cwd). Codex Agent Skills are discovered from project `.agents/skills`, but Codex MCP/hooks may need user-scope output or manual merge into `CODEX_HOME` depending on runtime trust/config loading. |
 | `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
 | `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
 
@@ -80,10 +80,10 @@ How each plugin component maps to target tools:
 
 | Component | Codex | Cursor | OpenCode | Pi |
 |-----------|-------|--------|----------|----|
-| Skills | `.codex/skills/*.md` | `.cursor/rules/*.mdc` | `.opencode/skills/*.md` | `.pi/skills/*/SKILL.md` |
+| Skills | `.agents/skills/*/SKILL.md` | `.cursor/skills/*/SKILL.md` | `.opencode/skills/*/SKILL.md` | `.pi/skills/*/SKILL.md` or `.pi/agent/skills/*/SKILL.md` |
 | Commands | Prompts or skills | Commands | Prompts | Prompt templates |
-| Hooks | Unsupported | Hooks config | Unsupported | Unsupported |
-| MCP servers | `.codex/config.toml` | `.cursor/mcp.json` | `opencode.json` | Unsupported |
+| Hooks | `.codex/hooks.json` + `features.codex_hooks` for supported command hooks | Hooks config | Unsupported | TypeScript extension emulation |
+| MCP servers | `.codex/config.toml` `[mcp_servers.*]` | `.cursor/mcp.json` | `opencode.json` | Unsupported |
 | LSP servers | Unsupported | Unsupported | `opencode.lsp.json` | Unsupported |
 | Agents | Unsupported | Unsupported | Unsupported | Unsupported |
 
@@ -154,7 +154,7 @@ ai-config sync --force-convert
 ai-config convert ./my-plugin --target codex --scope project
 ```
 
-Creates `.codex/` in the current directory with skills and MCP config.
+Creates `.agents/skills/` for Codex Agent Skills and `.codex/config.toml` / `.codex/hooks.json` when MCP servers or supported hooks are present. The project-scope `.codex/` files are validated fragments; for active Codex MCP/hook behavior, merge them into the active `CODEX_HOME` or run with an explicit `CODEX_HOME` that points at the generated config.
 
 ### Convert to all targets with a report
 

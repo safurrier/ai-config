@@ -1,9 +1,15 @@
 """Tests for plugin conversion functionality."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from ai_config.converters.claude_parser import parse_claude_plugin
 from ai_config.converters.convert import convert_plugin, preview_conversion
@@ -23,6 +29,7 @@ from ai_config.converters.ir import (
     McpTransport,
     PluginIdentity,
     PluginIR,
+    Severity,
     Skill,
     TargetTool,
     TextFile,
@@ -163,6 +170,30 @@ class TestClaudeParser:
         assert ir.identity.plugin_id == "my-plugin"
         assert ir.skills()[0].name == "my-skill"
 
+    def test_parse_known_unconverted_claude_fields_diagnostics(self, tmp_path: Path) -> None:
+        """Modern Claude plugin fields should be diagnosed when not represented in IR."""
+        plugin_dir = tmp_path / "modern-plugin"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "name": "modern-plugin",
+                    "outputStyles": "./output-styles",
+                    "monitors": "./monitors",
+                    "themes": "./themes",
+                    "channels": "./channels",
+                }
+            )
+        )
+
+        ir = parse_claude_plugin(plugin_dir)
+
+        refs = {diag.component_ref for diag in ir.diagnostics}
+        assert "manifest:outputStyles" in refs
+        assert "manifest:monitors" in refs
+        assert "manifest:themes" in refs
+        assert "manifest:channels" in refs
+
 
 class TestCodexEmitter:
     """Tests for Codex emitter."""
@@ -189,7 +220,7 @@ class TestCodexEmitter:
         result.write_to(tmp_path)
 
         # Check SKILL.md was written correctly
-        skill_md = tmp_path / ".codex" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        skill_md = tmp_path / ".agents" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
         content = skill_md.read_text()
 
@@ -242,7 +273,9 @@ class TestCodexEmitter:
         result = emitter.emit(ir)
 
         warnings = [d.message for d in result.diagnostics if d.severity.value == "warn"]
-        assert any("prompts" in msg.lower() and "commands-as-skills" in msg.lower() for msg in warnings)
+        assert any(
+            "prompts" in msg.lower() and "commands-as-skills" in msg.lower() for msg in warnings
+        )
 
     def test_emit_binary_skill_files(self, tmp_path: Path) -> None:
         """Binary files in skills should be emitted to output."""
@@ -264,7 +297,7 @@ class TestCodexEmitter:
         result = emitter.emit(ir)
         result.write_to(tmp_path)
 
-        emitted = tmp_path / ".codex" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
+        emitted = tmp_path / ".agents" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
         assert emitted.exists()
         assert emitted.read_bytes() == binary_bytes
 
@@ -285,7 +318,7 @@ class TestCodexEmitter:
         assert any("skill" in d.message.lower() for d in cmd_diags)
 
         # Verify skill file was created (not deprecated prompts)
-        skill_dir = tmp_path / ".codex" / "skills" / "dev-tools-cmd-commit"
+        skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
         assert skill_dir.exists(), "Command should be emitted as skill directory"
         skill_file = skill_dir / "SKILL.md"
         assert skill_file.exists(), "SKILL.md should exist in skill directory"
@@ -294,14 +327,37 @@ class TestCodexEmitter:
         assert "name:" in content  # Should have frontmatter
         assert "Create a git commit" in content  # Should have command content
 
-    def test_emit_hooks_unsupported(self, ir) -> None:
-        """Test that hooks are marked unsupported."""
+    def test_emit_hooks_transform(self, ir, tmp_path: Path) -> None:
+        """Test that supported command hooks are converted to Codex hooks."""
         emitter = CodexEmitter()
         result = emitter.emit(ir)
+        result.write_to(tmp_path)
 
         hook_mappings = [m for m in result.mappings if m.component_kind == "hook"]
         assert len(hook_mappings) == 1
-        assert hook_mappings[0].status == MappingStatus.UNSUPPORTED
+        assert hook_mappings[0].status == MappingStatus.TRANSFORM
+
+        hooks_json = tmp_path / ".codex" / "hooks.json"
+        assert hooks_json.exists()
+        hooks_content = hooks_json.read_text()
+        assert "PreToolUse" in hooks_content
+        assert "PostToolUse" in hooks_content
+        assert "check-dangerous-commands.sh" in hooks_content
+        assert "CLAUDE_PLUGIN_ROOT" not in hooks_content
+
+        config_toml = tmp_path / ".codex" / "config.toml"
+        assert config_toml.exists()
+        assert "codex_hooks = true" in config_toml.read_text()
+
+    def test_emit_prompt_hook_warns_unsupported(self, ir) -> None:
+        """Prompt hook handlers should warn because Codex supports command hooks."""
+        emitter = CodexEmitter()
+        result = emitter.emit(ir)
+
+        warnings = [d.message for d in result.diagnostics if d.severity == Severity.WARN]
+        assert any(
+            "prompt" in message and "not supported in Codex" in message for message in warnings
+        )
 
     def test_emit_mcp_config(self, ir, tmp_path: Path) -> None:
         """Test MCP config conversion to TOML."""
@@ -309,13 +365,105 @@ class TestCodexEmitter:
         result = emitter.emit(ir)
         result.write_to(tmp_path)
 
-        mcp_config = tmp_path / ".codex" / "mcp-config.toml"
+        mcp_config = tmp_path / ".codex" / "config.toml"
         assert mcp_config.exists()
 
         content = mcp_config.read_text()
         assert "[mcp_servers.dev-tools-database]" in content
         assert "[mcp_servers.dev-tools-github]" in content
         assert 'command = "npx"' in content
+
+    def test_project_scope_mcp_hooks_warn_about_runtime_loading(self, ir) -> None:
+        """Project-scope Codex MCP/hooks should warn about active runtime loading."""
+        emitter = CodexEmitter(scope=InstallScope.PROJECT)
+        result = emitter.emit(ir)
+
+        warnings = [d.message for d in result.diagnostics if d.severity == Severity.WARN]
+        assert any(
+            "may not auto-load project .codex/config.toml" in message for message in warnings
+        )
+
+    def test_codex_config_merge_preserves_existing_settings(self, ir, tmp_path: Path) -> None:
+        """Writing Codex config should merge, not clobber, existing settings."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            'model = "gpt-5"\n\n[mcp_servers.existing]\ncommand = "echo"\nargs = ["old"]\n'
+        )
+
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (codex_dir / "config.toml").read_text()
+        assert 'model = "gpt-5"' in content
+        assert "[mcp_servers.existing]" in content
+        assert "[mcp_servers.dev-tools-database]" in content
+
+    def test_codex_config_merge_preserves_mixed_tables(self, ir, tmp_path: Path) -> None:
+        """Merging Codex config should preserve tables with scalar keys and subtables."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            '[profiles]\ndefault = "work"\n\n[profiles.work]\nmodel = "gpt-4o"\n'
+        )
+
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (codex_dir / "config.toml").read_text()
+        assert "[profiles]" in content
+        assert 'default = "work"' in content
+        assert "[profiles.work]" in content
+        assert 'model = "gpt-4o"' in content
+        assert "[mcp_servers.dev-tools-database]" in content
+
+    def test_codex_config_merge_preserves_quoted_table_keys(self, ir, tmp_path: Path) -> None:
+        """Merging Codex config should quote table keys that are not bare TOML keys."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            '[mcp_servers."github.com"]\ncommand = "echo"\nargs = ["old"]\n'
+        )
+
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (codex_dir / "config.toml").read_text()
+        assert '[mcp_servers."github.com"]' in content
+        parsed = tomllib.loads(content)
+        assert "github.com" in parsed["mcp_servers"]
+        assert "github" not in parsed["mcp_servers"]
+        assert "dev-tools-database" in parsed["mcp_servers"]
+
+    def test_codex_hooks_merge_idempotently(self, ir, tmp_path: Path) -> None:
+        """Writing Codex hooks should preserve existing hooks and avoid duplicates."""
+        hooks_dir = tmp_path / ".codex"
+        hooks_dir.mkdir(parents=True)
+        hooks_file = hooks_dir / "hooks.json"
+        hooks_file.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "UserPromptSubmit": [
+                            {"hooks": [{"type": "command", "command": "echo existing"}]}
+                        ]
+                    }
+                }
+            )
+        )
+
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+        result.write_to(tmp_path)
+
+        hooks_data = json.loads(hooks_file.read_text())
+        assert "UserPromptSubmit" in hooks_data["hooks"]
+        pre_tool_groups = hooks_data["hooks"]["PreToolUse"]
+        assert len(pre_tool_groups) == 1
 
 
 class TestCursorEmitter:
@@ -363,6 +511,7 @@ class TestCursorEmitter:
         assert hooks_path.exists()
 
         import json
+
         hooks_config = json.loads(hooks_path.read_text())
         assert "hooks" in hooks_config
         assert "version" in hooks_config
@@ -380,6 +529,7 @@ class TestCursorEmitter:
         assert mcp_path.exists()
 
         import json
+
         mcp_config = json.loads(mcp_path.read_text())
         assert "mcpServers" in mcp_config
         assert "dev-tools-database" in mcp_config["mcpServers"]
@@ -458,6 +608,7 @@ class TestOpenCodeEmitter:
         assert lsp_path.exists()
 
         import json
+
         lsp_config = json.loads(lsp_path.read_text())
         assert "lsp" in lsp_config
         assert "dev-tools-custom-python" in lsp_config["lsp"]
@@ -562,15 +713,35 @@ class TestPiEmitter:
         content = prompt_path.read_text()
         assert len(content) > 0
 
-    def test_emit_hooks_unsupported(self, ir) -> None:
-        """Test hooks are marked unsupported for Pi."""
+    def test_emit_hooks_as_extension(self, ir, tmp_path: Path) -> None:
+        """Test supported command hooks are emitted as a Pi extension."""
         emitter = PiEmitter()
         result = emitter.emit(ir)
+        result.write_to(tmp_path)
 
         hook_mappings = [m for m in result.mappings if m.component_kind == "hook"]
         assert len(hook_mappings) == 1
-        assert hook_mappings[0].status == MappingStatus.UNSUPPORTED
+        assert hook_mappings[0].status == MappingStatus.EMULATE
         assert "extension" in hook_mappings[0].notes.lower()
+
+        extension = tmp_path / ".pi" / "extensions" / "dev-tools-hooks.ts"
+        assert extension.exists()
+        content = extension.read_text()
+        assert "export default function" in content
+        assert 'pi.on("tool_call"' in content
+        assert 'pi.on("tool_result"' in content
+        assert "check-dangerous-commands.sh" in content
+        assert "CLAUDE_PLUGIN_ROOT" not in content
+
+    def test_user_scope_hooks_emit_to_agent_extensions(self, ir, tmp_path: Path) -> None:
+        """User-scope hooks should emit under .pi/agent/extensions/."""
+        emitter = PiEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        extension = tmp_path / ".pi" / "agent" / "extensions" / "dev-tools-hooks.ts"
+        assert extension.exists()
+        assert not (tmp_path / ".pi" / "extensions").exists()
 
     def test_emit_mcp_unsupported(self, ir) -> None:
         """Test MCP servers are marked unsupported for Pi."""
@@ -759,7 +930,7 @@ class TestEdgeCases:
         # Codex keeps ${VAR}
         codex = CodexEmitter()
         codex_result = codex.emit(ir)
-        codex_file = next(f for f in codex_result.files if "mcp" in str(f.path).lower())
+        codex_file = next(f for f in codex_result.files if f.path == Path(".codex") / "config.toml")
         assert "${API_KEY}" in codex_file.content
 
         # Cursor transforms to ${env:VAR}
@@ -778,9 +949,18 @@ class TestEdgeCases:
         """Test which Claude events map to Cursor."""
         # This documents the mapping gaps
         claude_events = [
-            "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest",
-            "PostToolUse", "PostToolUseFailure", "Notification", "SubagentStart",
-            "SubagentStop", "Stop", "PreCompact", "SessionEnd"
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "Notification",
+            "SubagentStart",
+            "SubagentStop",
+            "Stop",
+            "PreCompact",
+            "SessionEnd",
         ]
 
         cursor_mappable = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
@@ -925,7 +1105,7 @@ class TestDryRun:
         assert output_dir.exists()
 
         # Files should exist
-        skills_dir = output_dir / ".codex" / "skills"
+        skills_dir = output_dir / ".agents" / "skills"
         assert skills_dir.exists()
 
 

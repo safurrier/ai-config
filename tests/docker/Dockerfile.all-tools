@@ -56,8 +56,8 @@ RUN npm install -g opencode-ai || echo "OpenCode npm install failed, trying curl
 # We'll install as root first, then ensure PATH is set
 RUN curl -fsSL https://cursor.com/install | bash || echo "Cursor install skipped - installer may not be available"
 
-# 5. Pi - npm package (@mariozechner/pi-coding-agent)
-RUN npm install -g @mariozechner/pi-coding-agent || echo "Pi install failed"
+# 5. Pi - npm package
+RUN npm install -g @earendil-works/pi-coding-agent || echo "Pi install failed"
 
 # Ensure all tool binaries are in PATH
 ENV PATH="/root/.local/bin:/usr/local/bin:$PATH"

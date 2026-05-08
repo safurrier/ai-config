@@ -205,6 +205,62 @@ class PiOutputValidator:
 
         return results
 
+    def validate_extensions(self, output_dir: Path) -> list[ValidationResult]:
+        """Validate Pi TypeScript extensions in project/user locations."""
+        results: list[ValidationResult] = []
+        extension_dirs = [
+            output_dir / ".pi" / "extensions",
+            output_dir / ".pi" / "agent" / "extensions",
+        ]
+
+        extension_files: list[Path] = []
+        for extension_dir in extension_dirs:
+            if extension_dir.exists():
+                extension_files.extend(extension_dir.glob("*.ts"))
+                extension_files.extend(extension_dir.glob("*.js"))
+
+        for extension_file in extension_files:
+            try:
+                content = extension_file.read_text()
+            except Exception as e:
+                results.append(
+                    ValidationResult(
+                        check_name=f"pi_extension_{extension_file.name}_read",
+                        status="fail",
+                        message=f"Failed to read Pi extension {extension_file}",
+                        details=str(e),
+                    )
+                )
+                continue
+
+            if "export default function" not in content:
+                results.append(
+                    ValidationResult(
+                        check_name=f"pi_extension_{extension_file.name}_export",
+                        status="fail",
+                        message=f"Pi extension {extension_file.name} must export a default function",
+                        fix_hint="Add `export default function (pi) { ... }`",
+                    )
+                )
+            elif "pi.on(" not in content:
+                results.append(
+                    ValidationResult(
+                        check_name=f"pi_extension_{extension_file.name}_events",
+                        status="warn",
+                        message=f"Pi extension {extension_file.name} does not register lifecycle/tool events",
+                    )
+                )
+            else:
+                results.append(
+                    ValidationResult(
+                        check_name=f"pi_extension_{extension_file.name}",
+                        status="pass",
+                        message=f"Pi extension '{extension_file.name}' is valid",
+                    )
+                )
+
+        return results
+
     def validate_all(self, output_dir: Path) -> list[ValidationResult]:
         """Run all Pi validations."""
         results: list[ValidationResult] = []
@@ -223,5 +279,6 @@ class PiOutputValidator:
 
         results.extend(self.validate_skills(output_dir))
         results.extend(self.validate_prompts(output_dir))
+        results.extend(self.validate_extensions(output_dir))
 
         return results
