@@ -47,6 +47,7 @@ tests/
 └── fixtures/
     ├── sample-plugins/complete-plugin/  # Full plugin fixture (skills, hooks, MCP, LSP)
     └── test-marketplace/                # Local marketplace for sync E2E tests
+.agents/skills/      # Repo-local agent workflows for ai-config-specific tasks
 ```
 
 ## How to Work Here
@@ -146,7 +147,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 | OpenAI Codex | `npm install -g @openai/codex` | `codex` |
 | OpenCode | `npm install -g opencode-ai` | `opencode` |
 | Cursor CLI | `curl -fsSL https://cursor.com/install \| bash` | `cursor-agent` |
-| Pi | `npm install -g @mariozechner/pi-coding-agent` | `pi` |
+| Pi | `npm install -g @earendil-works/pi-coding-agent` | `pi` |
 
 ## Releases
 
@@ -175,6 +176,10 @@ Publishing is automated via GitHub Actions (`.github/workflows/publish.yml`):
 2. Add trusted publisher: GitHub, `safurrier/ai-config`, workflow `publish.yml`, environment `pypi`
 3. Go to GitHub repo → Settings → Environments → Create `pypi` environment
 
+## Repo-local Skills
+
+Repo-specific agent workflows live in `.agents/skills/`. Use `ai-config-target-refresh` when auditing or updating target-tool compatibility for Claude, Codex, Cursor, OpenCode, Pi, or future AI coding CLIs.
+
 ## Nested Docs
 
 Module-specific docs (auto-discovered by Claude Code):
@@ -184,6 +189,7 @@ Cross-cutting docs in `ai_agent_docs/`:
 - `ai_agent_docs/conversion-pipeline.md` — Converter architecture (Parse → IR → Emit)
 - `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
 - `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
+- `ai_agent_docs/target-compatibility-baseline.md` — Current target-runtime assumptions, version baseline, and validation probes
 
 ## Gotchas
 
