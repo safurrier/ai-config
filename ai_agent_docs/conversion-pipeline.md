@@ -23,7 +23,7 @@ Claude Plugin Directory
 - `PluginIR` — central type containing `PluginIdentity` + typed `components` list
   - Accessor methods: `.skills()`, `.commands()`, `.hooks()`, `.mcp_servers()`, `.agents()`, `.lsp_servers()`
   - Collects `Diagnostic` objects (never raises during parse/emit)
-- `TargetTool` — enum: `claude`, `codex`, `cursor`, `opencode`
+- `TargetTool` — enum: `claude`, `codex`, `cursor`, `opencode`, `pi`
 - `InstallScope` — enum: `user`, `project`, `local`
 - `MappingStatus` — fidelity tracking: `native` > `transform` > `emulate` > `fallback` > `unsupported`
 - `Skill`, `Command`, `Hook`, `McpServer`, `Agent`, `LspServer` — component types
@@ -35,9 +35,10 @@ Duck-typed classes sharing the same shape (no explicit Protocol ABC):
 
 | Emitter | Target | Config Format | Env Var Syntax |
 |---------|--------|---------------|----------------|
-| `CodexEmitter` | `.codex/` | TOML (`mcp-config.toml`) | `${env:VAR}` |
+| `CodexEmitter` | `.agents/skills/` + `.codex/` | TOML (`config.toml` with `[mcp_servers.*]`) + JSON (`hooks.json`) | `${VAR}` |
 | `CursorEmitter` | `.cursor/` | JSON (`mcp.json`, `hooks.json`) | `${env:VAR}` |
 | `OpenCodeEmitter` | `.opencode/` | JSON (`opencode.json`, `opencode.lsp.json`) | `{env:VAR}` |
+| `PiEmitter` | `.pi/` or `.pi/agent/` | Markdown skills/prompts + TypeScript extensions | `${VAR}` |
 
 Factory: `get_emitter(target, scope, commands_as_skills) -> Emitter`
 

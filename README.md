@@ -69,7 +69,7 @@ Interactive wizard walks you through adding marketplaces and plugins. Supports G
 ai-config sync
 ```
 
-Installs/uninstalls plugins to match your config. If you have conversion enabled, it also generates config for Codex, Cursor, and OpenCode.
+Installs/uninstalls plugins to match your config. If you have conversion enabled, it also generates config for Codex, Cursor, OpenCode, and Pi.
 
 If plugins seem stale or out of date:
 
@@ -226,7 +226,7 @@ ai-config converts Claude plugins to work with:
 
 | Tool | Output | Binary |
 |------|--------|--------|
-| Codex (OpenAI) | `.codex/` | `codex` |
+| Codex (OpenAI) | `.agents/skills/` + `.codex/` | `codex` |
 | Cursor | `.cursor/` | `cursor-agent` |
 | OpenCode | `.opencode/` | `opencode` |
 | Pi | `.pi/` | `pi` |

@@ -75,7 +75,7 @@ def main() -> None:
 
     Define plugins, marketplaces, and MCP servers in a YAML config file.
     Run sync to install everything. Also converts Claude Code plugins to
-    other AI tools (Codex, Cursor, OpenCode) via convert.
+    other AI tools (Codex, Cursor, OpenCode, Pi) via convert.
     """
     pass
 

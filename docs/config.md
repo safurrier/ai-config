@@ -30,7 +30,7 @@ targets:
 
 ## Targets
 
-Currently only Claude Code is supported as a source target. Conversion to Codex, Cursor, and OpenCode is handled by the `conversion` config section or the `convert` command.
+Currently only Claude Code is supported as a source target. Conversion to Codex, Cursor, OpenCode, and Pi is handled by the `conversion` config section or the `convert` command.
 
 ```yaml
 targets:
@@ -108,6 +108,7 @@ conversion:
     - codex
     - cursor
     - opencode
+    - pi
   scope: project
   output_dir: ./converted    # optional
   commands_as_skills: false   # optional
@@ -118,7 +119,7 @@ conversion:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable conversion |
-| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode` |
+| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
 | `scope` | string | `"project"` | `"user"` (writes to home dir) or `"project"` (writes to cwd) |
 | `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
 | `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
@@ -173,6 +174,8 @@ targets:
         targets:
           - codex
           - cursor
+          - opencode
+          - pi
         scope: project
         commands_as_skills: false
 ```

@@ -7,23 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-08
+
 ### Added
 
 - Codex hook conversion now emits supported Claude command hooks to `.codex/hooks.json` and enables `features.codex_hooks` in `.codex/config.toml`.
 - Pi hook conversion now emits TypeScript extensions under `.pi/extensions/` or `.pi/agent/extensions/` for supported command hooks.
-- Real-tool validation coverage now checks Codex Agent Skill discovery via `codex debug prompt-input`, Codex MCP loading via isolated `CODEX_HOME`, and Pi extension execution before model/API completion.
+- Real-tool validation coverage now checks Codex Agent Skill discovery via `codex debug prompt-input`, Codex MCP loading via isolated `CODEX_HOME`, Pi skills via RPC `get_commands`, and Pi extension execution before model/API completion.
+- Repo-local `ai-config-target-refresh` skill and compatibility baseline docs capture the target-tool release-note audit workflow for future Codex/Pi/Claude/Cursor/OpenCode changes.
 
 ### Changed
 
 - Codex skill conversion now targets Agent Skills discovery paths (`.agents/skills/` and `$HOME/.agents/skills/`) instead of the stale `.codex/skills/` location.
 - Codex MCP conversion now writes `[mcp_servers.*]` entries to `.codex/config.toml` instead of `.codex/mcp-config.toml`.
+- Codex `.codex/config.toml` and `.codex/hooks.json` writes now merge with existing user/project config instead of clobbering shared files.
 - Docker all-tools E2E now installs Pi from the current `@earendil-works/pi-coding-agent` package.
+- Target compatibility docs now include current Codex and Pi discovery paths, validation probes, and release-note assumptions.
 
 ### Fixed
 
 - `ai-config sync --force-convert` now falls back to local marketplace source paths when Claude's cached plugin `installPath` is stale or missing, so Pi/Codex/OpenCode conversions refresh after cache clears.
 - Sync-driven conversion errors from conversion reports are now surfaced in sync output instead of being silently ignored.
 - `ai-config convert --dry-run --scope user -t pi` now previews Pi user-scope paths under `~/.pi/agent/` instead of project-scope `~/.pi/` paths.
+- Generated Codex config preserves quoted and special TOML key segments such as `[mcp_servers."github.com"]` when merging existing config.
+- Generated Codex and Pi hooks resolve `${CLAUDE_PLUGIN_ROOT}` placeholders to the source plugin path instead of leaking Claude-only variables into target runtimes.
 
 ## [0.4.2] - 2026-03-02
 
@@ -116,5 +123,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for GitHub and local marketplaces
 - User and project scope plugin installation
 
-[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/safurrier/ai-config/compare/v0.4.2...v0.5.0
+[0.4.2]: https://github.com/safurrier/ai-config/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/safurrier/ai-config/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/safurrier/ai-config/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/safurrier/ai-config/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/safurrier/ai-config/releases/tag/v0.1.0

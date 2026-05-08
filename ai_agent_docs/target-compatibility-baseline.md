@@ -5,6 +5,17 @@ This file records the target-runtime assumptions that ai-config's converter supp
 Last checked: 2026-05-08
 Context: PR #12 cross-tool capability refresh
 
+Observed local versions during the Codex/Pi release-note delta pass:
+
+```text
+codex --version  -> codex-cli 0.128.0
+pi --version     -> 0.74.0
+npm latest Codex -> @openai/codex 0.129.0
+npm latest Pi    -> @earendil-works/pi-coding-agent 0.74.0
+```
+
+Codex plugin/package distribution is tracked as a follow-up in [issue #13](https://github.com/safurrier/ai-config/issues/13); it is not a blocker for the current loose-file Codex target.
+
 ## Summary
 
 | Target | Observed support | ai-config output | Runtime validation |
@@ -51,6 +62,7 @@ claude mcp list 2>&1
 - Supported command hooks can be emitted to `.codex/hooks.json` with `[features].codex_hooks = true`.
 - Shared Codex files must be merged, not clobbered.
 - TOML keys that are not valid bare keys must remain quoted, e.g. `[mcp_servers."github.com"]`.
+- Codex release notes now emphasize plugin workflows, plugin-bundled hooks, marketplace install/share/cache, and external-agent config import. ai-config's current `codex` target intentionally remains a loose-file target; a first-class Codex plugin/package target is deferred to [issue #13](https://github.com/safurrier/ai-config/issues/13).
 
 Validation patterns:
 

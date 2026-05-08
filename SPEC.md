@@ -1,4 +1,4 @@
-# SPEC.md — Claude Code Plugin Conversion + Validation for Claude Code, Codex, Cursor, OpenCode
+# SPEC.md — Claude Code Plugin Conversion + Validation for Claude Code, Codex, Cursor, OpenCode, Pi
 
 ## 1) Purpose
 
@@ -10,6 +10,7 @@ Create a tool that:
    - OpenAI Codex (Codex CLI / IDE extension surfaces)
    - Cursor
    - OpenCode
+   - Pi
 4. Provides a post-conversion validator that can verify (via CLI where available, otherwise via TUI/UX steps) that each exported component is installed and functional.
 
 This spec is intentionally explicit about:
@@ -137,6 +138,7 @@ class TargetTool(str, Enum):
     CODEX = "codex"
     CURSOR = "cursor"
     OPENCODE = "opencode"
+    PI = "pi"
 
 
 class InstallScope(str, Enum):
