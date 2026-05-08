@@ -851,7 +851,7 @@
 <tr>
 <td><code>codex</code></td>
 <td>OpenAI Codex</td>
-<td><code>.codex/</code> dir with TOML config + skills</td>
+<td><code>.agents/skills/</code> plus <code>.codex/</code> config, prompts, and hooks</td>
 </tr>
 <tr>
 <td><code>cursor</code></td>
@@ -866,7 +866,7 @@
 <tr>
 <td><code>pi</code></td>
 <td>Pi</td>
-<td><code>.pi/</code> dir with skills + prompt templates</td>
+<td><code>.pi/</code> dir with skills, prompt templates, and extensions</td>
 </tr>
 </tbody>
 </table>
@@ -932,7 +932,7 @@
 <td><code>scope</code></td>
 <td>string</td>
 <td><code>"project"</code></td>
-<td><code>"user"</code> (home dir) or <code>"project"</code> (cwd)</td>
+<td><code>"user"</code> (home dir) or <code>"project"</code> (cwd). Codex Agent Skills are discovered from project <code>.agents/skills</code>, but Codex MCP/hooks may need user-scope output or manual merge into <code>CODEX_HOME</code> depending on runtime trust/config loading.</td>
 </tr>
 <tr>
 <td><code>output_dir</code></td>
@@ -963,10 +963,10 @@
 <tbody>
 <tr>
 <td>Skills</td>
-<td><code>.codex/skills/*.md</code></td>
-<td><code>.cursor/rules/*.mdc</code></td>
-<td><code>.opencode/skills/*.md</code></td>
-<td><code>.pi/skills/*/SKILL.md</code></td>
+<td><code>.agents/skills/*/SKILL.md</code></td>
+<td><code>.cursor/skills/*/SKILL.md</code></td>
+<td><code>.opencode/skills/*/SKILL.md</code></td>
+<td><code>.pi/skills/*/SKILL.md</code> or <code>.pi/agent/skills/*/SKILL.md</code></td>
 </tr>
 <tr>
 <td>Commands</td>
@@ -977,14 +977,14 @@
 </tr>
 <tr>
 <td>Hooks</td>
-<td>Unsupported</td>
+<td><code>.codex/hooks.json</code> + <code>features.codex_hooks</code> for supported command hooks</td>
 <td>Hooks config</td>
 <td>Unsupported</td>
-<td>Unsupported</td>
+<td>TypeScript extension emulation</td>
 </tr>
 <tr>
 <td>MCP servers</td>
-<td><code>.codex/config.toml</code></td>
+<td><code>.codex/config.toml</code> <code>[mcp_servers.*]</code></td>
 <td><code>.cursor/mcp.json</code></td>
 <td><code>opencode.json</code></td>
 <td>Unsupported</td>
@@ -1083,7 +1083,7 @@
 <h3 id="convert-a-local-plugin-to-codex">Convert a local plugin to Codex<a class="headerlink" href="#convert-a-local-plugin-to-codex" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--target<span class="w"> </span>codex<span class="w"> </span>--scope<span class="w"> </span>project
 </code></pre></div>
-<p>Creates <code>.codex/</code> in the current directory with skills and MCP config.</p>
+<p>Creates <code>.agents/skills/</code> for Codex Agent Skills and <code>.codex/config.toml</code> / <code>.codex/hooks.json</code> when MCP servers or supported hooks are present. The project-scope <code>.codex/</code> files are validated fragments; for active Codex MCP/hook behavior, merge them into the active <code>CODEX_HOME</code> or run with an explicit <code>CODEX_HOME</code> that points at the generated config.</p>
 <h3 id="convert-to-all-targets-with-a-report">Convert to all targets with a report<a class="headerlink" href="#convert-to-all-targets-with-a-report" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--report<span class="w"> </span>./report.json
 </code></pre></div>

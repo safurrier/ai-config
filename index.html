@@ -733,10 +733,10 @@
 <p>You define your setup once. <code>ai-config sync</code> installs your Claude plugins and generates equivalent config for every other tool:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config sync
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  → Claude Code: plugins installed
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  → Codex:       ~/.codex/skills/, ~/.codex/mcp-config.toml
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  → Cursor:      ~/.cursor/rules/, ~/.cursor/mcp.json
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  → Codex:       ~/.agents/skills/, ~/.codex/config.toml, ~/.codex/hooks.json
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  → Cursor:      ~/.cursor/skills/, ~/.cursor/mcp.json, ~/.cursor/hooks.json
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  → OpenCode:    ~/.opencode/skills/, ~/opencode.json
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/, ~/.pi/agent/extensions/
 </code></pre></div>
 <p>Check your <code>.ai-config/config.yaml</code> into your dotfiles. Run <code>ai-config sync</code> on any machine. Want to try a new tool? Add it to <code>conversion.targets</code> and re-sync — your skills are already there.</p>
 <h2 id="whats-next">What's Next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>

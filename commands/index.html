@@ -1227,10 +1227,10 @@
 </table>
 <p>Supported targets:</p>
 <ul>
-<li><strong>codex</strong> — OpenAI Codex (<code>.codex/</code> dir with TOML config + skills)</li>
-<li><strong>cursor</strong> — Cursor (<code>.cursor/</code> dir with rules + MCP config)</li>
+<li><strong>codex</strong> — OpenAI Codex (<code>.agents/skills/</code> plus <code>.codex/config.toml</code>, prompts, and hooks)</li>
+<li><strong>cursor</strong> — Cursor (<code>.cursor/</code> dir with skills, commands, hooks, and MCP config)</li>
 <li><strong>opencode</strong> — OpenCode (<code>opencode.json</code> + <code>.opencode/</code> skills dir)</li>
-<li><strong>pi</strong> — Pi (<code>.pi/</code> dir with skills + prompt templates)</li>
+<li><strong>pi</strong> — Pi (<code>.pi/</code> dir with skills, prompt templates, and extensions)</li>
 </ul>
 <p>Multiple targets can be specified: <code>-t codex -t cursor</code></p>
 <p>See <a href="../conversion/">Conversion</a> for a full guide.</p>
