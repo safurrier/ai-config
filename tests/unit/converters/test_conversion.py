@@ -1,9 +1,15 @@
 """Tests for plugin conversion functionality."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from ai_config.converters.claude_parser import parse_claude_plugin
 from ai_config.converters.convert import convert_plugin, preview_conversion
@@ -412,6 +418,25 @@ class TestCodexEmitter:
         assert "[profiles.work]" in content
         assert 'model = "gpt-4o"' in content
         assert "[mcp_servers.dev-tools-database]" in content
+
+    def test_codex_config_merge_preserves_quoted_table_keys(self, ir, tmp_path: Path) -> None:
+        """Merging Codex config should quote table keys that are not bare TOML keys."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            '[mcp_servers."github.com"]\ncommand = "echo"\nargs = ["old"]\n'
+        )
+
+        emitter = CodexEmitter(scope=InstallScope.USER)
+        result = emitter.emit(ir)
+        result.write_to(tmp_path)
+
+        content = (codex_dir / "config.toml").read_text()
+        assert '[mcp_servers."github.com"]' in content
+        parsed = tomllib.loads(content)
+        assert "github.com" in parsed["mcp_servers"]
+        assert "github" not in parsed["mcp_servers"]
+        assert "dev-tools-database" in parsed["mcp_servers"]
 
     def test_codex_hooks_merge_idempotently(self, ir, tmp_path: Path) -> None:
         """Writing Codex hooks should preserve existing hooks and avoid duplicates."""

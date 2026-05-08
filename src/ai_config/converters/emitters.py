@@ -321,6 +321,22 @@ def _merge_dicts(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str
     return merged
 
 
+_TOML_BARE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(key: Any) -> str:
+    """Serialize a TOML key, quoting keys that are not valid bare keys."""
+    key_text = str(key)
+    if _TOML_BARE_KEY_PATTERN.fullmatch(key_text):
+        return key_text
+    return json.dumps(key_text)
+
+
+def _toml_table_path(parts: tuple[str, ...]) -> str:
+    """Serialize a dotted TOML table path without splitting quoted key names."""
+    return ".".join(_toml_key(part) for part in parts)
+
+
 def _toml_value(value: Any) -> str:
     """Serialize a small TOML value subset used by Codex config."""
     if isinstance(value, bool):
@@ -330,9 +346,7 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     if isinstance(value, dict):
-        return (
-            "{" + ", ".join(f"{_toml_value(k)} = {_toml_value(v)}" for k, v in value.items()) + "}"
-        )
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + "}"
     return json.dumps(str(value))
 
 
@@ -344,26 +358,26 @@ def _dump_toml(data: dict[str, Any]) -> str:
         if lines and lines[-1] != "":
             lines.append("")
 
-    def emit_table(table_name: str, table_value: dict[str, Any]) -> None:
+    def emit_table(table_path: tuple[str, ...], table_value: dict[str, Any]) -> None:
         scalars = {k: v for k, v in table_value.items() if not isinstance(v, dict)}
         nested = {k: v for k, v in table_value.items() if isinstance(v, dict)}
 
         if scalars:
             add_blank()
-            lines.append(f"[{table_name}]")
+            lines.append(f"[{_toml_table_path(table_path)}]")
             for key, value in scalars.items():
-                lines.append(f"{key} = {_toml_value(value)}")
+                lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
 
         for nested_name, nested_value in nested.items():
-            emit_table(f"{table_name}.{nested_name}", nested_value)
+            emit_table((*table_path, str(nested_name)), nested_value)
 
     top_level_scalars = {k: v for k, v in data.items() if not isinstance(v, dict)}
     for key, value in top_level_scalars.items():
-        lines.append(f"{key} = {_toml_value(value)}")
+        lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
 
     for table_name, table_value in data.items():
         if isinstance(table_value, dict):
-            emit_table(table_name, table_value)
+            emit_table((str(table_name),), table_value)
 
     return "\n".join(lines).rstrip() + "\n"
 
