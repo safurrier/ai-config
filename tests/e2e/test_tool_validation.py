@@ -135,6 +135,15 @@ class TestClaudeToolValidation:
             "mcp" in output.lower() or "server" in output.lower() or "configured" in output.lower()
         )
 
+    def test_claude_validates_fixture_plugin(self, claude_container: Container) -> None:
+        """Real Claude should still validate the source plugin format."""
+        exit_code, output = exec_in_container(
+            claude_container,
+            "claude plugin validate tests/fixtures/test-marketplace/test-plugin",
+        )
+        assert exit_code == 0, f"Claude plugin validation failed: {output}"
+        assert "validation passed" in output.lower() or "valid" in output.lower()
+
 
 @pytest.mark.slow
 class TestCodexToolValidation:
@@ -268,6 +277,156 @@ class TestPiToolValidation:
             pytest.skip(f"Pi CLI not available: {output}")
         assert exit_code == 0
 
+    def test_pi_project_scope_skills_register_as_rpc_commands(
+        self, all_tools_container: Container
+    ) -> None:
+        """Generated project-scope Pi skills should appear in RPC get_commands."""
+        exit_code, _ = exec_in_container(all_tools_container, "pi --version")
+        if exit_code != 0:
+            pytest.skip("Pi CLI not available")
+
+        script = r"""
+rm -rf /tmp/pi-rpc-project /tmp/pi-rpc-agent
+uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/pi-rpc-project
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import time
+
+proc = subprocess.Popen(
+    [
+        "pi",
+        "--offline",
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--no-extensions",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-4o-mini",
+        "--api-key",
+        "fake",
+    ],
+    cwd="/tmp/pi-rpc-project",
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    env={**os.environ, "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": "/tmp/pi-rpc-agent"},
+)
+assert proc.stdin is not None
+assert proc.stdout is not None
+proc.stdin.write('{"id":"skills","type":"get_commands"}\n')
+proc.stdin.flush()
+
+response = None
+deadline = time.time() + 15
+while time.time() < deadline:
+    line = proc.stdout.readline()
+    if not line:
+        break
+    event = json.loads(line)
+    if event.get("type") == "response" and event.get("command") == "get_commands":
+        response = event
+        break
+
+proc.kill()
+if response is None:
+    raise AssertionError("Pi RPC get_commands did not respond")
+commands = response["data"]["commands"]
+skill = next(
+    (command for command in commands if command.get("name") == "skill:dev-tools-code-review"),
+    None,
+)
+if skill is None:
+    raise AssertionError(f"converted Pi skill command missing from get_commands: {commands}")
+path = skill.get("sourceInfo", {}).get("path", "")
+if "/tmp/pi-rpc-project/.pi/skills/dev-tools-code-review/SKILL.md" not in path:
+    raise AssertionError(f"unexpected Pi project skill path: {path}")
+PY
+"""
+        exit_code, output = exec_in_container(all_tools_container, script)
+        assert exit_code == 0, f"Pi project skill RPC discovery failed: {output}"
+
+    def test_pi_user_scope_skills_register_as_rpc_commands(
+        self, all_tools_container: Container
+    ) -> None:
+        """Generated user-scope Pi skills should appear in RPC get_commands."""
+        exit_code, _ = exec_in_container(all_tools_container, "pi --version")
+        if exit_code != 0:
+            pytest.skip("Pi CLI not available")
+
+        script = r"""
+rm -rf /tmp/pi-rpc-user
+uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi --scope user -o /tmp/pi-rpc-user
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import time
+
+proc = subprocess.Popen(
+    [
+        "pi",
+        "--offline",
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--no-extensions",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-4o-mini",
+        "--api-key",
+        "fake",
+    ],
+    cwd="/tmp",
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    env={
+        **os.environ,
+        "PI_OFFLINE": "1",
+        "PI_CODING_AGENT_DIR": "/tmp/pi-rpc-user/.pi/agent",
+    },
+)
+assert proc.stdin is not None
+assert proc.stdout is not None
+proc.stdin.write('{"id":"skills","type":"get_commands"}\n')
+proc.stdin.flush()
+
+response = None
+deadline = time.time() + 15
+while time.time() < deadline:
+    line = proc.stdout.readline()
+    if not line:
+        break
+    event = json.loads(line)
+    if event.get("type") == "response" and event.get("command") == "get_commands":
+        response = event
+        break
+
+proc.kill()
+if response is None:
+    raise AssertionError("Pi RPC get_commands did not respond")
+commands = response["data"]["commands"]
+skill = next(
+    (command for command in commands if command.get("name") == "skill:dev-tools-code-review"),
+    None,
+)
+if skill is None:
+    raise AssertionError(f"converted Pi user skill command missing from get_commands: {commands}")
+path = skill.get("sourceInfo", {}).get("path", "")
+if "/tmp/pi-rpc-user/.pi/agent/skills/dev-tools-code-review/SKILL.md" not in path:
+    raise AssertionError(f"unexpected Pi user skill path: {path}")
+PY
+"""
+        exit_code, output = exec_in_container(all_tools_container, script)
+        assert exit_code == 0, f"Pi user skill RPC discovery failed: {output}"
+
     def test_pi_generated_extension_executes_session_start_hook(
         self, all_tools_container: Container
     ) -> None:
@@ -276,7 +435,7 @@ class TestPiToolValidation:
         if exit_code != 0:
             pytest.skip("Pi CLI not available")
 
-        setup = r'''
+        setup = r"""
 rm -rf /tmp/pi-hook-e2e && mkdir -p /tmp/pi-hook-e2e/plugin/.claude-plugin /tmp/pi-hook-e2e/plugin/hooks
 cat > /tmp/pi-hook-e2e/plugin/.claude-plugin/plugin.json <<'EOF'
 {"name":"marker-plugin","hooks":"hooks/hooks.json"}
@@ -287,7 +446,7 @@ EOF
 uv run ai-config convert /tmp/pi-hook-e2e/plugin -t pi -o /tmp/pi-hook-e2e/out
 PI_OFFLINE=1 pi --offline --extension /tmp/pi-hook-e2e/out/.pi/extensions/marker-plugin-hooks.ts --provider openai --model gpt-4o-mini --api-key fake -p test >/tmp/pi-hook-e2e/pi.out 2>/tmp/pi-hook-e2e/pi.err || true
 test -f /tmp/pi-hook-e2e/marker
-'''
+"""
         exit_code, output = exec_in_container(all_tools_container, setup)
         assert exit_code == 0, f"Pi generated extension did not execute: {output}"
 
@@ -790,7 +949,11 @@ class TestInteractiveClaudeSkillDiscovery:
             # Wait for skills output
             time.sleep(3)
             output = capture_tmux_pane(claude_container, session_name)
-            if "choose the text style" in output.lower() or "/theme" in output.lower() or "select login method" in output.lower():
+            if (
+                "choose the text style" in output.lower()
+                or "/theme" in output.lower()
+                or "select login method" in output.lower()
+            ):
                 dismiss_startup_prompts()
                 wait_for_tmux_output(claude_container, session_name, ">", timeout=15)
                 exec_in_container(
@@ -864,7 +1027,9 @@ class TestInteractiveCodexSkillDiscovery:
             time.sleep(3)
             output = capture_tmux_pane(all_tools_container, session_name)
 
-            assert "dev-tools-code-review" in output, f"Expected Codex skill discovery, got: {output}"
+            assert "dev-tools-code-review" in output, (
+                f"Expected Codex skill discovery, got: {output}"
+            )
 
         finally:
             cleanup_tmux_session(all_tools_container, session_name)
