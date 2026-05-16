@@ -507,14 +507,14 @@ class CodexOutputValidator:
         results: list[ValidationResult] = []
 
         codex_dir = output_dir / ".codex"
-        agents_dir = output_dir / ".agents"
-        if not codex_dir.exists() and not agents_dir.exists():
+        legacy_agents_skills_dir = output_dir / ".agents" / "skills"
+        if not codex_dir.exists() and not legacy_agents_skills_dir.exists():
             results.append(
                 ValidationResult(
                     check_name="codex_output_exists",
                     status="warn",
                     message="No Codex output found",
-                    details=f"Expected .agents/ and/or .codex/ in {output_dir}",
+                    details=f"Expected .codex/ in {output_dir}; .agents/skills is recognized only as legacy Codex output",
                 )
             )
             return results

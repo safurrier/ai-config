@@ -305,7 +305,7 @@ Statuses:
 
 | Component | Claude Code | Codex | Cursor | OpenCode | Pi |
 |-----------|-------------|-------|--------|----------|----|
-| Skill | native (Claude plugin skills) | native (Agent Skills from `.agents/skills`) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
+| Skill | native (Claude plugin skills) | native (Agent Skills from `.codex/skills`) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
 | Command | native (plugin commands exist, though skills are recommended) | fallback/transform (emit deprecated custom prompts optionally, or skills with `--commands-as-skills`) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). | transform (Pi prompt templates) |
 | Hook | native (Claude hooks in plugin system) | transform (supported command hooks emit to `.codex/hooks.json` with `features.codex_hooks`) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) | emulate (generated TypeScript extension) |
 | MCP server | native (Claude plugin MCP support) | transform (Codex uses `[mcp_servers.*]` in `.codex/config.toml`) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) | unsupported |
@@ -557,7 +557,7 @@ Some validations are inherently TUI-driven (`/` menus, slash commands). tmux can
 
 ## 12) Explicit gaps / TODOs (must be resolved by additional primary research before claiming full automation)
 
-1. **Codex skill discovery is documented**: Codex reads skills from `.agents/skills` in `$HOME` and within repositories (including repo-root and parent-folder scanning), plus `/etc/codex/skills` for admin-installed skills. The remaining "gap" is choosing which of these locations this converter targets by default for each scope (user/project/admin).
+1. **Codex skill discovery is documented**: Codex reads skills from `.codex/skills` in `$HOME` and within repositories. This converter targets `.codex/skills` by default because the generic `.agents/skills` directory is also scanned by other tools such as Pi and can cause duplicate cross-tool skill discovery.
 
 2. **Cursor skills path/version behavior is version-dependent**: Cursor indicates Agent Skills are compatible with Claude Skills format, but rollout/activation can vary (some users report it only enables when `~/.claude/skills` already exists). Do not hardcode user-global paths without primary Cursor docs confirming them; treat as conditional and include a "detection + instructions" step.
 

@@ -22,7 +22,7 @@ from ai_config.types import (
     TargetConfig,
 )
 
-_CONVERSION_CACHE_VERSION = 1
+_CONVERSION_CACHE_VERSION = 2
 
 
 def _conversion_cache_path() -> Path:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,6 +75,7 @@ class EmitResult:
     files: list[EmittedFile] = field(default_factory=list)
     mappings: list[ComponentMapping] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    cleanup_paths: list[Path] = field(default_factory=list)
 
     def add_file(self, path: Path | str, content: str, executable: bool = False) -> None:
         """Add a file to emit."""
@@ -84,6 +86,18 @@ class EmitResult:
         self.files.append(
             EmittedFile(path=Path(path), content=content, binary=True, executable=executable)
         )
+
+    def add_cleanup_path(self, path: Path | str) -> None:
+        """Remove a legacy emitted path before writing new output."""
+        cleanup_path = Path(path)
+        if cleanup_path.is_absolute() or ".." in cleanup_path.parts:
+            self.add_diagnostic(
+                Severity.WARN,
+                f"Ignoring unsafe cleanup path: {cleanup_path}",
+            )
+            return
+        if cleanup_path not in self.cleanup_paths:
+            self.cleanup_paths.append(cleanup_path)
 
     def add_mapping(
         self,
@@ -131,6 +145,14 @@ class EmitResult:
         Returns list of file paths that were/would be written.
         """
         written = []
+        if not dry_run:
+            for cleanup_path in self.cleanup_paths:
+                full_cleanup_path = output_dir / cleanup_path
+                if full_cleanup_path.is_dir() and not full_cleanup_path.is_symlink():
+                    shutil.rmtree(full_cleanup_path)
+                elif full_cleanup_path.exists() or full_cleanup_path.is_symlink():
+                    full_cleanup_path.unlink()
+
         for f in self.files:
             full_path = output_dir / f.path
             if not dry_run:
@@ -480,6 +502,7 @@ class CodexEmitter:
         # frontmatter name must match the output directory.
         content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
 
+        result.add_cleanup_path(Path(".agents") / "skills" / dir_name)
         result.add_file(skill_path, content)
 
         # Copy other skill files
@@ -507,6 +530,7 @@ class CodexEmitter:
         By default, commands are emitted as prompts (deprecated but 1:1 with Claude commands).
         With commands_as_skills=True, they're emitted as skills (auto-discoverable).
         """
+        result.add_cleanup_path(Path(".agents") / "skills" / f"{plugin_id}-cmd-{cmd.name}")
         if self.commands_as_skills:
             self._emit_command_as_skill(result, cmd, plugin_id)
         else:

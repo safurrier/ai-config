@@ -1,5 +1,6 @@
 """Tests for ai_config.operations module."""
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +10,9 @@ from ai_config.adapters.claude import CommandResult, InstalledMarketplace, Insta
 from ai_config.converters.ir import Diagnostic, PluginIdentity, Severity, TargetTool
 from ai_config.converters.report import ConversionReport
 from ai_config.operations import (
+    _CONVERSION_CACHE_VERSION,
     _conversion_signature,
+    _load_conversion_cache,
     get_status,
     sync_config,
     sync_target,
@@ -66,6 +69,28 @@ def mock_installed_marketplaces() -> list[InstalledMarketplace]:
             install_location="/path/to/marketplace",
         ),
     ]
+
+
+class TestConversionCache:
+    """Tests for conversion cache handling."""
+
+    def test_old_conversion_cache_version_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Old cache versions are invalidated after output schema migrations."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        cache_path = tmp_path / "home" / ".ai-config" / "cache" / "conversion-hashes.json"
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": _CONVERSION_CACHE_VERSION - 1,
+                    "entries": {"/plugin": {"signature": {"hash": "abc123"}}},
+                }
+            )
+        )
+
+        assert _load_conversion_cache() == {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
 
 
 class TestSyncTarget:

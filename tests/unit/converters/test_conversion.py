@@ -205,6 +205,17 @@ class TestCodexEmitter:
 
     def test_emit_skills(self, ir, tmp_path: Path) -> None:
         """Test emitting skills to Codex format."""
+        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-code-review"
+        legacy_skill_dir.mkdir(parents=True)
+        (legacy_skill_dir / "SKILL.md").write_text(
+            "---\nname: code-review\ndescription: stale\n---\n\nStale"
+        )
+        unrelated_skill_dir = tmp_path / ".agents" / "skills" / "user-managed-skill"
+        unrelated_skill_dir.mkdir(parents=True)
+        (unrelated_skill_dir / "SKILL.md").write_text(
+            "---\nname: user-managed-skill\ndescription: keep\n---\n\nKeep"
+        )
+
         emitter = CodexEmitter()
         result = emitter.emit(ir)
 
@@ -228,6 +239,8 @@ class TestCodexEmitter:
         assert content.startswith("---")
         assert "name: dev-tools-code-review" in content
         assert "description:" in content
+        assert not legacy_skill_dir.exists()
+        assert unrelated_skill_dir.exists()
 
         # Claude-specific fields should be stripped
         assert "allowed-tools:" not in content
@@ -303,6 +316,12 @@ class TestCodexEmitter:
 
     def test_emit_commands_as_skills_opt_in(self, ir, tmp_path: Path) -> None:
         """Test that commands emit as skills with --commands-as-skills flag."""
+        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
+        legacy_skill_dir.mkdir(parents=True)
+        (legacy_skill_dir / "SKILL.md").write_text(
+            "---\nname: dev-tools-cmd-commit\ndescription: stale\n---\n\nStale"
+        )
+
         emitter = CodexEmitter(commands_as_skills=True)
         result = emitter.emit(ir)
         result.write_to(tmp_path)
@@ -326,6 +345,7 @@ class TestCodexEmitter:
         content = skill_file.read_text()
         assert "name:" in content  # Should have frontmatter
         assert "Create a git commit" in content  # Should have command content
+        assert not legacy_skill_dir.exists()
 
     def test_emit_hooks_transform(self, ir, tmp_path: Path) -> None:
         """Test that supported command hooks are converted to Codex hooks."""
