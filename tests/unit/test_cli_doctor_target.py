@@ -23,8 +23,8 @@ def runner() -> CliRunner:
 @pytest.fixture
 def codex_output_dir(tmp_path: Path) -> Path:
     """Create a valid Codex output directory."""
-    agents_dir = tmp_path / ".agents"
-    skills_dir = agents_dir / "skills" / "my-skill"
+    codex_dir = tmp_path / ".codex"
+    skills_dir = codex_dir / "skills" / "my-skill"
     skills_dir.mkdir(parents=True)
 
     skill_md = skills_dir / "SKILL.md"
@@ -211,7 +211,7 @@ class TestDoctorAllTargets:
     ) -> None:
         """Doctor validates all targets when --target all is specified."""
         # Create minimal valid output for all targets
-        for tool_dir in [".agents", ".cursor", ".opencode"]:
+        for tool_dir in [".codex", ".cursor", ".opencode"]:
             skills_dir = tmp_path / tool_dir / "skills" / "my-skill"
             skills_dir.mkdir(parents=True)
             skill_md = skills_dir / "SKILL.md"

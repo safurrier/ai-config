@@ -569,7 +569,7 @@ class CodexEmitter:
         """
         # Emit as a skill directory with SKILL.md
         skill_name = f"{plugin_id}-cmd-{cmd.name}"
-        skill_dir = Path(".agents") / "skills" / skill_name
+        skill_dir = Path(".codex") / "skills" / skill_name
         skill_path = skill_dir / "SKILL.md"
 
         # Build SKILL.md with frontmatter

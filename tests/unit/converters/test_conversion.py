@@ -318,7 +318,7 @@ class TestCodexEmitter:
         assert any("skill" in d.message.lower() for d in cmd_diags)
 
         # Verify skill file was created (not deprecated prompts)
-        skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
+        skill_dir = tmp_path / ".codex" / "skills" / "dev-tools-cmd-commit"
         assert skill_dir.exists(), "Command should be emitted as skill directory"
         skill_file = skill_dir / "SKILL.md"
         assert skill_file.exists(), "SKILL.md should exist in skill directory"
