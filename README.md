@@ -4,16 +4,16 @@ Declarative plugin manager for Claude Code — with cross-tool conversion to Cod
 
 ## Why this exists
 
-You've spent time building up your AI coding setup — custom skills, MCP servers, hooks, workflows. Then you want to try Codex or Pi, and you're starting from scratch. Or you get a new machine and have to remember what you installed.
+You've spent time building up your AI coding setup: custom skills, MCP servers, hooks, workflows. Then you want to try Codex or Pi, and you're starting from scratch. Or you get a new machine and have to remember what you installed.
 
-ai-config solves both problems. You define your setup in one YAML file, and it:
+ai-config solves both problems. You define your setup in one YAML file, then use it to:
 
-1. **Installs your plugins** across machines reproducibly (`ai-config sync`)
-2. **Converts your setup** to work with other tools automatically — same skills, same config, no manual porting
+1. **Install your Claude Code plugins reproducibly** across machines with `ai-config sync`.
+2. **Convert those plugins** for other tools — same skills, same config, less manual porting.
 
-No more vendor lock-in because your customizations are trapped in one tool's config directory. No more juggling dotfiles across `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, and `.pi/`. Write it once, sync everywhere.
+No more vendor lock-in because your customizations are trapped in one tool's config directory. No more juggling dotfiles across `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, and `.pi/`.
 
-Or more simply, run `ai-config init` and it walks you through everything.
+Or more simply: run `ai-config init` and it walks you through the config.
 
 ## What this isn't
 
@@ -28,7 +28,7 @@ This README does not have:
 
 It's a config file and some commands. That's it.
 
-## Installation
+## Install
 
 ```bash
 pip install ai-config-cli
@@ -36,68 +36,55 @@ pip install ai-config-cli
 uv tool install ai-config-cli
 ```
 
-This installs `ai-config` globally. Run `ai-config --help` to verify.
+This installs the `ai-config` command. Check that it resolves before changing any tool config:
 
-### From source (latest)
+```bash
+ai-config --help
+```
+
+From source, use the repo URL instead:
 
 ```bash
 uv tool install git+https://github.com/safurrier/ai-config
 ```
 
-### For development
+## Quick start: preview before you sync
 
-```bash
-git clone https://github.com/safurrier/ai-config.git
-cd ai-config
-just setup    # Install dependencies
-just check    # Run lint, type check, tests
-```
-
-## Quick Start
-
-**1. Create your config**
+**1. Create a config**
 
 ```bash
 ai-config init
 ```
 
-Interactive wizard walks you through adding marketplaces and plugins. Supports GitHub repos and local paths (including env vars like `$DOTS_REPO/plugins` for portability across machines). Creates `.ai-config/config.yaml`.
+The wizard adds marketplaces and plugins, then writes `.ai-config/config.yaml` unless you pass `-o`. If the wizard offers to run sync immediately, say no when you want to inspect the file first.
 
-**2. Sync to install plugins**
-
-```bash
-ai-config sync
-```
-
-Installs/uninstalls plugins to match your config. If you have conversion enabled, it also generates config for Codex, Cursor, OpenCode, and Pi.
-
-If plugins seem stale or out of date:
+**2. Preview the changes**
 
 ```bash
-ai-config sync --fresh
+ai-config sync --dry-run
 ```
 
-**3. Iterate with watch (plugin development)**
+This is the safe checkpoint. It shows what would be installed, removed, or converted without writing plugin output.
+
+**3. Apply the sync**
 
 ```bash
-ai-config watch
+ai-config sync --verify
 ```
 
-Auto-syncs when you edit config or plugin files. Press Ctrl+C to stop.
+This makes installed plugins match your config and verifies the result. If your config enables conversion, sync also writes target-tool output for Codex, Cursor, OpenCode, and Pi according to your conversion scope.
 
-**Note:** Claude Code loads plugins at session start. After changes sync, restart Claude Code to apply them. Use `claude --resume` to continue your previous session.
-
-**4. Troubleshoot with doctor**
+**4. Check for problems**
 
 ```bash
 ai-config doctor
 ```
 
-Validates marketplaces, plugins, skills, hooks, and MCP servers. Shows fix hints for any issues.
+Claude Code loads plugins at session start. After sync changes plugins, restart Claude Code to apply them. Use `claude --resume` if you want to continue the previous session.
 
-## Example: one config, five tools
+## What sync does
 
-Say you have a plugin marketplace with your coding skills and MCP servers. Here's the full config:
+A config can install Claude Code plugins and convert them for other tools:
 
 ```yaml
 version: 1
@@ -111,155 +98,93 @@ targets:
       plugins:
         - id: code-review@my-plugins
           scope: user
-        - id: test-writer@my-plugins
-          scope: user
       conversion:
         enabled: true
         targets: [codex, cursor, opencode, pi]
         scope: user
 ```
 
-Run `ai-config sync` and you get:
+With conversion enabled, `ai-config sync` can write outputs such as:
 
-- **Claude Code**: plugins installed via `claude plugin install`
-- **Codex**: Agent Skills in `~/.codex/skills/`, MCP in `~/.codex/config.toml`, supported hooks in `~/.codex/hooks.json`
-- **Cursor**: skills in `~/.cursor/skills/`, MCP in `~/.cursor/mcp.json`, hooks in `~/.cursor/hooks.json`
-- **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
-- **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`, hook extensions in `~/.pi/agent/extensions/`
+- **Claude Code**: plugins installed through Claude Code's plugin system
+- **Codex**: skills, MCP config, prompts, and supported hooks under `.codex/` or `~/.codex/`
+- **Cursor**: skills, commands, hooks, and MCP config under `.cursor/` or `~/.cursor/`
+- **OpenCode**: skills plus `opencode.json` / `opencode.lsp.json`
+- **Pi**: skills, prompt templates, and hook extensions under `.pi/` or `~/.pi/`
 
-Same skills, same setup, every tool. Check this config into your dotfiles and run `ai-config sync` on any machine.
+The exact paths depend on conversion `scope` and `output_dir`. See [Configuration](docs/config.md) and [Conversion](docs/conversion.md) for the full rules instead of treating this README as the reference manual.
 
-Want to try Pi for the first time? Just add `pi` to the targets list and re-sync. Your skills are already there.
+## Config lookup
 
-## What it does
+By default, commands look for config in this order:
 
-**Declarative config** - Define your plugins in `.ai-config/config.yaml`:
+1. `.ai-config/config.yaml`
+2. `.ai-config/config.yml`
+3. `~/.ai-config/config.yaml`
+4. `~/.ai-config/config.yml`
 
-```yaml
-version: 1
-targets:
-  - type: claude
-    config:
-      marketplaces:
-        my-marketplace:
-          source: github
-          repo: owner/repo
-        my-local-plugins:
-          source: local
-          path: $DOTS_REPO/plugins    # env vars preserved for portability
-      plugins:
-        - id: my-plugin@my-marketplace
-          scope: user
-          enabled: true
-      conversion:
-        enabled: true
-        targets: [codex, cursor, opencode, pi]
-        scope: user
-```
+Project-local config wins over global config. Pass `-c /path/to/config.yaml` to use a specific file.
 
-**Interactive setup** - Don't want to write YAML? Run the wizard:
+Relative local marketplace paths and conversion output paths are resolved from the config's project root. Environment variables and `~` are expanded at load time, so paths like `$DOTS_REPO/plugins` can stay portable in dotfiles.
 
-```bash
-ai-config init
-```
+## Common workflows
 
-Walks you through adding marketplaces and plugins with arrow-key navigation. Escape goes back a step, Ctrl+C cancels.
+| Workflow | Command | Notes |
+|---|---|---|
+| Create or update config interactively | `ai-config init` | Writes `.ai-config/config.yaml` by default. |
+| Preview sync | `ai-config sync --dry-run` | Use before the first real sync or after large config edits. |
+| Apply and verify sync | `ai-config sync --verify` | Installs/uninstalls plugins and runs configured conversion. |
+| See installed state | `ai-config status` | Add `--verify` to compare against config. |
+| Validate config or output | `ai-config doctor` | Use `--target codex`, `--target cursor`, `--target opencode`, or `--target pi` for converted output. |
+| Rebuild stale output | `ai-config sync --fresh` | Clears cache and re-converts everything. |
+| Re-run conversion only | `ai-config sync --force-convert` | Useful after changing conversion targets. |
+| Develop local plugins | `ai-config watch` | Add `--dry-run` if you only want file-change reports. |
 
-**Sync** - Make reality match your config:
+For options and examples, use [Commands](docs/commands.md). For target behavior and fidelity notes, use [Conversion](docs/conversion.md).
+
+## Development
 
 ```bash
-ai-config sync
+git clone https://github.com/safurrier/ai-config.git
+cd ai-config
+uv sync --all-extras
+uv run ruff check src/
+uv run ty check src/
+uv run pytest tests/unit/ -v
 ```
 
-**Cross-tool conversion** - Generate config for other AI coding tools:
+If you use `just`, the shortcut is:
 
 ```bash
-ai-config convert --plugin ~/.claude/plugins/my-plugin --target codex
+just setup
+just check
 ```
-
-Or let sync handle it automatically with the `conversion:` section in your config. Skills, hooks, MCP servers, and commands are mapped to each tool's native format.
-
-**Validation** - Find problems before they bite you:
-
-```bash
-ai-config doctor
-ai-config doctor --target codex    # validate converted output
-```
-
-Checks that marketplaces exist, plugins are installed, skills are valid, hooks work.
-
-## Commands
-
-| Command | What it does |
-|---------|--------------|
-| `init` | Interactive config generator |
-| `sync` | Install/uninstall plugins to match config (+ conversion) |
-| `status` | Show what's currently installed |
-| `watch` | Auto-sync on file changes (plugin development) |
-| `update` | Update plugins to latest versions |
-| `doctor` | Validate setup and show fix hints |
-| `convert` | Convert a plugin to another tool's format |
-| `plugin create` | Scaffold a new plugin |
-| `cache clear` | Clear the plugin cache |
-
-## Config file locations
-
-ai-config looks for config in this order:
-
-1. `.ai-config/config.yaml` (project-local)
-2. `~/.ai-config/config.yaml` (global)
-
-You can also pass `-c /path/to/config.yaml` to any command.
-
-Paths support environment variables (`$MY_VAR`) and tilde (`~`), expanded at load time.
-
-## Scopes
-
-Plugins can be installed in different scopes:
-
-- **user** - Available everywhere (`~/.claude/plugins/`)
-- **project** - Only in the current project (`.claude/plugins/`)
-
-## Conversion targets
-
-ai-config converts Claude plugins to work with:
-
-| Tool | Output | Binary |
-|------|--------|--------|
-| Codex (OpenAI) | `.codex/skills/` + `.codex/` | `codex` |
-| Cursor | `.cursor/` | `cursor-agent` |
-| OpenCode | `.opencode/` | `opencode` |
-| Pi | `.pi/` | `pi` |
-
-Skills, commands, hooks, and MCP servers are mapped to each tool's native format. Not everything maps 1:1 — conversion reports show what was native, approximated, or unsupported.
 
 ## Troubleshooting
 
-**Something not working? Force a full rebuild:**
+**DO preview first, NOT blind sync, BECAUSE sync can install/uninstall plugins and write converted tool config.**
 
 ```bash
-ai-config sync --force
+ai-config sync --dry-run
 ```
 
-This clears the plugin cache and re-converts everything from scratch. Use it when plugins aren't showing up, you've added a new conversion target, or things are just out of sync.
-
-If you only want to redo conversions without clearing the plugin cache:
+**DO use `--fresh` when cached plugins or converted output look stale, NOT hand-delete random target files first, BECAUSE sync knows the cache and conversion state.**
 
 ```bash
-ai-config sync --force-convert
+ai-config sync --fresh
 ```
 
-**Something's broken and Claude Code won't help**
+**DO validate converted output with target doctor, NOT assume every Claude feature maps 1:1, BECAUSE some hooks, MCP settings, commands, and agents degrade or skip depending on the target.**
 
 ```bash
-ai-config doctor --verbose
+ai-config doctor --target all ./output-dir
 ```
 
-**Converted output looks wrong**
+## Further reading
 
-```bash
-ai-config doctor --target codex    # or cursor, opencode, pi
-```
+- [Commands](docs/commands.md) — complete CLI reference
+- [Configuration](docs/config.md) — config schema, path resolution, scopes, and examples
+- [Conversion](docs/conversion.md) — target mappings, dry runs, reports, and validation
 
 ## License
 
