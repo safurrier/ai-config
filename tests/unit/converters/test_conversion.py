@@ -482,6 +482,7 @@ class TestCursorEmitter:
 
         skill_md = tmp_path / ".cursor" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
+        assert "name: dev-tools-code-review" in skill_md.read_text()
 
     def test_emit_commands_no_variables(self, ir) -> None:
         """Test that commands lose variable support with warning."""
@@ -571,6 +572,7 @@ class TestOpenCodeEmitter:
 
         skill_md = tmp_path / ".opencode" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
+        assert "name: dev-tools-code-review" in skill_md.read_text()
 
     def test_emit_commands_with_variables(self, ir, tmp_path: Path) -> None:
         """Test commands transform variables to OpenCode format."""

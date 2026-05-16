@@ -829,10 +829,11 @@ class CursorEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Cursor format."""
-        skill_dir = Path(".cursor") / "skills" / f"{plugin_id}-{skill.name}"
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".cursor") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
         result.add_file(skill_path, content)
 
         for f in skill.files:
@@ -1048,10 +1049,11 @@ class OpenCodeEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to OpenCode format."""
-        skill_dir = Path(".opencode") / "skills" / f"{plugin_id}-{skill.name}"
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".opencode") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
         result.add_file(skill_path, content)
 
         for f in skill.files:
