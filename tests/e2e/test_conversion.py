@@ -128,14 +128,14 @@ class TestCodexConversion:
         # Check skill directories exist
         exit_code, _ = exec_in_container(
             claude_container,
-            "test -f /tmp/codex-test/.agents/skills/dev-tools-code-review/SKILL.md",
+            "test -f /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
         )
         assert exit_code == 0, "SKILL.md not created for code-review"
 
         # Check SKILL.md content
         exit_code, content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-test/.agents/skills/dev-tools-code-review/SKILL.md",
+            "cat /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
         )
         assert exit_code == 0
         assert "name:" in content
@@ -418,7 +418,7 @@ class TestBinarySkillAssets:
             claude_container,
             "python - <<'PY'\n"
             "from pathlib import Path\n"
-            "p = Path('/tmp/bin-out/.agents/skills/bin-plugin-bin-skill/asset.bin')\n"
+            "p = Path('/tmp/bin-out/.codex/skills/bin-plugin-bin-skill/asset.bin')\n"
             "print(p.stat().st_size)\n"
             "PY",
         )
@@ -655,7 +655,7 @@ class TestDoctorTargetValidation:
         # Create a broken Codex output directory
         exit_code, _ = exec_in_container(
             claude_container,
-            "rm -rf /tmp/doctor-broken && mkdir -p /tmp/doctor-broken/.agents/skills/broken-skill",
+            "rm -rf /tmp/doctor-broken && mkdir -p /tmp/doctor-broken/.codex/skills/broken-skill",
         )
         # Create skill directory without SKILL.md
         assert exit_code == 0

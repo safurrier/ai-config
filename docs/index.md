@@ -72,7 +72,7 @@ You define your setup once. `ai-config sync` installs your Claude plugins and ge
 ```
 ai-config sync
   → Claude Code: plugins installed
-  → Codex:       ~/.agents/skills/, ~/.codex/config.toml, ~/.codex/hooks.json
+  → Codex:       ~/.codex/skills/, ~/.codex/config.toml, ~/.codex/hooks.json
   → Cursor:      ~/.cursor/skills/, ~/.cursor/mcp.json, ~/.cursor/hooks.json
   → OpenCode:    ~/.opencode/skills/, ~/opencode.json
   → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/, ~/.pi/agent/extensions/

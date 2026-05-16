@@ -37,19 +37,19 @@ class CodexOutputValidator:
     description = "Validates Codex converted output"
 
     def validate_skills(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate Codex Agent Skills in .agents/skills/."""
+        """Validate Codex Agent Skills in .codex/skills/."""
         results: list[ValidationResult] = []
-        skills_dir = output_dir / ".agents" / "skills"
-        legacy_skills_dir = output_dir / ".codex" / "skills"
+        skills_dir = output_dir / ".codex" / "skills"
+        legacy_skills_dir = output_dir / ".agents" / "skills"
 
         if legacy_skills_dir.exists():
             results.append(
                 ValidationResult(
-                    check_name="codex_legacy_skills_dir",
+                    check_name="codex_legacy_agents_skills_dir",
                     status="warn",
-                    message="Found legacy .codex/skills directory",
-                    details="Current Codex discovers Agent Skills from .agents/skills and $HOME/.agents/skills",
-                    fix_hint="Move skills to .agents/skills",
+                    message="Found legacy .agents/skills directory",
+                    details="Codex discovers Agent Skills from .codex/skills and $HOME/.codex/skills; .agents/skills is also scanned by other tools such as Pi.",
+                    fix_hint="Move Codex skills to .codex/skills",
                 )
             )
 
@@ -507,14 +507,14 @@ class CodexOutputValidator:
         results: list[ValidationResult] = []
 
         codex_dir = output_dir / ".codex"
-        agents_dir = output_dir / ".agents"
-        if not codex_dir.exists() and not agents_dir.exists():
+        legacy_agents_skills_dir = output_dir / ".agents" / "skills"
+        if not codex_dir.exists() and not legacy_agents_skills_dir.exists():
             results.append(
                 ValidationResult(
                     check_name="codex_output_exists",
                     status="warn",
                     message="No Codex output found",
-                    details=f"Expected .agents/ and/or .codex/ in {output_dir}",
+                    details=f"Expected .codex/ in {output_dir}; .agents/skills is recognized only as legacy Codex output",
                 )
             )
             return results

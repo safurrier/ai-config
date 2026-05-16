@@ -2,8 +2,8 @@
 
 This file records the target-runtime assumptions that ai-config's converter support matrix is based on. Update it when target CLI behavior changes or when refreshing conversion support.
 
-Last checked: 2026-05-08
-Context: PR #12 cross-tool capability refresh
+Last checked: 2026-05-15
+Context: Codex/Pi skill discovery collision refresh
 
 Observed local versions during the Codex/Pi release-note delta pass:
 
@@ -21,7 +21,7 @@ Codex plugin/package distribution is tracked as a follow-up in [issue #13](https
 | Target | Observed support | ai-config output | Runtime validation |
 |---|---|---|---|
 | Claude Code | Native plugin marketplace, skills, hooks, MCP | Source tool, not emitted by converter | `claude plugin validate`, `claude plugin list --json`, `claude mcp list` |
-| Codex | Agent Skills, MCP in `config.toml`, hooks behind `codex_hooks` | `.agents/skills/`, `.codex/config.toml`, `.codex/hooks.json`, prompts | `codex debug prompt-input`, `CODEX_HOME=<generated> codex mcp list` |
+| Codex | Agent Skills, MCP in `config.toml`, hooks behind `codex_hooks` | `.codex/skills/`, `.codex/config.toml`, `.codex/hooks.json`, prompts | `codex debug prompt-input`, `CODEX_HOME=<generated> codex mcp list` |
 | Cursor | Skills, MCP JSON, hooks JSON | `.cursor/skills/`, `.cursor/mcp.json`, `.cursor/hooks.json` | JSON validation, `cursor-agent mcp list` when available |
 | OpenCode | Skills, MCP/config, LSP/config debug surfaces | `.opencode/skills/`, `opencode.json`, `opencode.lsp.json` | `opencode debug skill`, `opencode debug config`, `opencode mcp list` |
 | Pi | Skills, prompt templates, TypeScript extensions | `.pi/skills/`, `.pi/prompts/`, `.pi/extensions/`; user-scope under `.pi/agent/` | RPC `get_commands`, `pi --extension` marker hook |
@@ -57,7 +57,8 @@ claude mcp list 2>&1
 
 ### Codex
 
-- Agent Skills are discovered from `.agents/skills` for project output and `$HOME/.agents/skills` for user output.
+- Agent Skills are discovered from `.codex/skills` for project output and `$HOME/.codex/skills` for user output.
+- Avoid emitting Codex skills into `.agents/skills`: Pi also scans that generic Agent Skills directory, so Codex-only output there creates duplicate Pi skill listings and validation warnings.
 - MCP servers are configured in `.codex/config.toml` under `[mcp_servers.*]`.
 - Supported command hooks can be emitted to `.codex/hooks.json` with `[features].codex_hooks = true`.
 - Shared Codex files must be merged, not clobbered.

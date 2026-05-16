@@ -35,7 +35,7 @@ Duck-typed classes sharing the same shape (no explicit Protocol ABC):
 
 | Emitter | Target | Config Format | Env Var Syntax |
 |---------|--------|---------------|----------------|
-| `CodexEmitter` | `.agents/skills/` + `.codex/` | TOML (`config.toml` with `[mcp_servers.*]`) + JSON (`hooks.json`) | `${VAR}` |
+| `CodexEmitter` | `.codex/skills/` + `.codex/` | TOML (`config.toml` with `[mcp_servers.*]`) + JSON (`hooks.json`) | `${VAR}` |
 | `CursorEmitter` | `.cursor/` | JSON (`mcp.json`, `hooks.json`) | `${env:VAR}` |
 | `OpenCodeEmitter` | `.opencode/` | JSON (`opencode.json`, `opencode.lsp.json`) | `{env:VAR}` |
 | `PiEmitter` | `.pi/` or `.pi/agent/` | Markdown skills/prompts + TypeScript extensions | `${VAR}` |

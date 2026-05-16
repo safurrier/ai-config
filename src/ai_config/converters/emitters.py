@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,6 +75,7 @@ class EmitResult:
     files: list[EmittedFile] = field(default_factory=list)
     mappings: list[ComponentMapping] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    cleanup_paths: list[Path] = field(default_factory=list)
 
     def add_file(self, path: Path | str, content: str, executable: bool = False) -> None:
         """Add a file to emit."""
@@ -84,6 +86,18 @@ class EmitResult:
         self.files.append(
             EmittedFile(path=Path(path), content=content, binary=True, executable=executable)
         )
+
+    def add_cleanup_path(self, path: Path | str) -> None:
+        """Remove a legacy emitted path before writing new output."""
+        cleanup_path = Path(path)
+        if cleanup_path.is_absolute() or ".." in cleanup_path.parts:
+            self.add_diagnostic(
+                Severity.WARN,
+                f"Ignoring unsafe cleanup path: {cleanup_path}",
+            )
+            return
+        if cleanup_path not in self.cleanup_paths:
+            self.cleanup_paths.append(cleanup_path)
 
     def add_mapping(
         self,
@@ -131,6 +145,14 @@ class EmitResult:
         Returns list of file paths that were/would be written.
         """
         written = []
+        if not dry_run:
+            for cleanup_path in self.cleanup_paths:
+                full_cleanup_path = output_dir / cleanup_path
+                if full_cleanup_path.is_dir() and not full_cleanup_path.is_symlink():
+                    shutil.rmtree(full_cleanup_path)
+                elif full_cleanup_path.exists() or full_cleanup_path.is_symlink():
+                    full_cleanup_path.unlink()
+
         for f in self.files:
             full_path = output_dir / f.path
             if not dry_run:
@@ -230,20 +252,24 @@ class EmitResult:
 
 
 # Module-level helper function (extracted from BaseEmitter for Protocol pattern)
-def skill_to_markdown(skill: Skill, strip_claude_fields: bool = True) -> str:
+def skill_to_markdown(
+    skill: Skill, strip_claude_fields: bool = True, *, name_override: str | None = None
+) -> str:
     """Convert a skill to SKILL.md format.
 
     Args:
         skill: The skill to convert.
         strip_claude_fields: If True, remove Claude-specific fields like
             allowed-tools, model, context, agent, etc.
+        name_override: Optional emitted Agent Skills name. Use when target tools
+            require frontmatter name to match a namespaced output directory.
 
     Returns:
         Markdown string with YAML frontmatter.
     """
     # Build frontmatter
     meta: dict[str, Any] = {
-        "name": skill.name,
+        "name": name_override or skill.name,
     }
     if skill.description:
         meta["description"] = skill.description
@@ -465,13 +491,18 @@ class CodexEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Codex format."""
-        # Codex uses the Agent Skills standard, discovered from .agents/skills.
-        skill_dir = Path(".agents") / "skills" / f"{plugin_id}-{skill.name}"
+        # Codex uses the Agent Skills standard, discovered from .codex/skills.
+        # Namespace with the plugin id so multiple plugins can provide similarly
+        # named skills without colliding in the user's Codex home.
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".codex") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        # Convert to markdown, stripping Claude-specific fields
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        # Convert to markdown, stripping Claude-specific fields. Agent Skills
+        # frontmatter name must match the output directory.
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
 
+        result.add_cleanup_path(Path(".agents") / "skills" / dir_name)
         result.add_file(skill_path, content)
 
         # Copy other skill files
@@ -499,6 +530,7 @@ class CodexEmitter:
         By default, commands are emitted as prompts (deprecated but 1:1 with Claude commands).
         With commands_as_skills=True, they're emitted as skills (auto-discoverable).
         """
+        result.add_cleanup_path(Path(".agents") / "skills" / f"{plugin_id}-cmd-{cmd.name}")
         if self.commands_as_skills:
             self._emit_command_as_skill(result, cmd, plugin_id)
         else:
@@ -561,7 +593,7 @@ class CodexEmitter:
         """
         # Emit as a skill directory with SKILL.md
         skill_name = f"{plugin_id}-cmd-{cmd.name}"
-        skill_dir = Path(".agents") / "skills" / skill_name
+        skill_dir = Path(".codex") / "skills" / skill_name
         skill_path = skill_dir / "SKILL.md"
 
         # Build SKILL.md with frontmatter
@@ -821,10 +853,11 @@ class CursorEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Cursor format."""
-        skill_dir = Path(".cursor") / "skills" / f"{plugin_id}-{skill.name}"
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".cursor") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
         result.add_file(skill_path, content)
 
         for f in skill.files:
@@ -1040,10 +1073,11 @@ class OpenCodeEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to OpenCode format."""
-        skill_dir = Path(".opencode") / "skills" / f"{plugin_id}-{skill.name}"
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".opencode") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
         result.add_file(skill_path, content)
 
         for f in skill.files:

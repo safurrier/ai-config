@@ -122,7 +122,7 @@ targets:
 Run `ai-config sync` and you get:
 
 - **Claude Code**: plugins installed via `claude plugin install`
-- **Codex**: Agent Skills in `~/.agents/skills/`, MCP in `~/.codex/config.toml`, supported hooks in `~/.codex/hooks.json`
+- **Codex**: Agent Skills in `~/.codex/skills/`, MCP in `~/.codex/config.toml`, supported hooks in `~/.codex/hooks.json`
 - **Cursor**: skills in `~/.cursor/skills/`, MCP in `~/.cursor/mcp.json`, hooks in `~/.cursor/hooks.json`
 - **OpenCode**: skills in `~/.opencode/skills/`, MCP in `~/opencode.json`
 - **Pi**: skills in `~/.pi/agent/skills/`, prompt templates in `~/.pi/agent/prompts/`, hook extensions in `~/.pi/agent/extensions/`
@@ -226,7 +226,7 @@ ai-config converts Claude plugins to work with:
 
 | Tool | Output | Binary |
 |------|--------|--------|
-| Codex (OpenAI) | `.agents/skills/` + `.codex/` | `codex` |
+| Codex (OpenAI) | `.codex/skills/` + `.codex/` | `codex` |
 | Cursor | `.cursor/` | `cursor-agent` |
 | OpenCode | `.opencode/` | `opencode` |
 | Pi | `.pi/` | `pi` |

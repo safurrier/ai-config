@@ -171,7 +171,7 @@ class TestCodexPlaceholder:
         # Document expected structure (to be implemented)
         expected_structure = """
         Expected Codex config structure:
-        - ~/.agents/skills/  # User Agent Skills discovery directory
+        - ~/.codex/skills/  # User Codex Agent Skills discovery directory
         - ~/.codex/config.toml # Main Codex configuration including MCP servers
         - ~/.codex/hooks.json  # Hooks config when codex_hooks is enabled
         """

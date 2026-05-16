@@ -154,7 +154,7 @@ class TestCodexToolValidation:
     - codex mcp list: List configured MCP servers
     - codex features list: List feature flags
     - Config: ~/.codex/config.toml (TOML format)
-    - Skills: ~/.agents/skills/ directory
+    - Skills: ~/.codex/skills/ directory
     """
 
     def test_codex_version_check(self, all_tools_container: Container) -> None:
@@ -170,7 +170,7 @@ class TestCodexToolValidation:
         assert "codex" in output.lower() or exit_code == 0
 
     def test_codex_skills_directory_recognized(self, all_tools_container: Container) -> None:
-        """Test Codex recognizes skills in .agents/skills/ after conversion."""
+        """Test Codex recognizes skills in .codex/skills/ after conversion."""
         # Convert a test plugin to Codex format
         exit_code, output = exec_in_container(
             all_tools_container,
@@ -182,7 +182,7 @@ class TestCodexToolValidation:
         # Verify skills directory was created
         exit_code, output = exec_in_container(
             all_tools_container,
-            "ls /tmp/codex-test/.agents/skills/",
+            "ls /tmp/codex-test/.codex/skills/",
         )
         assert exit_code == 0, f"Skills directory not created: {output}"
         assert "dev-tools" in output  # Plugin ID should be in skill name
@@ -1002,7 +1002,7 @@ class TestInteractiveCodexSkillDiscovery:
 
         try:
             # Convert plugin to Codex format
-            # Output to /home/testuser so .agents/skills/ gets created at the right location
+            # Output to /home/testuser so .codex/skills/ gets created at the right location
             exit_code, output = exec_in_container(
                 all_tools_container,
                 "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
@@ -1010,10 +1010,10 @@ class TestInteractiveCodexSkillDiscovery:
             )
             assert exit_code == 0, f"Conversion failed: {output}"
 
-            # Verify skills directory exists (emitter creates .agents/skills/ in output dir)
+            # Verify skills directory exists (emitter creates .codex/skills/ in output dir)
             exit_code, output = exec_in_container(
                 all_tools_container,
-                "ls /home/testuser/.agents/skills/",
+                "ls /home/testuser/.codex/skills/",
             )
             assert exit_code == 0, f"Skills directory not created: {output}"
 
@@ -1060,7 +1060,7 @@ class TestInteractiveCodexSkillDiscovery:
             exec_in_container_tmux(
                 all_tools_container,
                 session_name,
-                "ls -la /home/testuser/.agents/skills/",
+                "ls -la /home/testuser/.codex/skills/",
             )
 
             time.sleep(2)
@@ -1072,7 +1072,7 @@ class TestInteractiveCodexSkillDiscovery:
             # Check a specific skill file exists
             exec_in_container(
                 all_tools_container,
-                f"tmux send-keys -t {session_name} 'cat /home/testuser/.agents/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
+                f"tmux send-keys -t {session_name} 'cat /home/testuser/.codex/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
             )
             time.sleep(2)
             output = capture_tmux_pane(all_tools_container, session_name)

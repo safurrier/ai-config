@@ -205,6 +205,17 @@ class TestCodexEmitter:
 
     def test_emit_skills(self, ir, tmp_path: Path) -> None:
         """Test emitting skills to Codex format."""
+        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-code-review"
+        legacy_skill_dir.mkdir(parents=True)
+        (legacy_skill_dir / "SKILL.md").write_text(
+            "---\nname: code-review\ndescription: stale\n---\n\nStale"
+        )
+        unrelated_skill_dir = tmp_path / ".agents" / "skills" / "user-managed-skill"
+        unrelated_skill_dir.mkdir(parents=True)
+        (unrelated_skill_dir / "SKILL.md").write_text(
+            "---\nname: user-managed-skill\ndescription: keep\n---\n\nKeep"
+        )
+
         emitter = CodexEmitter()
         result = emitter.emit(ir)
 
@@ -220,14 +231,16 @@ class TestCodexEmitter:
         result.write_to(tmp_path)
 
         # Check SKILL.md was written correctly
-        skill_md = tmp_path / ".agents" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        skill_md = tmp_path / ".codex" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
         content = skill_md.read_text()
 
-        # Should have frontmatter
+        # Should have frontmatter matching the Agent Skills directory name
         assert content.startswith("---")
-        assert "name: code-review" in content
+        assert "name: dev-tools-code-review" in content
         assert "description:" in content
+        assert not legacy_skill_dir.exists()
+        assert unrelated_skill_dir.exists()
 
         # Claude-specific fields should be stripped
         assert "allowed-tools:" not in content
@@ -297,12 +310,18 @@ class TestCodexEmitter:
         result = emitter.emit(ir)
         result.write_to(tmp_path)
 
-        emitted = tmp_path / ".agents" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
+        emitted = tmp_path / ".codex" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
         assert emitted.exists()
         assert emitted.read_bytes() == binary_bytes
 
     def test_emit_commands_as_skills_opt_in(self, ir, tmp_path: Path) -> None:
         """Test that commands emit as skills with --commands-as-skills flag."""
+        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
+        legacy_skill_dir.mkdir(parents=True)
+        (legacy_skill_dir / "SKILL.md").write_text(
+            "---\nname: dev-tools-cmd-commit\ndescription: stale\n---\n\nStale"
+        )
+
         emitter = CodexEmitter(commands_as_skills=True)
         result = emitter.emit(ir)
         result.write_to(tmp_path)
@@ -318,7 +337,7 @@ class TestCodexEmitter:
         assert any("skill" in d.message.lower() for d in cmd_diags)
 
         # Verify skill file was created (not deprecated prompts)
-        skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
+        skill_dir = tmp_path / ".codex" / "skills" / "dev-tools-cmd-commit"
         assert skill_dir.exists(), "Command should be emitted as skill directory"
         skill_file = skill_dir / "SKILL.md"
         assert skill_file.exists(), "SKILL.md should exist in skill directory"
@@ -326,6 +345,7 @@ class TestCodexEmitter:
         content = skill_file.read_text()
         assert "name:" in content  # Should have frontmatter
         assert "Create a git commit" in content  # Should have command content
+        assert not legacy_skill_dir.exists()
 
     def test_emit_hooks_transform(self, ir, tmp_path: Path) -> None:
         """Test that supported command hooks are converted to Codex hooks."""
@@ -482,6 +502,7 @@ class TestCursorEmitter:
 
         skill_md = tmp_path / ".cursor" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
+        assert "name: dev-tools-code-review" in skill_md.read_text()
 
     def test_emit_commands_no_variables(self, ir) -> None:
         """Test that commands lose variable support with warning."""
@@ -571,6 +592,7 @@ class TestOpenCodeEmitter:
 
         skill_md = tmp_path / ".opencode" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
+        assert "name: dev-tools-code-review" in skill_md.read_text()
 
     def test_emit_commands_with_variables(self, ir, tmp_path: Path) -> None:
         """Test commands transform variables to OpenCode format."""
@@ -1105,7 +1127,7 @@ class TestDryRun:
         assert output_dir.exists()
 
         # Files should exist
-        skills_dir = output_dir / ".agents" / "skills"
+        skills_dir = output_dir / ".codex" / "skills"
         assert skills_dir.exists()
 
 
