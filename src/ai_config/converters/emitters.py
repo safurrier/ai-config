@@ -230,20 +230,24 @@ class EmitResult:
 
 
 # Module-level helper function (extracted from BaseEmitter for Protocol pattern)
-def skill_to_markdown(skill: Skill, strip_claude_fields: bool = True) -> str:
+def skill_to_markdown(
+    skill: Skill, strip_claude_fields: bool = True, *, name_override: str | None = None
+) -> str:
     """Convert a skill to SKILL.md format.
 
     Args:
         skill: The skill to convert.
         strip_claude_fields: If True, remove Claude-specific fields like
             allowed-tools, model, context, agent, etc.
+        name_override: Optional emitted Agent Skills name. Use when target tools
+            require frontmatter name to match a namespaced output directory.
 
     Returns:
         Markdown string with YAML frontmatter.
     """
     # Build frontmatter
     meta: dict[str, Any] = {
-        "name": skill.name,
+        "name": name_override or skill.name,
     }
     if skill.description:
         meta["description"] = skill.description
@@ -465,12 +469,16 @@ class CodexEmitter:
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
         """Emit a skill to Codex format."""
-        # Codex uses the Agent Skills standard, discovered from .agents/skills.
-        skill_dir = Path(".agents") / "skills" / f"{plugin_id}-{skill.name}"
+        # Codex uses the Agent Skills standard, discovered from .codex/skills.
+        # Namespace with the plugin id so multiple plugins can provide similarly
+        # named skills without colliding in the user's Codex home.
+        dir_name = f"{plugin_id}-{skill.name}"
+        skill_dir = Path(".codex") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
 
-        # Convert to markdown, stripping Claude-specific fields
-        content = skill_to_markdown(skill, strip_claude_fields=True)
+        # Convert to markdown, stripping Claude-specific fields. Agent Skills
+        # frontmatter name must match the output directory.
+        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
 
         result.add_file(skill_path, content)
 

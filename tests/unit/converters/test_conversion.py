@@ -220,13 +220,13 @@ class TestCodexEmitter:
         result.write_to(tmp_path)
 
         # Check SKILL.md was written correctly
-        skill_md = tmp_path / ".agents" / "skills" / "dev-tools-code-review" / "SKILL.md"
+        skill_md = tmp_path / ".codex" / "skills" / "dev-tools-code-review" / "SKILL.md"
         assert skill_md.exists()
         content = skill_md.read_text()
 
-        # Should have frontmatter
+        # Should have frontmatter matching the Agent Skills directory name
         assert content.startswith("---")
-        assert "name: code-review" in content
+        assert "name: dev-tools-code-review" in content
         assert "description:" in content
 
         # Claude-specific fields should be stripped
@@ -297,7 +297,7 @@ class TestCodexEmitter:
         result = emitter.emit(ir)
         result.write_to(tmp_path)
 
-        emitted = tmp_path / ".agents" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
+        emitted = tmp_path / ".codex" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
         assert emitted.exists()
         assert emitted.read_bytes() == binary_bytes
 
@@ -1105,7 +1105,7 @@ class TestDryRun:
         assert output_dir.exists()
 
         # Files should exist
-        skills_dir = output_dir / ".agents" / "skills"
+        skills_dir = output_dir / ".codex" / "skills"
         assert skills_dir.exists()
 
 

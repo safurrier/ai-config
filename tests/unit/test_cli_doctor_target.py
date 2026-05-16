@@ -115,7 +115,7 @@ class TestDoctorCodexTarget:
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         """Doctor fails when skill directory missing SKILL.md."""
-        codex_dir = tmp_path / ".agents" / "skills" / "broken-skill"
+        codex_dir = tmp_path / ".codex" / "skills" / "broken-skill"
         codex_dir.mkdir(parents=True)
         # No SKILL.md file - should fail
 

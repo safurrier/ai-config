@@ -45,7 +45,7 @@ export OPENAI_API_KEY=sk-...
 codex
 
 # Verify skills directory exists
-ls ~/.agents/skills/
+ls ~/.codex/skills/
 ```
 
 **Expected**: Codex starts without errors. Skills directory contains converted skill files.
@@ -78,7 +78,7 @@ After the automated smoke test runs `ai-config sync`, verify the cross-tool outp
 
 ```bash
 # User scope outputs
-ls ~/.agents/skills/       # Codex skills
+ls ~/.codex/skills/       # Codex skills
 ls ~/.cursor/skills/      # Cursor skills
 ls ~/.opencode/skills/    # OpenCode skills
 
