@@ -45,6 +45,16 @@ _ENV_VAR_PATTERN = re.compile(
 )
 
 
+def _is_safe_relative_path(path: Path) -> bool:
+    """Return True when path is safe to emit relative to an output root."""
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def _paths_conflict(left: Path, right: Path) -> bool:
+    """Return True when two relative output paths cannot coexist on disk."""
+    return left == right or left in right.parents or right in left.parents
+
+
 @dataclass
 class EmittedFile:
     """A file to be written by the emitter."""
@@ -175,6 +185,113 @@ class EmitResult:
                     full_path.chmod(full_path.stat().st_mode | 0o111)
             written.append(full_path)
         return written
+
+    def apply_target_native_files(
+        self,
+        *,
+        plugin_root: Path | None,
+        target: TargetTool,
+        base_dir: Path,
+    ) -> None:
+        """Copy target-native plugin files into the emitted output.
+
+        Plugins can provide files under ``targets/<target>/`` when a target needs
+        hand-written config that should be copied verbatim instead of generated.
+        Native files are rooted at the target's natural config directory. If a
+        native file conflicts with generated output, the native file wins.
+        """
+        if plugin_root is None:
+            return
+
+        target_root = plugin_root / "targets" / target.value
+        if target_root.is_symlink():
+            self.add_diagnostic(
+                Severity.WARN,
+                f"Ignoring symlinked target-native directory: {target_root}",
+                component_ref=f"file:targets/{target.value}",
+            )
+            return
+        if not target_root.is_dir():
+            return
+
+        for source in sorted(target_root.rglob("*")):
+            if source.is_symlink() or not source.is_file():
+                continue
+
+            relpath = source.relative_to(target_root)
+            if not _is_safe_relative_path(relpath):
+                self.add_diagnostic(
+                    Severity.WARN,
+                    f"Ignoring unsafe target-native file path: {relpath.as_posix()}",
+                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
+                )
+                continue
+
+            target_path = base_dir / relpath
+            if not _is_safe_relative_path(target_path):
+                self.add_diagnostic(
+                    Severity.WARN,
+                    f"Ignoring target-native file outside output root: {target_path.as_posix()}",
+                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
+                )
+                continue
+
+            executable = bool(source.stat().st_mode & 0o111)
+            content_bytes = source.read_bytes()
+
+            conflicts = [
+                (index, emitted)
+                for index, emitted in enumerate(self.files)
+                if _paths_conflict(emitted.path, target_path)
+            ]
+            replaced = bool(conflicts)
+            exact_conflict = next(
+                (index for index, emitted in conflicts if emitted.path == target_path),
+                None,
+            )
+
+            if exact_conflict is not None and len(conflicts) == 1:
+                try:
+                    content = content_bytes.decode("utf-8")
+                    self.files[exact_conflict] = EmittedFile(
+                        path=target_path,
+                        content=content,
+                        executable=executable,
+                    )
+                except UnicodeDecodeError:
+                    self.files[exact_conflict] = EmittedFile(
+                        path=target_path,
+                        content=content_bytes,
+                        binary=True,
+                        executable=executable,
+                    )
+            else:
+                for index, _emitted in reversed(conflicts):
+                    del self.files[index]
+                try:
+                    self.add_file(
+                        target_path,
+                        content_bytes.decode("utf-8"),
+                        executable=executable,
+                    )
+                except UnicodeDecodeError:
+                    self.add_binary_file(target_path, content_bytes, executable=executable)
+
+            if replaced:
+                self.add_diagnostic(
+                    Severity.INFO,
+                    f"Target-native file overrides generated output: {target_path.as_posix()}",
+                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
+                )
+
+            self.add_mapping(
+                "file",
+                f"targets/{target.value}/{relpath.as_posix()}",
+                MappingStatus.NATIVE,
+                target_path=target_path,
+                notes="Target-native file copied verbatim into converted output"
+                + (" and overrides generated output" if replaced else ""),
+            )
 
     def preview(self, output_dir: Path | None = None) -> str:
         """Generate preview of what would be written.
@@ -486,6 +603,12 @@ class CodexEmitter:
                 MappingStatus.UNSUPPORTED,
                 notes="Codex does not support custom LSP servers",
             )
+
+        result.apply_target_native_files(
+            plugin_root=ir.source_path,
+            target=self.target,
+            base_dir=Path(".codex"),
+        )
 
         return result
 
@@ -849,6 +972,12 @@ class CursorEmitter:
                 notes="Cursor handles LSP internally",
             )
 
+        result.apply_target_native_files(
+            plugin_root=ir.source_path,
+            target=self.target,
+            base_dir=Path(".cursor"),
+        )
+
         return result
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
@@ -1069,6 +1198,12 @@ class OpenCodeEmitter:
                 notes="OpenCode does not support custom agent definitions",
             )
 
+        result.apply_target_native_files(
+            plugin_root=ir.source_path,
+            target=self.target,
+            base_dir=Path("."),
+        )
+
         return result
 
     def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
@@ -1281,6 +1416,12 @@ class PiEmitter:
                 MappingStatus.UNSUPPORTED,
                 notes="Pi does not support custom LSP servers",
             )
+
+        result.apply_target_native_files(
+            plugin_root=ir.source_path,
+            target=self.target,
+            base_dir=self._base_dir,
+        )
 
         return result
 
