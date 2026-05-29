@@ -524,7 +524,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Sync-Driven Conversion">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-native-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target-Native Files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Target-Native Files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -702,7 +713,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Sync-Driven Conversion">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-native-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target-Native Files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Target-Native Files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -905,6 +927,19 @@
 <a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">        </span><span class="nt">scope</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">project</span>
 </code></pre></div>
 <p>With this config, <code>ai-config sync</code> installs your Claude plugins and then converts them to Codex and Cursor format.</p>
+<h2 id="target-native-files">Target-Native Files<a class="headerlink" href="#target-native-files" title="Permanent link">&para;</a></h2>
+<p>Most plugin content should flow through the normal converter. When a target needs hand-written files that cannot be generated cleanly, place them under <code>targets/&lt;target&gt;/</code> in the plugin source:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>my-plugin/
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>├── .claude-plugin/plugin.json
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>├── skills/my-skill/SKILL.md
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>└── targets/pi/extensions/my-plugin-hooks.ts
+</code></pre></div>
+<p>Target-native files are copied into that target's generated output using the target's natural config root. For example, with Pi user scope:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>targets/pi/extensions/my-plugin-hooks.ts
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  -&gt; ~/.pi/agent/extensions/my-plugin-hooks.ts
+</code></pre></div>
+<p>With Pi project scope, the same source file writes to <code>.pi/extensions/my-plugin-hooks.ts</code>.</p>
+<p>If a target-native file has the same output path as generated converter output, the target-native file wins over the generated file and the conversion report records the override. Existing target-specific write behavior still applies when writing to disk; for example, Codex <code>config.toml</code> and <code>hooks.json</code> outputs are merged with existing local config instead of clobbering it. Use target-native files for target-specific glue such as custom Pi TypeScript extensions; prefer generated output for ordinary skills, commands, MCP config, and hooks.</p>
 <h3 id="conversion-config-fields">Conversion Config Fields<a class="headerlink" href="#conversion-config-fields" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -1014,7 +1049,7 @@
 <li><strong>Unsupported</strong> — no equivalent in the target</li>
 </ul>
 <h2 id="options-reference">Options Reference<a class="headerlink" href="#options-reference" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-config convert PLUGIN_PATH [OPTIONS]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config convert PLUGIN_PATH [OPTIONS]
 </code></pre></div>
 <table>
 <thead>
@@ -1063,33 +1098,33 @@
 </tbody>
 </table>
 <p>Multiple targets can be specified:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>-t<span class="w"> </span>codex<span class="w"> </span>-t<span class="w"> </span>cursor
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>-t<span class="w"> </span>codex<span class="w"> </span>-t<span class="w"> </span>cursor
 </code></pre></div>
 <h2 id="validating-output">Validating Output<a class="headerlink" href="#validating-output" title="Permanent link">&para;</a></h2>
 <p>After conversion, use <code>doctor</code> to validate the output:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ai-config<span class="w"> </span>doctor<span class="w"> </span>--target<span class="w"> </span>codex<span class="w"> </span>./output-dir
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>ai-config<span class="w"> </span>doctor<span class="w"> </span>--target<span class="w"> </span>all<span class="w"> </span>./output-dir
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ai-config<span class="w"> </span>doctor<span class="w"> </span>--target<span class="w"> </span>codex<span class="w"> </span>./output-dir
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>ai-config<span class="w"> </span>doctor<span class="w"> </span>--target<span class="w"> </span>all<span class="w"> </span>./output-dir
 </code></pre></div>
 <p>This checks that the converted files have valid structure, required fields, and correct naming conventions for each target tool.</p>
 <h2 id="conversion-cache">Conversion Cache<a class="headerlink" href="#conversion-cache" title="Permanent link">&para;</a></h2>
 <p>Sync-driven conversion uses content hashing to skip re-conversion when plugin sources haven't changed.</p>
 <p><code>--force</code> does a full rebuild (clears plugin cache + re-converts everything):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>ai-config<span class="w"> </span>sync<span class="w"> </span>--force
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ai-config<span class="w"> </span>sync<span class="w"> </span>--force
 </code></pre></div>
 <p><code>--force-convert</code> re-converts without clearing the plugin cache (useful after adding a new target or updating the converter):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ai-config<span class="w"> </span>sync<span class="w"> </span>--force-convert
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ai-config<span class="w"> </span>sync<span class="w"> </span>--force-convert
 </code></pre></div>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <h3 id="convert-a-local-plugin-to-codex">Convert a local plugin to Codex<a class="headerlink" href="#convert-a-local-plugin-to-codex" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--target<span class="w"> </span>codex<span class="w"> </span>--scope<span class="w"> </span>project
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--target<span class="w"> </span>codex<span class="w"> </span>--scope<span class="w"> </span>project
 </code></pre></div>
 <p>Creates <code>.codex/skills/</code> for Codex Agent Skills and <code>.codex/config.toml</code> / <code>.codex/hooks.json</code> when MCP servers or supported hooks are present. The project-scope <code>.codex/</code> files are validated fragments; for active Codex MCP/hook behavior, merge them into the active <code>CODEX_HOME</code> or run with an explicit <code>CODEX_HOME</code> that points at the generated config.</p>
 <h3 id="convert-to-all-targets-with-a-report">Convert to all targets with a report<a class="headerlink" href="#convert-to-all-targets-with-a-report" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--report<span class="w"> </span>./report.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--report<span class="w"> </span>./report.json
 </code></pre></div>
 <p>Converts to all targets and writes a JSON report with component mappings and diagnostics.</p>
 <h3 id="dry-run-with-detailed-output">Dry run with detailed output<a class="headerlink" href="#dry-run-with-detailed-output" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--dry-run<span class="w"> </span>--format<span class="w"> </span>markdown
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin<span class="w"> </span>--dry-run<span class="w"> </span>--format<span class="w"> </span>markdown
 </code></pre></div>
 <p>Shows what would be created in Markdown format without writing any files.</p>
 
