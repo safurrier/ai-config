@@ -64,6 +64,28 @@ targets:
 
 With this config, `ai-config sync` installs your Claude plugins and then converts them to Codex and Cursor format.
 
+## Target-Native Files
+
+Most plugin content should flow through the normal converter. When a target needs hand-written files that cannot be generated cleanly, place them under `targets/<target>/` in the plugin source:
+
+```text
+my-plugin/
+├── .claude-plugin/plugin.json
+├── skills/my-skill/SKILL.md
+└── targets/pi/extensions/my-plugin-hooks.ts
+```
+
+Target-native files are copied into that target's generated output using the target's natural config root. For example, with Pi user scope:
+
+```text
+targets/pi/extensions/my-plugin-hooks.ts
+  -> ~/.pi/agent/extensions/my-plugin-hooks.ts
+```
+
+With Pi project scope, the same source file writes to `.pi/extensions/my-plugin-hooks.ts`.
+
+If a target-native file has the same output path as generated converter output, the target-native file wins over the generated file and the conversion report records the override. Existing target-specific write behavior still applies when writing to disk; for example, Codex `config.toml` and `hooks.json` outputs are merged with existing local config instead of clobbering it. Use target-native files for target-specific glue such as custom Pi TypeScript extensions; prefer generated output for ordinary skills, commands, MCP config, and hooks.
+
 ### Conversion Config Fields
 
 | Field | Type | Default | Description |

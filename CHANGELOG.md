@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Target-native conversion files under `targets/<target>/...` are copied into converted output, allowing plugins to ship tool-specific files that override generated output when needed.
+
 ### Fixed
 
 - Codex skill conversion now emits to `.codex/skills/` with matching frontmatter names, avoiding duplicate Pi skill discovery from the shared `.agents/skills/` directory.

@@ -847,6 +847,160 @@ class TestPiEmitter:
         assert asset.exists()
         assert asset.read_bytes() == b"\x01\x02\x03"
 
+    def test_target_native_files_emit_to_project_scope(self, tmp_path: Path) -> None:
+        """Pi target-native files are copied under .pi/ for project scope."""
+        plugin_dir = tmp_path / "native-plugin"
+        native_extension = plugin_dir / "targets" / "pi" / "extensions" / "custom.ts"
+        native_extension.parent.mkdir(parents=True)
+        native_extension.write_text(
+            "export default function (pi: any) { pi.on('input', () => {}); }\n"
+        )
+
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="native-plugin", name="native-plugin"),
+            source_path=plugin_dir,
+        )
+        result = PiEmitter(scope=InstallScope.PROJECT).emit(ir)
+        result.write_to(tmp_path)
+
+        extension = tmp_path / ".pi" / "extensions" / "custom.ts"
+        assert extension.exists()
+        assert extension.read_text() == native_extension.read_text()
+
+        file_mappings = [m for m in result.mappings if m.component_kind == "file"]
+        assert file_mappings[0].status == MappingStatus.NATIVE
+        assert file_mappings[0].target_path == Path(".pi") / "extensions" / "custom.ts"
+
+    def test_target_native_files_emit_to_user_scope(self, tmp_path: Path) -> None:
+        """Pi target-native files are copied under .pi/agent/ for user scope."""
+        plugin_dir = tmp_path / "native-plugin"
+        native_extension = plugin_dir / "targets" / "pi" / "extensions" / "custom.ts"
+        native_extension.parent.mkdir(parents=True)
+        native_extension.write_text(
+            "export default function (pi: any) { pi.on('input', () => {}); }\n"
+        )
+
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="native-plugin", name="native-plugin"),
+            source_path=plugin_dir,
+        )
+        result = PiEmitter(scope=InstallScope.USER).emit(ir)
+        result.write_to(tmp_path)
+
+        extension = tmp_path / ".pi" / "agent" / "extensions" / "custom.ts"
+        assert extension.exists()
+        assert extension.read_text() == native_extension.read_text()
+        assert not (tmp_path / ".pi" / "extensions").exists()
+
+    def test_target_native_symlink_root_is_ignored(self, tmp_path: Path) -> None:
+        """Symlinked target-native roots are ignored to keep output cache-safe."""
+        plugin_dir = tmp_path / "native-plugin"
+        external_dir = tmp_path / "external-pi-files"
+        external_extension = external_dir / "extensions" / "outside.ts"
+        external_extension.parent.mkdir(parents=True)
+        external_extension.write_text("export default function (pi: any) {}\n")
+
+        targets_dir = plugin_dir / "targets"
+        targets_dir.mkdir(parents=True)
+        (targets_dir / "pi").symlink_to(external_dir, target_is_directory=True)
+
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="native-plugin", name="native-plugin"),
+            source_path=plugin_dir,
+        )
+        result = PiEmitter(scope=InstallScope.USER).emit(ir)
+        result.write_to(tmp_path)
+
+        assert not (tmp_path / ".pi" / "agent" / "extensions" / "outside.ts").exists()
+        assert any(
+            "Ignoring symlinked target-native directory" in diagnostic.message
+            for diagnostic in result.diagnostics
+        )
+
+    def test_target_native_file_overrides_generated_directory(self, tmp_path: Path) -> None:
+        """Target-native files cleanly replace generated output directories."""
+        plugin_dir = tmp_path / "native-plugin"
+        native_skill_path = plugin_dir / "targets" / "pi" / "skills" / "native-plugin-review"
+        native_skill_path.parent.mkdir(parents=True)
+        native_skill_path.write_text("native file replacing generated skill directory\n")
+
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="native-plugin", name="native-plugin"),
+            components=[
+                Skill(
+                    name="review",
+                    description="Generated skill that will be overridden",
+                    files=[
+                        TextFile(
+                            relpath="SKILL.md",
+                            content="---\nname: review\ndescription: test\n---\nBody",
+                        ),
+                    ],
+                )
+            ],
+            source_path=plugin_dir,
+        )
+        result = PiEmitter(scope=InstallScope.PROJECT).emit(ir)
+        result.write_to(tmp_path)
+
+        output_path = tmp_path / ".pi" / "skills" / "native-plugin-review"
+        assert output_path.is_file()
+        assert output_path.read_text() == native_skill_path.read_text()
+        assert not (output_path / "SKILL.md").exists()
+        assert any(
+            "overrides generated output" in (mapping.notes or "")
+            for mapping in result.mappings
+            if mapping.component_kind == "file"
+        )
+
+    def test_target_native_files_override_generated_output(self, tmp_path: Path) -> None:
+        """Target-native files win when they collide with generated Pi output."""
+        plugin_dir = tmp_path / "native-plugin"
+        (plugin_dir / ".claude-plugin").mkdir(parents=True)
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "native-plugin", "hooks": "./hooks/hooks.json"})
+        )
+        hooks_dir = plugin_dir / "hooks"
+        hooks_dir.mkdir()
+        (hooks_dir / "hooks.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        native_extension = plugin_dir / "targets" / "pi" / "extensions" / "native-plugin-hooks.ts"
+        native_extension.parent.mkdir(parents=True)
+        native_extension.write_text("// native override\nexport default function (pi: any) {}\n")
+
+        ir = parse_claude_plugin(plugin_dir)
+        result = PiEmitter(scope=InstallScope.USER).emit(ir)
+        result.write_to(tmp_path)
+
+        extension = tmp_path / ".pi" / "agent" / "extensions" / "native-plugin-hooks.ts"
+        assert extension.read_text() == native_extension.read_text()
+        assert "runHook" not in extension.read_text()
+        assert any(
+            "overrides generated output" in (mapping.notes or "")
+            for mapping in result.mappings
+            if mapping.component_kind == "file"
+        )
+        assert any(
+            "overrides generated output" in diagnostic.message for diagnostic in result.diagnostics
+        )
+
 
 class TestEmitterFactory:
     """Tests for emitter factory."""
