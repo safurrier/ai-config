@@ -15,6 +15,14 @@ The `convert` command takes a Claude Code plugin directory and produces equivale
 
 Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.
 
+### Codex output is loose-file output
+
+The production `codex` target writes skills and shared Codex config files. It does not create an
+installable `.codex-plugin/plugin.json` package or marketplace entry. The experimental package
+fixture used for the [current compatibility baseline](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md#pluginpackage-contract)
+is test-only and is not registered as a conversion target. Selecting `codex` keeps the existing
+loose-file behavior.
+
 ## Quick Start
 
 Convert a plugin to all targets:
