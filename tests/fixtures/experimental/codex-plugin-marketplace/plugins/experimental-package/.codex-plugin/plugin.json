@@ -1,0 +1,7 @@
+{
+  "name": "experimental-package",
+  "version": "0.1.0",
+  "description": "Experimental local package for an auth-free Codex CLI probe.",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

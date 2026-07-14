@@ -1,0 +1,20 @@
+{
+  "name": "ai-config-experimental",
+  "interface": {
+    "displayName": "ai-config experimental"
+  },
+  "plugins": [
+    {
+      "name": "experimental-package",
+      "source": {
+        "source": "local",
+        "path": "./plugins/experimental-package"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
