@@ -502,6 +502,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#codex-output-is-loose-file-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Codex output is loose-file output
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -690,6 +707,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#codex-output-is-loose-file-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Codex output is loose-file output
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -893,6 +927,12 @@
 </tbody>
 </table>
 <p>Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.</p>
+<h3 id="codex-output-is-loose-file-output">Codex output is loose-file output<a class="headerlink" href="#codex-output-is-loose-file-output" title="Permanent link">&para;</a></h3>
+<p>The production <code>codex</code> target writes skills and shared Codex config files. It does not create an
+installable <code>.codex-plugin/plugin.json</code> package or marketplace entry. The experimental package
+fixture used for the <a href="https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md#pluginpackage-contract">current compatibility baseline</a>
+is test-only and is not registered as a conversion target. Selecting <code>codex</code> keeps the existing
+loose-file behavior.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>Convert a plugin to all targets:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ai-config<span class="w"> </span>convert<span class="w"> </span>./my-plugin
