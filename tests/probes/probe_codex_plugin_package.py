@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Probe the experimental Codex plugin fixture without using live config or credentials."""
+"""Probe generated Codex packages and lifecycle with no ambient credentials."""
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[import-not-found]
+from ai_config.codex_lifecycle import sync_codex_packages
+from ai_config.converters import TargetTool, convert_plugin
+from ai_config.converters.codex_package import codex_package_spec
+from ai_config.validators.target.codex import CodexOutputValidator
 
-PLUGIN_ID = "experimental-package@ai-config-experimental"
-MARKETPLACE_NAME = "ai-config-experimental"
-SKILL_MARKER = "experimental-package:hello"
 SENSITIVE_ENV_VARS = {
     "CHATGPT_API_KEY",
     "CODEX_API_KEY",
@@ -27,245 +25,273 @@ SENSITIVE_ENV_VARS = {
     "OPENAI_ORG_ID",
     "OPENAI_PROJECT_ID",
 }
+FEATURE_ROWS = {
+    "hooks": ("stable", "true"),
+    "plugin_sharing": ("stable", "true"),
+    "plugins": ("stable", "true"),
+    "remote_plugin": ("stable", "true"),
+}
 
 
-def run_codex(
+def run(
     codex: str,
     args: list[str],
     env: dict[str, str],
     *,
+    cwd: Path | None = None,
     expected_codes: tuple[int, ...] = (0,),
 ) -> subprocess.CompletedProcess[str]:
-    """Run one isolated Codex command and fail with its captured output."""
+    """Run one isolated Codex command and fail with complete evidence."""
     result = subprocess.run(
         [codex, *args],
+        cwd=cwd,
+        env=env,
         check=False,
         capture_output=True,
-        env=env,
         text=True,
     )
     if result.returncode not in expected_codes:
-        command = " ".join([codex, *args])
         raise RuntimeError(
-            f"command failed ({result.returncode}): {command}\n"
+            f"command failed ({result.returncode}): {codex} {' '.join(args)}\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result
 
 
-def load_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
-    """Parse a JSON object from a successful Codex command."""
-    payload: object = json.loads(result.stdout)
-    if not isinstance(payload, dict):
-        raise AssertionError("expected a JSON object from Codex")
-    return cast(dict[str, object], payload)
-
-
-def object_field_equals(value: object, key: str, expected: object) -> bool:
-    """Return whether a JSON object contains the expected field value."""
+def load_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    value: object = json.loads(result.stdout)
     if not isinstance(value, dict):
-        return False
-    return cast(dict[str, object], value).get(key) == expected
+        raise AssertionError("expected JSON object")
+    return cast(dict[str, Any], value)
 
 
-def installed_plugin(payload: dict[str, object]) -> dict[str, object]:
-    """Return the probe plugin entry from a plugin-list response."""
-    installed = payload.get("installed")
-    if not isinstance(installed, list):
-        raise AssertionError("plugin list did not contain an installed array")
-    for entry in installed:
-        if object_field_equals(entry, "pluginId", PLUGIN_ID):
-            return cast(dict[str, object], entry)
-    raise AssertionError(f"{PLUGIN_ID} was not listed as installed")
+def make_unrelated_marketplace(root: Path) -> tuple[str, str]:
+    """Create state that ai-config must never mutate."""
+    marketplace = root / "unrelated"
+    plugin = marketplace / "plugins" / "user-plugin"
+    (marketplace / ".agents/plugins").mkdir(parents=True)
+    (plugin / ".codex-plugin").mkdir(parents=True)
+    (plugin / "skills/user-skill").mkdir(parents=True)
+    (marketplace / ".agents/plugins/marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "user-marketplace",
+                "plugins": [
+                    {
+                        "name": "user-plugin",
+                        "source": {"source": "local", "path": "./plugins/user-plugin"},
+                    }
+                ],
+            }
+        )
+    )
+    (plugin / ".codex-plugin/plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "user-plugin",
+                "version": "1.0.0",
+                "description": "unrelated",
+                "skills": "./skills/",
+            }
+        )
+    )
+    (plugin / "skills/user-skill/SKILL.md").write_text(
+        "---\nname: user-skill\ndescription: unrelated marker\n---\nunrelated marker\n"
+    )
+    return str(marketplace), "user-plugin@user-marketplace"
 
 
-def set_plugin_enabled(config_path: Path, enabled: bool) -> None:
-    """Toggle only the probe plugin in the temporary Codex config."""
-    old = f'[plugins."{PLUGIN_ID}"]\nenabled = {str(not enabled).lower()}'
-    new = f'[plugins."{PLUGIN_ID}"]\nenabled = {str(enabled).lower()}'
-    config = config_path.read_text(encoding="utf-8")
-    if config.count(old) != 1:
-        raise AssertionError("temporary config did not contain the expected plugin toggle")
-    config_path.write_text(config.replace(old, new), encoding="utf-8")
+def set_enabled(config_path: Path, plugin_id: str, enabled: bool) -> None:
+    old = f'[plugins."{plugin_id}"]\nenabled = {str(not enabled).lower()}'
+    new = f'[plugins."{plugin_id}"]\nenabled = {str(enabled).lower()}'
+    content = config_path.read_text()
+    if content.count(old) != 1:
+        raise AssertionError(f"expected one plugin toggle for {plugin_id}")
+    config_path.write_text(content.replace(old, new))
 
 
-def probe(codex: str, fixture_root: Path) -> dict[str, str]:
-    """Exercise marketplace and plugin lifecycle in disposable HOME directories."""
-    if not (fixture_root / ".agents/plugins/marketplace.json").is_file():
-        raise FileNotFoundError(f"invalid marketplace fixture: {fixture_root}")
-
-    with tempfile.TemporaryDirectory(prefix="ai-config-codex-plugin-") as tmp:
-        temp_root = Path(tmp)
-        home = temp_root / "home"
+def probe(codex: str, expected_version: str | None = None) -> dict[str, Any]:
+    """Exercise generation, validation, discovery, update, idempotence, and removal."""
+    repo_root = Path(__file__).resolve().parents[2]
+    source = repo_root / "tests/fixtures/sample-plugins/complete-plugin"
+    with tempfile.TemporaryDirectory(prefix="ai-config-codex-package-") as temporary:
+        root = Path(temporary)
+        home = root / "home"
         codex_home = home / ".codex"
+        output = root / "output"
         codex_home.mkdir(parents=True)
-
+        (codex_home / "config.toml").write_text('model = "unrelated-model"\n')
         env = {key: value for key, value in os.environ.items() if key not in SENSITIVE_ENV_VARS}
         env.update({"HOME": str(home), "CODEX_HOME": str(codex_home)})
 
-        version = run_codex(codex, ["--version"], env).stdout.strip()
-        features = run_codex(codex, ["features", "list"], env).stdout
-        for expected in (
-            "hooks                                stable             true",
-            "plugin_sharing                       stable             true",
-            "plugins                              stable             true",
-            "remote_plugin                        under development  false",
-        ):
-            if expected not in features:
-                raise AssertionError(f"missing expected feature row: {expected}")
-
-        plugin_help = run_codex(codex, ["plugin", "--help"], env).stdout
-        if "validate" in plugin_help:
-            raise AssertionError("update the probe: Codex now exposes plugin validation")
-
-        initial_marketplaces = load_json(
-            run_codex(codex, ["plugin", "marketplace", "list", "--json"], env)
-        )
-        if initial_marketplaces != {"marketplaces": []}:
-            raise AssertionError("temporary Codex home was not empty")
-
-        added = load_json(
-            run_codex(
-                codex,
-                ["plugin", "marketplace", "add", str(fixture_root), "--json"],
-                env,
+        version_output = run(codex, ["--version"], env).stdout.strip()
+        version = version_output.removeprefix("codex-cli ")
+        if expected_version is not None and version != expected_version:
+            raise AssertionError(f"expected Codex {expected_version}, got {version_output}")
+        features_output = run(codex, ["features", "list"], env).stdout
+        feature_evidence: dict[str, str] = {}
+        for name, (stage, value) in FEATURE_ROWS.items():
+            row = next(
+                (line for line in features_output.splitlines() if line.split()[:1] == [name]), None
             )
-        )
-        if added.get("marketplaceName") != MARKETPLACE_NAME:
-            raise AssertionError("Codex added an unexpected marketplace")
+            if row is None or stage not in row or not row.rstrip().endswith(value):
+                raise AssertionError(f"missing exact feature state for {name}: {stage} {value}")
+            feature_evidence[name] = row.strip()
 
-        marketplaces = load_json(run_codex(codex, ["plugin", "marketplace", "list", "--json"], env))
-        listed_marketplaces = marketplaces.get("marketplaces")
-        if not isinstance(listed_marketplaces, list) or not any(
-            object_field_equals(entry, "name", MARKETPLACE_NAME) for entry in listed_marketplaces
+        help_surfaces = {}
+        for args in (
+            ["plugin", "--help"],
+            ["plugin", "add", "--help"],
+            ["plugin", "list", "--help"],
+            ["plugin", "remove", "--help"],
+            ["plugin", "marketplace", "--help"],
+            ["plugin", "marketplace", "add", "--help"],
+            ["plugin", "marketplace", "list", "--help"],
+            ["plugin", "marketplace", "upgrade", "--help"],
+            ["plugin", "marketplace", "remove", "--help"],
         ):
-            raise AssertionError("added marketplace was not listed")
+            key = " ".join(args[:-1])
+            help_surfaces[key] = run(codex, args, env).stdout.splitlines()[0]
 
-        available = load_json(
-            run_codex(codex, ["plugin", "list", "--available", "--json"], env)
-        ).get("available")
-        if not isinstance(available, list) or not any(
-            object_field_equals(entry, "pluginId", PLUGIN_ID) for entry in available
-        ):
-            raise AssertionError("fixture plugin was not available")
+        unrelated_path, unrelated_id = make_unrelated_marketplace(root)
+        load_json(run(codex, ["plugin", "marketplace", "add", unrelated_path, "--json"], env))
+        load_json(run(codex, ["plugin", "add", unrelated_id, "--json"], env))
 
-        install = load_json(run_codex(codex, ["plugin", "add", PLUGIN_ID, "--json"], env))
-        install_path_value = install.get("installedPath")
-        if not isinstance(install_path_value, str):
-            raise AssertionError("install result omitted installedPath")
-        install_path = Path(install_path_value)
-        expected_files = (
-            ".codex-plugin/plugin.json",
-            "skills/hello/SKILL.md",
-            "hooks/hooks.json",
-        )
-        for relative_path in expected_files:
-            if not (install_path / relative_path).is_file():
-                raise AssertionError(f"installed cache omitted {relative_path}")
+        reports = convert_plugin(source, [TargetTool.CODEX], output_dir=output)
+        report = reports[TargetTool.CODEX]
+        if not report.success:
+            raise AssertionError(report.to_json())
+        validation = CodexOutputValidator().validate_all(output)
+        failures = [result.message for result in validation if result.status == "fail"]
+        if failures:
+            raise AssertionError(f"generated package validation failed: {failures}")
 
-        config_path = codex_home / "config.toml"
-        with config_path.open("rb") as config_file:
-            config = tomllib.load(config_file)
-        plugins_config = config.get("plugins")
-        if not isinstance(plugins_config, dict):
-            raise AssertionError("install did not create a plugins config table")
-        plugin_config = plugins_config.get(PLUGIN_ID)
-        if not isinstance(plugin_config, dict) or plugin_config.get("enabled") is not True:
-            raise AssertionError("install did not enable the plugin in config.toml")
+        spec = codex_package_spec("dev-tools", "1.0.0", output)
+        with_env = {key: os.environ.get(key) for key in SENSITIVE_ENV_VARS}
+        os.environ.clear()
+        os.environ.update(env)
+        try:
+            sync_codex_packages(
+                [spec],
+                output_dir=output,
+                refreshed_plugin_ids={spec.plugin_id},
+            )
+            installed = load_json(run(codex, ["plugin", "list", "--json"], env))["installed"]
+            managed = next(item for item in installed if item["pluginId"] == spec.plugin_id)
+            if managed["enabled"] is not True:
+                raise AssertionError("generated plugin was not enabled")
 
-        listed = load_json(run_codex(codex, ["plugin", "list", "--json"], env))
-        if installed_plugin(listed).get("enabled") is not True:
-            raise AssertionError("installed plugin was not enabled")
+            prompt = run(codex, ["-C", str(output), "debug", "prompt-input", "probe"], env).stdout
+            if "dev-tools:code-review" not in prompt:
+                raise AssertionError("enabled generated package skill was not discovered")
+            mcp = run(codex, ["mcp", "list"], env).stdout
+            if "database" not in mcp or "github" not in mcp:
+                raise AssertionError("package MCP servers were not ingested")
+            installed_manifests = list(
+                (codex_home / "plugins" / "cache").glob(
+                    f"{spec.marketplace_name}/{spec.plugin_name}/*/.codex-plugin/plugin.json"
+                )
+            )
+            if len(installed_manifests) != 1:
+                raise AssertionError(
+                    f"expected one installed generated package, got {installed_manifests}"
+                )
+            installed_path = installed_manifests[0].parents[1]
+            if not (installed_path / "hooks/hooks.json").is_file():
+                raise AssertionError("package hooks were not copied into Codex cache")
 
-        prompt = run_codex(
-            codex,
-            ["-C", str(fixture_root), "debug", "prompt-input", "probe"],
-            env,
-        ).stdout
-        if SKILL_MARKER not in prompt:
-            raise AssertionError("enabled plugin skill was not discovered")
+            config_path = codex_home / "config.toml"
+            set_enabled(config_path, spec.plugin_id, False)
+            disabled_prompt = run(
+                codex, ["-C", str(output), "debug", "prompt-input", "probe"], env
+            ).stdout
+            if "dev-tools:code-review" in disabled_prompt:
+                raise AssertionError("disabled generated package skill was discovered")
+            set_enabled(config_path, spec.plugin_id, True)
 
-        set_plugin_enabled(config_path, False)
-        disabled = load_json(run_codex(codex, ["plugin", "list", "--json"], env))
-        if installed_plugin(disabled).get("enabled") is not False:
-            raise AssertionError("disabled plugin was still reported as enabled")
-        disabled_prompt = run_codex(
-            codex,
-            ["-C", str(fixture_root), "debug", "prompt-input", "probe"],
-            env,
-        ).stdout
-        if SKILL_MARKER in disabled_prompt:
-            raise AssertionError("disabled plugin skill was still discovered")
+            before = hashlib.sha256(config_path.read_bytes()).hexdigest()
+            sync_codex_packages([spec], output_dir=output, refreshed_plugin_ids=set())
+            after = hashlib.sha256(config_path.read_bytes()).hexdigest()
+            if before != after:
+                raise AssertionError("idempotent sync changed Codex config")
 
-        set_plugin_enabled(config_path, True)
-        enabled_prompt = run_codex(
-            codex,
-            ["-C", str(fixture_root), "debug", "prompt-input", "probe"],
-            env,
-        ).stdout
-        if SKILL_MARKER not in enabled_prompt:
-            raise AssertionError("re-enabled plugin skill was not discovered")
+            skill_path = spec.marketplace_path / "plugins/dev-tools/skills/code-review/SKILL.md"
+            skill_path.write_text(
+                skill_path.read_text().replace(
+                    "description: Review code for best practices, security issues, and style violations.",
+                    "description: LATEST_UPDATE_MARKER.",
+                )
+            )
+            sync_codex_packages(
+                [spec],
+                output_dir=output,
+                refreshed_plugin_ids={spec.plugin_id},
+            )
+            updated_prompt = run(
+                codex, ["-C", str(output), "debug", "prompt-input", "probe"], env
+            ).stdout
+            if "LATEST_UPDATE_MARKER" not in updated_prompt:
+                raise AssertionError("updated generated package was not reinstalled")
 
-        strict_plugin = run_codex(
-            codex,
-            ["--strict-config", "plugin", "list", "--json"],
-            env,
-            expected_codes=(1,),
-        )
-        if "not supported for `codex plugin`" not in strict_plugin.stderr:
-            raise AssertionError("strict-config behavior for plugin commands changed")
+            sync_codex_packages([], output_dir=output, refreshed_plugin_ids=set())
+        finally:
+            os.environ.clear()
+            os.environ.update(env)
+            for key, value in with_env.items():
+                if value is not None:
+                    os.environ[key] = value
+
+        final_plugins = load_json(run(codex, ["plugin", "list", "--json"], env))["installed"]
+        ids = {item["pluginId"] for item in final_plugins}
+        if spec.plugin_id in ids or unrelated_id not in ids:
+            raise AssertionError(f"removal did not preserve unrelated plugin: {ids}")
+        marketplaces = load_json(run(codex, ["plugin", "marketplace", "list", "--json"], env))[
+            "marketplaces"
+        ]
+        names = {item["name"] for item in marketplaces}
+        if spec.marketplace_name in names or "user-marketplace" not in names:
+            raise AssertionError(f"removal did not preserve unrelated marketplace: {names}")
+        config = config_path.read_text()
+        if 'model = "unrelated-model"' not in config:
+            raise AssertionError("Codex lifecycle clobbered unrelated scalar config")
 
         doctor = load_json(
-            run_codex(
-                codex,
-                ["--strict-config", "doctor", "--json"],
-                env,
-                expected_codes=(0, 1),
-            )
+            run(codex, ["--strict-config", "doctor", "--json"], env, expected_codes=(0, 1))
         )
-        checks = doctor.get("checks")
-        checks_by_name = cast(dict[str, object], checks) if isinstance(checks, dict) else {}
-        config_check = checks_by_name.get("config.load")
-        if not object_field_equals(config_check, "status", "ok"):
-            raise AssertionError("strict Codex doctor did not load the generated config")
-
-        run_codex(codex, ["plugin", "remove", PLUGIN_ID, "--json"], env)
-        after_remove = load_json(run_codex(codex, ["plugin", "list", "--json"], env))
-        if after_remove.get("installed") != [] or install_path.exists():
-            raise AssertionError("plugin removal left the installed plugin or cache version")
-
-        run_codex(
-            codex,
-            ["plugin", "marketplace", "remove", MARKETPLACE_NAME, "--json"],
-            env,
-        )
-        final_marketplaces = load_json(
-            run_codex(codex, ["plugin", "marketplace", "list", "--json"], env)
-        )
-        if final_marketplaces != {"marketplaces": []}:
-            raise AssertionError("marketplace removal left configured state")
+        config_check = doctor.get("checks", {}).get("config.load", {})
+        if config_check.get("status") != "ok":
+            raise AssertionError("strict Codex doctor could not load preserved config")
 
     return {
-        "codex": codex,
-        "version": version,
-        "fixture": str(fixture_root),
         "result": "passed",
+        "version": version_output,
+        "binary": str(Path(codex).resolve()),
+        "install_source": "caller-provided Codex binary",
+        "credentials_removed": sorted(SENSITIVE_ENV_VARS),
+        "features": feature_evidence,
+        "plugin_help_surfaces": help_surfaces,
+        "lifecycle": [
+            "generate",
+            "validate",
+            "marketplace-add/list/remove",
+            "plugin-install/list/remove",
+            "enabled-disabled-reenabled-discovery",
+            "hooks-and-mcp-ingestion",
+            "update-reinstall",
+            "idempotence",
+            "unrelated-state-preservation",
+        ],
     }
 
 
 def main() -> None:
-    """Run the probe and print a small machine-readable result."""
-    fixture_root = (
-        Path(__file__).resolve().parents[1]
-        / "fixtures"
-        / "experimental"
-        / "codex-plugin-marketplace"
-    )
-    codex = shutil.which("codex")
-    if codex is None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--codex", default=shutil.which("codex"))
+    parser.add_argument("--expected-version")
+    args = parser.parse_args()
+    if not args.codex:
         raise SystemExit("codex executable not found")
-    result = probe(codex, fixture_root)
-    print(json.dumps(result, indent=2))
+    print(json.dumps(probe(args.codex, args.expected_version), indent=2))
 
 
 if __name__ == "__main__":

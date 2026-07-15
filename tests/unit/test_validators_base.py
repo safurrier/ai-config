@@ -1,6 +1,5 @@
 """Tests for ai_config.validators.base module."""
 
-
 from ai_config.validators.base import ValidationReport, ValidationResult
 
 

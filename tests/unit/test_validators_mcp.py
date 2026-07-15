@@ -638,9 +638,7 @@ class TestMCPValidatorHTTPTransport:
         results = await validator.validate(mock_context)
         failures = [r for r in results if r.status == "fail"]
         assert len(failures) >= 1
-        assert any(
-            "url" in f.message.lower() and "string" in f.message.lower() for f in failures
-        )
+        assert any("url" in f.message.lower() and "string" in f.message.lower() for f in failures)
 
     @pytest.mark.asyncio
     async def test_headers_must_be_dict(
@@ -716,9 +714,7 @@ class TestMCPValidatorSSETransport:
         """SSE server should pass but produce a deprecation warning."""
         plugin_path, config = plugin_dir
         mcp_config = {
-            "mcpServers": {
-                "sse-server": {"type": "sse", "url": "https://api.example.com/sse"}
-            }
+            "mcpServers": {"sse-server": {"type": "sse", "url": "https://api.example.com/sse"}}
         }
         (plugin_path / ".mcp.json").write_text(json.dumps(mcp_config))
         mock_context.config = config
@@ -735,9 +731,7 @@ class TestMCPValidatorSSETransport:
         failures = [r for r in results if r.status == "fail"]
         assert failures == []
         warnings = [r for r in results if r.status == "warn"]
-        assert any(
-            "sse" in w.message.lower() or "deprecat" in w.message.lower() for w in warnings
-        )
+        assert any("sse" in w.message.lower() or "deprecat" in w.message.lower() for w in warnings)
 
     @pytest.mark.asyncio
     async def test_sse_missing_url_fails(
@@ -775,7 +769,9 @@ class TestMCPValidatorTransportDetection:
 
     def test_explicit_http(self) -> None:
         v = MCPValidator()
-        assert v._detect_transport({"type": "streamable-http", "url": "https://example.com"}) == "http"
+        assert (
+            v._detect_transport({"type": "streamable-http", "url": "https://example.com"}) == "http"
+        )
 
     def test_explicit_sse(self) -> None:
         v = MCPValidator()

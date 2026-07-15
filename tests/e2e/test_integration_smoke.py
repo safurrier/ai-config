@@ -45,8 +45,14 @@ class TestIntegrationSmoke:
         """Verify key output files from conversion."""
         checks = [
             # Codex
-            ("test -d /tmp/smoke-codex/.codex/skills", "Codex Agent Skills dir"),
-            ("ls /tmp/smoke-codex/.codex/skills/*/SKILL.md", "Codex Agent Skill SKILL.md"),
+            (
+                "test -d /tmp/smoke-codex/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills",
+                "Codex package skills dir",
+            ),
+            (
+                "ls /tmp/smoke-codex/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills/*/SKILL.md",
+                "Codex package Agent Skill SKILL.md",
+            ),
             # Cursor
             ("test -d /tmp/smoke-cursor/.cursor/skills", "Cursor skills dir"),
             ("ls /tmp/smoke-cursor/.cursor/skills/*/SKILL.md", "Cursor SKILL.md"),

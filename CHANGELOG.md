@@ -7,13 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-15
+
 ### Added
 
-- Target-native conversion files under `targets/<target>/...` are copied into converted output, allowing plugins to ship tool-specific files that override generated output when needed.
+- Codex conversion now emits one self-contained plugin package and local marketplace per source plugin under `.ai-config/codex/marketplaces/`.
+- Declarative sync installs, refreshes, and removes ai-config-owned Codex packages through the Codex plugin CLI while preserving unrelated marketplaces, plugins, enablement, and settings.
+- Codex package validation, stale loose-output diagnostics, isolated latest-Codex lifecycle probing, and a pinned real-tool Docker lane.
+- Target-native conversion files under `targets/<target>/...` are copied into converted output; Codex files land inside the generated package root.
+
+### Changed
+
+- **Breaking:** the `codex` target now produces package-native skills, hooks, and MCP declarations instead of loose `.codex/skills`, `.codex/prompts`, `.codex/hooks.json`, or direct shared MCP configuration.
+- Claude commands always become Codex package skills and are reported as degraded when Claude-only argument substitution cannot be preserved.
+- Codex lifecycle failures now identify the exact stage and command with actionable remediation.
+
+### Removed
+
+- The `commands_as_skills` conversion setting and `--commands-as-skills` CLI option; package conversion has one deterministic command mapping.
+- Legacy loose-file Codex emission and shared Codex config mutation.
 
 ### Fixed
 
-- Codex skill conversion now emits to `.codex/skills/` with matching frontmatter names, avoiding duplicate Pi skill discovery from the shared `.agents/skills/` directory.
+- Codex removal and update are constrained by ai-config ownership metadata and fail closed on marketplace name collisions.
 
 ## [0.5.0] - 2026-05-08
 
@@ -131,7 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for GitHub and local marketplaces
 - User and project scope plugin installation
 
-[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/safurrier/ai-config/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/safurrier/ai-config/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/safurrier/ai-config/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/safurrier/ai-config/compare/v0.4.0...v0.4.1

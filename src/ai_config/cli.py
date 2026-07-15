@@ -796,11 +796,6 @@ def _doctor_target_mode(
     show_default=True,
     help="Format for the report file (used with --report).",
 )
-@click.option(
-    "--commands-as-skills",
-    is_flag=True,
-    help="Codex only: convert commands to skills instead of prompts.",
-)
 def convert(
     plugin_path: Path,
     targets: tuple[str, ...],
@@ -811,7 +806,6 @@ def convert(
     report_format: str,
     report_path: Path | None,
     report_file_format: str,
-    commands_as_skills: bool,
 ) -> None:
     """Convert a Claude Code plugin to other AI coding tools.
 
@@ -821,7 +815,7 @@ def convert(
 
     \b
     Targets:
-      codex      OpenAI Codex (Agent Skills, prompts, MCP, supported command hooks)
+      codex      OpenAI Codex (installable plugin package with skills, hooks, MCP)
       cursor     Cursor (skills, commands, hooks, MCP)
       opencode   OpenCode (skills, commands, MCP, LSP)
       pi         Pi (skills, prompt templates, supported hook extensions)
@@ -852,7 +846,6 @@ def convert(
             target_list,
             output_dir,
             scope=install_scope,
-            commands_as_skills=commands_as_skills,
         )
         console.print(preview)
         return
@@ -876,7 +869,6 @@ def convert(
             scope=install_scope,
             dry_run=False,
             best_effort=best_effort,
-            commands_as_skills=commands_as_skills,
         )
 
     # Display results

@@ -18,10 +18,12 @@ TEST_MARKETPLACE_DIR = FIXTURES_DIR / "test-marketplace"
 class TestMarketplaceFixtureSchema:
     """Validate test-marketplace fixture matches Claude CLI expectations."""
 
-    @pytest.fixture(params=[
-        ".claude-plugin/marketplace.json",
-        "marketplace.json",
-    ])
+    @pytest.fixture(
+        params=[
+            ".claude-plugin/marketplace.json",
+            "marketplace.json",
+        ]
+    )
     def manifest_path(self, request: pytest.FixtureRequest) -> Path:
         """Both marketplace manifest locations."""
         return TEST_MARKETPLACE_DIR / request.param
@@ -99,7 +101,8 @@ class TestMarketplaceValidatorRejectsObjectSource:
         return MarketplaceManifestValidator()  # type: ignore[name-defined]
 
     def test_object_source_fails_validation(
-        self, validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
+        self,
+        validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
     ) -> None:
         """Object-format source should be rejected by _validate_plugin_entry."""
         results = validator._validate_plugin_entry(
@@ -113,7 +116,8 @@ class TestMarketplaceValidatorRejectsObjectSource:
         assert "string" in failures[0].message.lower()
 
     def test_string_source_passes_validation(
-        self, validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
+        self,
+        validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
     ) -> None:
         """String-format source should pass validation."""
         results = validator._validate_plugin_entry(

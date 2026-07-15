@@ -150,12 +150,8 @@ class TestAllToolsInstallation:
 @pytest.mark.e2e
 @pytest.mark.docker
 @pytest.mark.slow
-class TestCodexPlaceholder:
-    """Placeholder tests for OpenAI Codex integration.
-
-    These tests will be expanded when ai-config adds Codex support.
-    For now, they verify basic installation and document expected behavior.
-    """
+class TestCodexPackageLayout:
+    """Document Codex runtime state versus ai-config package ownership."""
 
     def test_codex_config_dir_structure(self, all_tools_container: Container) -> None:
         """Document expected Codex config directory structure."""
@@ -168,12 +164,11 @@ class TestCodexPlaceholder:
         if not installed:
             pytest.skip("Codex not installed")
 
-        # Document expected structure (to be implemented)
         expected_structure = """
-        Expected Codex config structure:
-        - ~/.codex/skills/  # User Codex Agent Skills discovery directory
-        - ~/.codex/config.toml # Main Codex configuration including MCP servers
-        - ~/.codex/hooks.json  # Hooks config when codex_hooks is enabled
+        Codex package lifecycle structure:
+        - <output>/.ai-config/codex/marketplaces/  # ai-config-owned package sources
+        - ~/.codex/config.toml                     # Codex-owned install/enablement state
+        - ~/.codex/plugins/cache/                  # Codex-owned installed package cache
         """
         print(expected_structure)  # noqa: T201
 

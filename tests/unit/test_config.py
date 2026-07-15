@@ -47,7 +47,10 @@ class TestFindConfigFile:
         """Should raise when no config found in default paths."""
         monkeypatch.chdir(tmp_path)
         # Patch the module-level default paths to only check tmp_path locations
-        fake_paths = [tmp_path / ".ai-config" / "config.yaml", tmp_path / ".ai-config" / "config.yml"]
+        fake_paths = [
+            tmp_path / ".ai-config" / "config.yaml",
+            tmp_path / ".ai-config" / "config.yml",
+        ]
         monkeypatch.setattr("ai_config.config.DEFAULT_CONFIG_PATHS", fake_paths)
         with pytest.raises(ConfigNotFoundError, match="No config file found"):
             find_config_file()
@@ -124,7 +127,6 @@ class TestLoadConfig:
                     targets: [codex, cursor]
                     scope: user
                     output_dir: ./converted
-                    commands_as_skills: true
             """)
         )
 
@@ -135,8 +137,17 @@ class TestLoadConfig:
         assert conversion.enabled is True
         assert conversion.targets == ("codex", "cursor")
         assert conversion.scope == "user"
-        assert conversion.commands_as_skills is True
         assert conversion.output_dir == str(tmp_path / "converted")
+
+    def test_removed_commands_as_skills_has_migration_error(self, tmp_path: Path) -> None:
+        """The removed loose-output option fails with a direct migration message."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "version: 1\ntargets:\n  - type: claude\n    config:\n      conversion:\n"
+            "        targets: [codex]\n        commands_as_skills: true\n"
+        )
+        with pytest.raises(ConfigValidationError, match="removed in 0.6.0"):
+            load_config(config_file)
 
     def test_config_with_conversion_disabled(self, tmp_path: Path) -> None:
         """Conversion disabled should result in no conversion config."""

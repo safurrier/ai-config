@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ai_config.adapters import claude
+from ai_config.codex_lifecycle import sync_codex_packages
 from ai_config.converters import InstallScope, TargetTool, convert_plugin
+from ai_config.converters.codex_package import CodexPackageSpec, codex_package_spec
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -22,7 +24,7 @@ from ai_config.types import (
     TargetConfig,
 )
 
-_CONVERSION_CACHE_VERSION = 3
+_CONVERSION_CACHE_VERSION = 4
 
 
 def _conversion_cache_path() -> Path:
@@ -61,7 +63,6 @@ def _conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str
         "targets": sorted(conversion.targets),
         "scope": conversion.scope,
         "output_dir": str(output_dir),
-        "commands_as_skills": conversion.commands_as_skills,
     }
     return json.dumps(payload, sort_keys=True)
 
@@ -338,7 +339,9 @@ def sync_target(
     result.errors.extend(plugin_errors)
 
     # Run conversion if configured
-    conversion_errors = _sync_conversions(target.config, dry_run, force_convert)
+    conversion_actions, conversion_errors = _sync_conversions(target.config, dry_run, force_convert)
+    for action in conversion_actions:
+        result.add_success(action)
     result.errors.extend(conversion_errors)
 
     # If there were any errors, mark as failed
@@ -352,11 +355,12 @@ def _sync_conversions(
     config: ClaudeTargetConfig,
     dry_run: bool = False,
     force_convert: bool = False,
-) -> list[str]:
-    """Convert installed plugins to other targets when configured."""
+) -> tuple[list[SyncAction], list[str]]:
+    """Convert plugins and converge ai-config-owned Codex package lifecycle."""
     if config.conversion is None or not config.conversion.enabled:
-        return []
+        return [], []
 
+    actions: list[SyncAction] = []
     errors: list[str] = []
     cache = _load_conversion_cache()
     cache_entries = cache.setdefault("entries", {})
@@ -364,7 +368,7 @@ def _sync_conversions(
 
     installed_plugins, plugin_errors = claude.list_installed_plugins()
     if plugin_errors:
-        return plugin_errors
+        return [], plugin_errors
 
     installed_by_id = {p.id: p for p in installed_plugins}
 
@@ -373,6 +377,9 @@ def _sync_conversions(
     targets = [TargetTool(t) for t in conversion.targets]
     scope = InstallScope(conversion.scope)
     signature = _conversion_signature(conversion, output_dir)
+    codex_enabled = TargetTool.CODEX in targets
+    codex_specs: list[CodexPackageSpec] = []
+    refreshed_codex_ids: set[str] = set()
 
     for plugin_config in config.plugins:
         if not plugin_config.enabled:
@@ -389,6 +396,11 @@ def _sync_conversions(
             )
             continue
 
+        if codex_enabled:
+            codex_specs.append(
+                codex_package_spec(plugin_config.plugin_name, installed.version, output_dir)
+            )
+
         plugin_hash = _compute_plugin_hash(plugin_path)
         if not force_convert and plugin_hash is not None:
             signature_map = cache_entries.get(str(plugin_path), {})
@@ -404,7 +416,6 @@ def _sync_conversions(
                 scope=scope,
                 dry_run=dry_run,
                 best_effort=True,
-                commands_as_skills=conversion.commands_as_skills,
             )
             report_errors = [
                 f"{target.value}: {diagnostic.message}"
@@ -418,6 +429,17 @@ def _sync_conversions(
                 )
                 continue
 
+            if codex_enabled:
+                codex_report = reports.get(TargetTool.CODEX)
+                if codex_report is not None:
+                    refreshed_codex_ids.add(
+                        codex_package_spec(
+                            codex_report.source_plugin.plugin_id,
+                            codex_report.source_plugin.version,
+                            output_dir,
+                        ).plugin_id
+                    )
+
             if not dry_run and plugin_hash is not None:
                 signature_map = cache_entries.setdefault(str(plugin_path), {})
                 signature_map[signature] = {
@@ -428,10 +450,32 @@ def _sync_conversions(
         except Exception as e:
             errors.append(f"Conversion failed for {plugin_config.id}: {e}")
 
-    if cache_dirty:
+    if errors:
+        return actions, errors
+
+    if codex_enabled:
+        try:
+            lifecycle_actions = sync_codex_packages(
+                codex_specs,
+                output_dir=output_dir,
+                refreshed_plugin_ids=refreshed_codex_ids,
+                dry_run=dry_run,
+            )
+            actions.extend(
+                SyncAction(
+                    action=action.action,  # type: ignore[arg-type]
+                    target=action.target,
+                    reason=action.reason,
+                )
+                for action in lifecycle_actions
+            )
+        except Exception as error:
+            errors.append(str(error))
+
+    if cache_dirty and not errors:
         _save_conversion_cache(cache)
 
-    return errors
+    return actions, errors
 
 
 def _resolve_conversion_output_dir(conversion: ConversionConfig) -> Path:

@@ -111,7 +111,6 @@ conversion:
     - pi
   scope: project
   output_dir: ./converted    # optional
-  commands_as_skills: false   # optional
 ```
 
 **Fields:**
@@ -122,7 +121,6 @@ conversion:
 | `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
 | `scope` | string | `"project"` | `"user"` (writes to home dir) or `"project"` (writes to cwd) |
 | `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
-| `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
 
 When `output_dir` is not set, output goes to the home directory (`~`) for `user` scope or the current directory for `project` scope.
 
@@ -177,7 +175,6 @@ targets:
           - opencode
           - pi
         scope: project
-        commands_as_skills: false
 ```
 
 ## Environment Variables

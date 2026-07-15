@@ -100,6 +100,7 @@ class TestEmitterProtocolDuckTyping:
 
     def test_custom_emitter_satisfies_protocol(self) -> None:
         """A custom class with the right shape satisfies the protocol."""
+
         # Define a minimal protocol inline for testing
         @runtime_checkable
         class Emitter(Protocol):

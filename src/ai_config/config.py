@@ -217,12 +217,10 @@ def _parse_conversion(
             path = path.resolve()
         output_dir = str(path)
 
-    commands_as_skills = data.get("commands_as_skills") or data.get("commands-as-skills")
-    if commands_as_skills is None:
-        commands_as_skills = False
-    if not isinstance(commands_as_skills, bool):
+    if "commands_as_skills" in data or "commands-as-skills" in data:
         raise ConfigValidationError(
-            f"Conversion commands_as_skills must be boolean, got: {type(commands_as_skills)}"
+            "Conversion commands_as_skills was removed in 0.6.0: "
+            "Codex commands now always become package skills; remove this field."
         )
 
     return ConversionConfig(
@@ -230,7 +228,6 @@ def _parse_conversion(
         targets=tuple(targets),  # type: ignore[arg-type]
         scope=scope,
         output_dir=output_dir,
-        commands_as_skills=commands_as_skills,
     )
 
 

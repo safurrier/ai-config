@@ -66,14 +66,14 @@ Note: This spec does not assume a "list installed plugins" CLI exists as a stabl
 
 ### 3.2 OpenAI Codex (Codex CLI / IDE surfaces)
 
-#### 3.2.1 Slash commands / interactive control
-Codex provides a slash-command popup during interactive sessions. This is the primary "TUI validation" channel for capabilities like status and MCP visibility.
+#### 3.2.1 Plugin packages and marketplaces
+Codex supports installable plugin packages containing a `.codex-plugin/plugin.json` manifest and package-local skills, hooks, and MCP servers. Local marketplaces are registered and packages are installed, listed, and removed through `codex plugin` commands.
 
-#### 3.2.2 Custom prompts (deprecated) — tightened
-Codex supports "Custom Prompts" as top-level Markdown files invocable as slash commands, but they are deprecated in favor of skills. Custom prompts live under `~/.codex/prompts/` (top-level Markdown files only) and are invoked as `/prompts:<name>`. The converter may still emit these as an optional output, but must mark them as legacy/deprecated.
+#### 3.2.2 Agent Skills (first-class)
+Codex package skills are reusable instruction/resource bundles. Claude commands map to package skills; Claude-only argument substitution is reported as degraded rather than emitted as a legacy custom prompt.
 
-#### 3.2.3 Agent Skills (first-class)
-Codex supports Agent Skills as reusable packages (instructions/resources/optional scripts) and positions them as the preferred reusable mechanism.
+#### 3.2.3 Ownership
+ai-config owns generated package sources, local marketplace sources, and its ownership record. Codex owns installed cache, enablement, and shared configuration. The converter does not write loose `.codex` skills, prompts, hooks, or MCP tables.
 
 ---
 
@@ -305,10 +305,10 @@ Statuses:
 
 | Component | Claude Code | Codex | Cursor | OpenCode | Pi |
 |-----------|-------------|-------|--------|----------|----|
-| Skill | native (Claude plugin skills) | native (Agent Skills from `.codex/skills`) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
-| Command | native (plugin commands exist, though skills are recommended) | fallback/transform (emit deprecated custom prompts optionally, or skills with `--commands-as-skills`) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). | transform (Pi prompt templates) |
-| Hook | native (Claude hooks in plugin system) | transform (supported command hooks emit to `.codex/hooks.json` with `features.codex_hooks`) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) | emulate (generated TypeScript extension) |
-| MCP server | native (Claude plugin MCP support) | transform (Codex uses `[mcp_servers.*]` in `.codex/config.toml`) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) | unsupported |
+| Skill | native (Claude plugin skills) | native (package-local Agent Skill) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
+| Command | native (plugin commands exist, though skills are recommended) | transform/fallback (package skill; degraded when Claude argument substitution is used) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). | transform (Pi prompt templates) |
+| Hook | native (Claude hooks in plugin system) | transform (supported command hooks in the package hooks file) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) | emulate (generated TypeScript extension) |
+| MCP server | native (Claude plugin MCP support) | transform (package manifest `mcpServers`) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) | unsupported |
 | Agent | native (Claude plugin agents) | unsupported (no documented matching file schema in cited sources) | unsupported | unsupported | unsupported |
 | LSP | native (Claude plugin LSP servers) | unsupported | unsupported | transform (OpenCode supports LSP configuration via the lsp section in opencode.json, including custom LSP servers by command + extensions). | unsupported |
 
@@ -326,17 +326,18 @@ Statuses:
 
 ### 7.3 Command emission
 - **Cursor**: emit project commands under `.cursor/commands/<plugin_id>-<command>.md`.
-- **Codex**: optionally emit legacy custom prompts, marked deprecated in output and in diagnostics.
+- **Codex**: always emit commands as package-local skills and report Claude-only argument substitution as degraded.
 - **OpenCode**: emit markdown commands under `.opencode/commands/<plugin_id>-<command>.md` (project scope) or `~/.config/opencode/commands/` (user scope). Use YAML frontmatter for metadata when needed (description/agent/model). Alternatively (optional), emit JSON-defined commands into opencode.json under command.
 
 ### 7.4 Hooks emission
 - **Claude**: emit hooks as Claude plugin hooks per schema.
 - **Cursor**: emit Cursor hooks (implementation requires Cursor hook configuration schema; Cursor documents the hooks subsystem but this spec does not hardcode file formats beyond what's explicitly documented).
-- **Codex**: emit supported command hooks to `.codex/hooks.json` and enable `[features] codex_hooks = true` in `.codex/config.toml`; diagnose unsupported events and non-command handlers.
+- **Codex**: emit supported command hooks into the package and rewrite `${CLAUDE_PLUGIN_ROOT}` to `${PLUGIN_ROOT}`; copy referenced support files and diagnose unsupported or unsafe handlers.
 - **Pi**: emit supported command hooks as a TypeScript extension under `.pi/extensions/` or `.pi/agent/extensions/`; diagnose unsupported events and non-command handlers.
 
 ### 7.5 MCP emission
 - Convert Claude plugin MCP entries to each target's MCP configuration surface.
+- For Codex, emit `mcpServers` in the package manifest, rewrite plugin-root references, and include referenced local support files.
 - For OpenCode, allow `OPENCODE_CONFIG_DIR` support: emit into the selected config directory, so validation can be done against that directory.
 
 ### 7.6 LSP emission (OpenCode)
@@ -437,37 +438,36 @@ class ValidationReport(BaseModel):
 
 ### 9.2 Codex validation steps
 
-**X1 — Validate interactive slash command surface is reachable**
-- Evidence: TUI
+**X1 — Package and marketplace validate**
+- Evidence: FILESYSTEM + CLI
 - Steps:
-  1. Start Codex interactive session
-  2. Type `/` to open slash popup
-- Expect: slash popup opens
-- Source: Codex slash commands guide.
+  1. Run `ai-config doctor --target codex <output-dir>`.
+  2. Register the generated local marketplace with `codex plugin marketplace add`.
+- Expect: package paths and manifests validate; marketplace appears in JSON listing.
 
-**X2 — MCP status visible**
-- Evidence: TUI
+**X2 — Plugin lifecycle converges**
+- Evidence: CLI
 - Steps:
-  1. In Codex session, run `/mcp`
-- Expect: MCP status/control output appears
-- Source: Codex slash commands guide documents `/mcp` and related control surfaces.
+  1. Install the generated selector with `codex plugin add`.
+  2. Verify enabled state with `codex plugin list --json`.
+  3. Re-sync, update source, re-sync, then remove source and re-sync.
+- Expect: install, idempotence, refresh, and removal succeed without duplicate or unrelated state changes.
 
-**X3 — Skill availability and usage**
-- Evidence: TUI
+**X3 — Skill discovery and package ingestion**
+- Evidence: CLI
 - Steps:
-  1. Ensure exported skills are installed (per tool's configured skills discovery)
-  2. Use the UI flow to invoke skills (converter should provide a specific "how to invoke" note per Codex surface used)
-- Expect: skill can be invoked / recognized
-- Source: Codex skills docs establish skills as first-class.
+  1. Run auth-free `codex debug prompt-input` in an isolated home.
+  2. Verify package skills when enabled, absent when disabled, and restored when re-enabled.
+  3. Verify hooks in the installed cache and MCP servers through `codex mcp list`.
+- Expect: package components are visible only while the generated plugin is enabled.
 
-**X4 — Custom prompts (deprecated) listed/invocable (optional)**
-- Evidence: FILESYSTEM + TUI
+**X4 — Shared config remains valid**
+- Evidence: CLI
 - Steps:
-  1. Verify `~/.codex/prompts/<name>.md` exists (top-level; no subdirectories).
-  2. Restart Codex.
-  3. Confirm the prompt appears as `/prompts:<name>` in the slash command menu and is invocable.
-- Expect: prompt usable
-- Source: Custom Prompts page (deprecated).
+  1. Seed unrelated settings, marketplace, and plugin state.
+  2. Complete the managed lifecycle.
+  3. Run `codex --strict-config doctor --json`.
+- Expect: unrelated state remains and strict configuration loading succeeds.
 
 ### 9.3 Cursor validation steps
 
@@ -557,10 +557,8 @@ Some validations are inherently TUI-driven (`/` menus, slash commands). tmux can
 
 ## 12) Explicit gaps / TODOs (must be resolved by additional primary research before claiming full automation)
 
-1. **Codex skill discovery is documented**: Codex reads skills from `.codex/skills` in `$HOME` and within repositories. This converter targets `.codex/skills` by default because the generic `.agents/skills` directory is also scanned by other tools such as Pi and can cause duplicate cross-tool skill discovery.
+1. **Cursor skills path/version behavior is version-dependent**: Cursor indicates Agent Skills are compatible with Claude Skills format, but rollout/activation can vary (some users report it only enables when `~/.claude/skills` already exists). Do not hardcode user-global paths without primary Cursor docs confirming them; treat as conditional and include a "detection + instructions" step.
 
-2. **Cursor skills path/version behavior is version-dependent**: Cursor indicates Agent Skills are compatible with Claude Skills format, but rollout/activation can vary (some users report it only enables when `~/.claude/skills` already exists). Do not hardcode user-global paths without primary Cursor docs confirming them; treat as conditional and include a "detection + instructions" step.
-
-3. **OpenCode CLI enumeration for skills** (not assumed; add only when documented as stable).
+2. **OpenCode CLI enumeration for skills** (not assumed; add only when documented as stable).
 
 These gaps are intentionally surfaced so the tool does not claim guarantees it cannot verify from authoritative sources.

@@ -1,6 +1,7 @@
 """Tests for ai_config.watch module."""
 
 from pathlib import Path
+from threading import Event
 from unittest.mock import MagicMock
 
 import pytest
@@ -339,7 +340,8 @@ class TestChangeCollector:
         config_path = tmp_path / "config.yaml"
         config_path.touch()
 
-        callback = MagicMock()
+        callback_called = Event()
+        callback = MagicMock(side_effect=lambda _changes: callback_called.set())
         collector = ChangeCollector(
             config_path=config_path,
             plugin_directories=[],
@@ -354,12 +356,7 @@ class TestChangeCollector:
 
         collector.on_modified(event)
 
-        # Wait for debounce
-        import time
-
-        time.sleep(0.05)
-
-        # Callback should have been called
+        assert callback_called.wait(timeout=1), "debounced callback did not run"
         assert callback.called
         changes = callback.call_args[0][0]
         assert len(changes) == 1
@@ -370,7 +367,8 @@ class TestChangeCollector:
         config_path = tmp_path / "config.yaml"
         config_path.touch()
 
-        callback = MagicMock()
+        callback_called = Event()
+        callback = MagicMock(side_effect=lambda _changes: callback_called.set())
         collector = ChangeCollector(
             config_path=config_path,
             plugin_directories=[],
@@ -385,11 +383,7 @@ class TestChangeCollector:
 
         collector.on_modified(event)
 
-        import time
-
-        time.sleep(0.05)
-
-        # Pending should be cleared
+        assert callback_called.wait(timeout=1), "debounced callback did not run"
         assert len(collector._pending_changes) == 0
 
     def test_ignores_directory_events(self, collector: ChangeCollector, tmp_path: Path) -> None:

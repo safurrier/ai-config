@@ -30,6 +30,13 @@ from ai_config.types import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_codex_lifecycle():
+    """Operations tests do not invoke the real Codex binary."""
+    with patch("ai_config.operations.sync_codex_packages", return_value=[]) as lifecycle:
+        yield lifecycle
+
+
 @pytest.fixture
 def sample_config() -> AIConfig:
     """Sample config with one marketplace and two plugins."""
@@ -246,8 +253,9 @@ class TestSyncTarget:
         mock_installed_marketplaces: list[InstalledMarketplace],
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
+        isolate_codex_lifecycle,
     ) -> None:
-        """Sync should run conversion when conversion config is present."""
+        """Sync should run conversion and Codex package lifecycle when configured."""
         conversion = ConversionConfig(
             enabled=True,
             targets=("codex",),
@@ -255,7 +263,9 @@ class TestSyncTarget:
             output_dir=None,
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )
@@ -282,6 +292,7 @@ class TestSyncTarget:
             call_args = mock_convert.call_args.kwargs
             assert call_args["plugin_path"] == Path(mock_installed_plugins[0].install_path)
             assert call_args["output_dir"] == Path(tmp_path / "home")
+            isolate_codex_lifecycle.assert_called_once()
 
     def test_sync_skips_conversion_when_hash_unchanged(
         self,
@@ -298,7 +309,9 @@ class TestSyncTarget:
             output_dir=None,
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )
@@ -351,7 +364,9 @@ class TestSyncTarget:
             output_dir=None,
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )
@@ -368,7 +383,10 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
             patch("ai_config.operations.convert_plugin") as mock_convert,
         ):
@@ -392,7 +410,9 @@ class TestSyncTarget:
             output_dir=None,
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )
@@ -420,7 +440,10 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
             patch("ai_config.operations.convert_plugin", return_value={TargetTool.CODEX: report}),
             patch("ai_config.operations._save_conversion_cache", side_effect=_capture_cache),
@@ -488,7 +511,10 @@ class TestSyncTarget:
                     [],
                 ),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
@@ -558,7 +584,10 @@ class TestSyncTarget:
                     [],
                 ),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
@@ -611,7 +640,10 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=([], []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
@@ -635,7 +667,9 @@ class TestSyncTarget:
             output_dir=None,
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )
@@ -657,7 +691,10 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value={"version": 1, "entries": {}}),
+            patch(
+                "ai_config.operations._load_conversion_cache",
+                return_value={"version": 1, "entries": {}},
+            ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
             patch("ai_config.operations.convert_plugin", return_value={TargetTool.PI: report}),
         ):
@@ -678,7 +715,9 @@ class TestSyncTarget:
             scope="user",
         )
         target_config = ClaudeTargetConfig(
-            marketplaces={"my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")},
+            marketplaces={
+                "my-marketplace": MarketplaceConfig(source=PluginSource.GITHUB, repo="owner/repo")
+            },
             plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
             conversion=conversion,
         )

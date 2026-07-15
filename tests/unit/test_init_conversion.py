@@ -93,9 +93,7 @@ class TestInitConfigWithConversion:
         """InitConfig should have optional conversion field."""
         config = InitConfig(
             config_path=Path("/tmp/config.yaml"),
-            marketplaces=[
-                MarketplaceChoice(name="my-mp", source="github", repo="owner/repo")
-            ],
+            marketplaces=[MarketplaceChoice(name="my-mp", source="github", repo="owner/repo")],
             plugins=[PluginChoice(id="my-plugin", marketplace="my-mp")],
         )
         # Conversion should be None by default
@@ -128,11 +126,13 @@ class TestPromptConversionTargets:
 
     def test_prompt_conversion_accepted_with_targets(self) -> None:
         """User accepts conversion and selects targets with default scope."""
-        p = ScriptedPrompter([
-            True,  # wants conversion
-            ["codex", "cursor"],  # target checkbox
-            False,  # custom dir? no
-        ])
+        p = ScriptedPrompter(
+            [
+                True,  # wants conversion
+                ["codex", "cursor"],  # target checkbox
+                False,  # custom dir? no
+            ]
+        )
         result = prompt_conversion_targets(MagicMock(), prompter=p, default_scope="user")
         assert result is not None
         assert result.enabled is True
@@ -143,12 +143,14 @@ class TestPromptConversionTargets:
 
     def test_prompt_conversion_with_custom_dir(self) -> None:
         """User accepts conversion with custom output directory."""
-        p = ScriptedPrompter([
-            True,  # wants conversion
-            ["codex", "cursor", "opencode"],  # targets
-            True,  # custom dir? yes
-            "./converted",  # dir path
-        ])
+        p = ScriptedPrompter(
+            [
+                True,  # wants conversion
+                ["codex", "cursor", "opencode"],  # targets
+                True,  # custom dir? yes
+                "./converted",  # dir path
+            ]
+        )
         result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is not None
         assert result.enabled is True
@@ -157,10 +159,12 @@ class TestPromptConversionTargets:
 
     def test_prompt_conversion_no_targets_selected(self) -> None:
         """User accepts but selects no targets → treated as disabled."""
-        p = ScriptedPrompter([
-            True,  # wants conversion
-            [],  # no targets selected
-        ])
+        p = ScriptedPrompter(
+            [
+                True,  # wants conversion
+                [],  # no targets selected
+            ]
+        )
         result = prompt_conversion_targets(MagicMock(), prompter=p)
         assert result is not None
         assert result.enabled is False
@@ -173,11 +177,13 @@ class TestPromptConversionTargets:
 
     def test_prompt_uses_default_scope(self) -> None:
         """Conversion uses the scope passed from plugin selection."""
-        p = ScriptedPrompter([
-            True,  # wants conversion
-            ["codex"],  # targets
-            False,  # custom dir? no
-        ])
+        p = ScriptedPrompter(
+            [
+                True,  # wants conversion
+                ["codex"],  # targets
+                False,  # custom dir? no
+            ]
+        )
         result = prompt_conversion_targets(MagicMock(), prompter=p, default_scope="project")
         assert result is not None
         assert result.scope == "project"

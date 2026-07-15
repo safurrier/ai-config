@@ -67,7 +67,7 @@ class TestMainGroup:
         """Shows version info."""
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.5.0" in result.output
+        assert "0.6.0" in result.output
 
     def test_help(self, runner: CliRunner) -> None:
         """Shows help text."""
@@ -219,7 +219,11 @@ class TestConvertCommand:
     """Tests for convert command."""
 
     def test_convert_scope_user_sets_output_dir(
-        self, runner: CliRunner, minimal_plugin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        runner: CliRunner,
+        minimal_plugin: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Scope user should map output_dir to home when --output not provided."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")

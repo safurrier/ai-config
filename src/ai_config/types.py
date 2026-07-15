@@ -70,7 +70,6 @@ class ConversionConfig:
     targets: tuple[Literal["codex", "cursor", "opencode", "pi"], ...] = field(default_factory=tuple)
     scope: Literal["user", "project"] = "project"
     output_dir: str | None = None
-    commands_as_skills: bool = False
 
     def __post_init__(self) -> None:
         if not self.enabled:
@@ -133,7 +132,18 @@ class PluginStatus:
 class SyncAction:
     """A single action to be taken during sync."""
 
-    action: Literal["install", "uninstall", "enable", "disable", "register_marketplace"]
+    action: Literal[
+        "install",
+        "uninstall",
+        "enable",
+        "disable",
+        "register_marketplace",
+        "register_codex_marketplace",
+        "install_codex_plugin",
+        "update_codex_plugin",
+        "remove_codex_plugin",
+        "remove_codex_marketplace",
+    ]
     target: str  # plugin id or marketplace name
     scope: Literal["user", "project", "local"] | None = None
     reason: str = ""

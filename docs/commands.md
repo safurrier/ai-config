@@ -222,7 +222,6 @@ ai-config convert PLUGIN_PATH
 | `--format FORMAT` | Console output: `summary`, `markdown`, or `json` |
 | `--report PATH` | Write conversion report to a file |
 | `--report-format FORMAT` | Report file format: `json` (default) or `markdown` |
-| `--commands-as-skills` | Convert commands to skills instead of prompts (Codex) |
 
 **Arguments:**
 
@@ -232,7 +231,7 @@ ai-config convert PLUGIN_PATH
 
 Supported targets:
 
-- **codex** — OpenAI Codex (`.codex/skills/` plus `.codex/config.toml`, prompts, and hooks)
+- **codex** — OpenAI Codex (installable packages and local marketplaces under `.ai-config/codex/`; configured sync manages the Codex CLI lifecycle)
 - **cursor** — Cursor (`.cursor/` dir with skills, commands, hooks, and MCP config)
 - **opencode** — OpenCode (`opencode.json` + `.opencode/` skills dir)
 - **pi** — Pi (`.pi/` dir with skills, prompt templates, and extensions)

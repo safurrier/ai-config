@@ -81,7 +81,7 @@ class TestConversionCLI:
         # Codex output
         exit_code, _ = exec_in_container(
             claude_container,
-            "test -d /tmp/converted/.codex",
+            "test -d /tmp/converted/.ai-config/codex/marketplaces",
         )
         assert exit_code == 0, "Codex output directory not created"
 
@@ -128,14 +128,14 @@ class TestCodexConversion:
         # Check skill directories exist
         exit_code, _ = exec_in_container(
             claude_container,
-            "test -f /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
+            "test -f /tmp/codex-test/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills/code-review/SKILL.md",
         )
         assert exit_code == 0, "SKILL.md not created for code-review"
 
         # Check SKILL.md content
         exit_code, content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-test/.codex/skills/dev-tools-code-review/SKILL.md",
+            "cat /tmp/codex-test/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills/code-review/SKILL.md",
         )
         assert exit_code == 0
         assert "name:" in content
@@ -144,7 +144,7 @@ class TestCodexConversion:
         assert "allowed-tools:" not in content
 
     def test_hooks_config_created(self, claude_container: Container) -> None:
-        """Test Codex conversion emits hooks.json and enables the hooks feature."""
+        """Test Codex conversion emits package-native hooks and manifest reference."""
         exit_code, _ = exec_in_container(
             claude_container,
             "rm -rf /tmp/codex-hooks && mkdir -p /tmp/codex-hooks",
@@ -157,21 +157,21 @@ class TestCodexConversion:
 
         exit_code, hooks_content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-hooks/.codex/hooks.json",
+            "cat /tmp/codex-hooks/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/hooks/hooks.json",
         )
         assert exit_code == 0
         assert "PreToolUse" in hooks_content
-        assert "PostToolUse" in hooks_content
+        assert "CLAUDE_PLUGIN_ROOT" not in hooks_content
 
         exit_code, config_content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-hooks/.codex/config.toml",
+            "cat /tmp/codex-hooks/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/.codex-plugin/plugin.json",
         )
         assert exit_code == 0
-        assert "codex_hooks = true" in config_content
+        assert '"hooks": "./hooks/hooks.json"' in config_content
 
     def test_mcp_config_created(self, claude_container: Container) -> None:
-        """Test that MCP config is created in TOML format for Codex."""
+        """Test that MCP config is embedded in the Codex package manifest."""
         # Run conversion
         exit_code, _ = exec_in_container(
             claude_container,
@@ -186,16 +186,17 @@ class TestCodexConversion:
         # Check MCP config exists
         exit_code, content = exec_in_container(
             claude_container,
-            "cat /tmp/codex-mcp/.codex/config.toml",
+            "cat /tmp/codex-mcp/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/.codex-plugin/plugin.json",
         )
         assert exit_code == 0
-        assert "[mcp_servers." in content
-        assert "command" in content
+        assert '"mcpServers"' in content
+        assert '"command"' in content
 
-    def test_prompts_user_scope_written_to_home(self, claude_container: Container) -> None:
-        """User-scope prompts should be written to ~/.codex/prompts/."""
-        # Clean any prior prompts
-        exec_in_container(claude_container, "rm -rf /home/testuser/.codex/prompts")
+    def test_commands_become_package_skills_for_user_scope(
+        self, claude_container: Container
+    ) -> None:
+        """Codex commands always become package skills; loose prompts are never written."""
+        exec_in_container(claude_container, "rm -rf /home/testuser/.ai-config/codex")
 
         exit_code, output = exec_in_container(
             claude_container,
@@ -206,10 +207,10 @@ class TestCodexConversion:
 
         exit_code, listing = exec_in_container(
             claude_container,
-            "ls /home/testuser/.codex/prompts",
+            "ls /home/testuser/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills",
         )
         assert exit_code == 0
-        assert "dev-tools-commit.md" in listing
+        assert "command-commit" in listing
 
 
 @pytest.mark.e2e
@@ -318,8 +319,8 @@ class TestOpenCodeConversion:
             claude_container,
             "cat > /tmp/multi-lsp/.claude-plugin/plugin.json <<'EOF'\n"
             "{\n"
-            "  \"name\": \"multi-lsp\",\n"
-            "  \"lspServers\": \"./.lsp.json\"\n"
+            '  "name": "multi-lsp",\n'
+            '  "lspServers": "./.lsp.json"\n'
             "}\n"
             "EOF",
         )
@@ -327,8 +328,8 @@ class TestOpenCodeConversion:
             claude_container,
             "cat > /tmp/multi-lsp/.lsp.json <<'EOF'\n"
             "{\n"
-            "  \"py\": {\"command\": \"pylsp\"},\n"
-            "  \"go\": {\"command\": \"gopls\"}\n"
+            '  "py": {"command": "pylsp"},\n'
+            '  "go": {"command": "gopls"}\n'
             "}\n"
             "EOF",
         )
@@ -384,8 +385,8 @@ class TestBinarySkillAssets:
             claude_container,
             "cat > /tmp/bin-plugin/.claude-plugin/plugin.json <<'EOF'\n"
             "{\n"
-            "  \"name\": \"bin-plugin\",\n"
-            "  \"skills\": \"./skills\"\n"
+            '  "name": "bin-plugin",\n'
+            '  "skills": "./skills"\n'
             "}\n"
             "EOF",
         )
@@ -418,7 +419,7 @@ class TestBinarySkillAssets:
             claude_container,
             "python - <<'PY'\n"
             "from pathlib import Path\n"
-            "p = Path('/tmp/bin-out/.codex/skills/bin-plugin-bin-skill/asset.bin')\n"
+            "p = Path('/tmp/bin-out/.ai-config/codex/marketplaces/ai-config-bin-plugin/plugins/bin-plugin/skills/bin-skill/asset.bin')\n"
             "print(p.stat().st_size)\n"
             "PY",
         )
@@ -611,9 +612,7 @@ class TestDoctorTargetValidation:
 
     def test_doctor_target_pi_valid(self, claude_container: Container) -> None:
         """Test doctor validates Pi converted output."""
-        exec_in_container(
-            claude_container, "rm -rf /tmp/doctor-pi && mkdir -p /tmp/doctor-pi"
-        )
+        exec_in_container(claude_container, "rm -rf /tmp/doctor-pi && mkdir -p /tmp/doctor-pi")
         exit_code, output = exec_in_container(
             claude_container,
             "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t pi -o /tmp/doctor-pi",
@@ -655,9 +654,8 @@ class TestDoctorTargetValidation:
         # Create a broken Codex output directory
         exit_code, _ = exec_in_container(
             claude_container,
-            "rm -rf /tmp/doctor-broken && mkdir -p /tmp/doctor-broken/.codex/skills/broken-skill",
+            "rm -rf /tmp/doctor-broken && uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin -t codex -o /tmp/doctor-broken && rm /tmp/doctor-broken/.ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills/code-review/SKILL.md",
         )
-        # Create skill directory without SKILL.md
         assert exit_code == 0
 
         # Doctor should fail

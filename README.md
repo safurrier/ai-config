@@ -11,7 +11,7 @@ ai-config solves both problems. You define your setup in one YAML file, then use
 1. **Install your Claude Code plugins reproducibly** across machines with `ai-config sync`.
 2. **Convert those plugins** for other tools — same skills, same config, less manual porting.
 
-No more vendor lock-in because your customizations are trapped in one tool's config directory. No more juggling dotfiles across `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, and `.pi/`.
+No more vendor lock-in because your customizations are trapped in one tool's config directory. No more hand-maintaining Claude plugins, Codex packages, Cursor/OpenCode config, and Pi extensions.
 
 Or more simply: run `ai-config init` and it walks you through the config.
 
@@ -107,12 +107,12 @@ targets:
 With conversion enabled, `ai-config sync` can write outputs such as:
 
 - **Claude Code**: plugins installed through Claude Code's plugin system
-- **Codex**: skills, MCP config, prompts, and supported hooks under `.codex/` or `~/.codex/`
+- **Codex**: installable plugin packages and ai-config-owned local marketplaces under `.ai-config/codex/`; sync manages them through `codex plugin`
 - **Cursor**: skills, commands, hooks, and MCP config under `.cursor/` or `~/.cursor/`
 - **OpenCode**: skills plus `opencode.json` / `opencode.lsp.json`
 - **Pi**: skills, prompt templates, and hook extensions under `.pi/` or `~/.pi/`
 
-The exact paths depend on conversion `scope` and `output_dir`. See [Configuration](docs/config.md) and [Conversion](docs/conversion.md) for the full rules instead of treating this README as the reference manual.
+The exact paths depend on conversion `scope` and `output_dir`. Codex 0.6.0 is a breaking migration from loose `.codex` output; review the [Codex migration guide](docs/conversion.md#migration-from-05x) before syncing. See [Configuration](docs/config.md) and [Conversion](docs/conversion.md) for full rules.
 
 ## Config lookup
 

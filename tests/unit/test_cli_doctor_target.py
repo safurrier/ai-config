@@ -100,38 +100,28 @@ class TestDoctorTargetHelp:
 class TestDoctorCodexTarget:
     """Test doctor command with Codex target."""
 
-    def test_doctor_validates_codex_output(
-        self, runner: CliRunner, codex_output_dir: Path
-    ) -> None:
+    def test_doctor_validates_codex_output(self, runner: CliRunner, codex_output_dir: Path) -> None:
         """Doctor validates Codex output directory successfully."""
-        result = runner.invoke(
-            main, ["doctor", "--target", "codex", str(codex_output_dir)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "codex", str(codex_output_dir)])
         # Should pass because the output is valid
         assert result.exit_code == 0
         assert "codex" in result.output.lower()
 
-    def test_doctor_codex_missing_skill_md(
+    def test_doctor_codex_warns_about_stale_loose_output(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Doctor fails when skill directory missing SKILL.md."""
+        """Doctor diagnoses legacy loose output without treating it as a package."""
         codex_dir = tmp_path / ".codex" / "skills" / "broken-skill"
         codex_dir.mkdir(parents=True)
-        # No SKILL.md file - should fail
 
-        result = runner.invoke(
-            main, ["doctor", "--target", "codex", str(tmp_path)]
-        )
-        assert result.exit_code == 1
-        assert "SKILL.md" in result.output or "fail" in result.output.lower()
+        result = runner.invoke(main, ["doctor", "--target", "codex", str(tmp_path)])
 
-    def test_doctor_codex_no_output_dir(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+        assert result.exit_code == 0
+        assert "legacy" in result.output.lower() or "stale" in result.output.lower()
+
+    def test_doctor_codex_no_output_dir(self, runner: CliRunner, tmp_path: Path) -> None:
         """Doctor warns when no .codex directory exists."""
-        result = runner.invoke(
-            main, ["doctor", "--target", "codex", str(tmp_path)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "codex", str(tmp_path)])
         # Should warn but not fail
         assert "warn" in result.output.lower() or "codex output" in result.output.lower()
 
@@ -143,15 +133,11 @@ class TestDoctorCursorTarget:
         self, runner: CliRunner, cursor_output_dir: Path
     ) -> None:
         """Doctor validates Cursor output directory successfully."""
-        result = runner.invoke(
-            main, ["doctor", "--target", "cursor", str(cursor_output_dir)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "cursor", str(cursor_output_dir)])
         assert result.exit_code == 0
         assert "cursor" in result.output.lower()
 
-    def test_doctor_cursor_invalid_hooks(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_doctor_cursor_invalid_hooks(self, runner: CliRunner, tmp_path: Path) -> None:
         """Doctor fails on invalid hooks.json."""
         cursor_dir = tmp_path / ".cursor"
         cursor_dir.mkdir(parents=True)
@@ -159,9 +145,7 @@ class TestDoctorCursorTarget:
         hooks_file = cursor_dir / "hooks.json"
         hooks_file.write_text('{"hooks": {}}')  # Missing version field
 
-        result = runner.invoke(
-            main, ["doctor", "--target", "cursor", str(tmp_path)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "cursor", str(tmp_path)])
         assert result.exit_code == 1
         assert "version" in result.output.lower() or "fail" in result.output.lower()
 
@@ -173,9 +157,7 @@ class TestDoctorOpenCodeTarget:
         self, runner: CliRunner, opencode_output_dir: Path
     ) -> None:
         """Doctor validates OpenCode output directory successfully."""
-        result = runner.invoke(
-            main, ["doctor", "--target", "opencode", str(opencode_output_dir)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "opencode", str(opencode_output_dir)])
         assert result.exit_code == 0
         assert "opencode" in result.output.lower()
 
@@ -195,9 +177,7 @@ description: A test skill with invalid name (uppercase)
 # My Skill
 """)
 
-        result = runner.invoke(
-            main, ["doctor", "--target", "opencode", str(tmp_path)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "opencode", str(tmp_path)])
         # OpenCode requires lowercase kebab-case, should fail
         assert result.exit_code == 1
         assert "lowercase" in result.output.lower() or "fail" in result.output.lower()
@@ -206,9 +186,7 @@ description: A test skill with invalid name (uppercase)
 class TestDoctorAllTargets:
     """Test doctor command with all targets."""
 
-    def test_doctor_all_targets(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_doctor_all_targets(self, runner: CliRunner, tmp_path: Path) -> None:
         """Doctor validates all targets when --target all is specified."""
         # Create minimal valid output for all targets
         for tool_dir in [".codex", ".cursor", ".opencode"]:
@@ -227,9 +205,7 @@ description: A test skill
         cursor_hooks = tmp_path / ".cursor" / "hooks.json"
         cursor_hooks.write_text('{"version": 1, "hooks": {}}')
 
-        result = runner.invoke(
-            main, ["doctor", "--target", "all", str(tmp_path)]
-        )
+        result = runner.invoke(main, ["doctor", "--target", "all", str(tmp_path)])
         assert result.exit_code == 0
         # Should mention all three targets
         output_lower = result.output.lower()
@@ -241,9 +217,7 @@ description: A test skill
 class TestDoctorTargetJsonOutput:
     """Test doctor target with JSON output."""
 
-    def test_doctor_target_json_output(
-        self, runner: CliRunner, codex_output_dir: Path
-    ) -> None:
+    def test_doctor_target_json_output(self, runner: CliRunner, codex_output_dir: Path) -> None:
         """Doctor can output JSON for target validation."""
         result = runner.invoke(
             main, ["doctor", "--target", "codex", str(codex_output_dir), "--json"]
@@ -251,6 +225,7 @@ class TestDoctorTargetJsonOutput:
         assert result.exit_code == 0
         # Should be valid JSON
         import json
+
         output = json.loads(result.output)
         assert "reports" in output or "results" in output
 
@@ -258,9 +233,7 @@ class TestDoctorTargetJsonOutput:
 class TestDoctorTargetVerbose:
     """Test doctor target with verbose output."""
 
-    def test_doctor_target_verbose(
-        self, runner: CliRunner, codex_output_dir: Path
-    ) -> None:
+    def test_doctor_target_verbose(self, runner: CliRunner, codex_output_dir: Path) -> None:
         """Doctor shows all checks including passed in verbose mode."""
         result = runner.invoke(
             main, ["doctor", "--target", "codex", str(codex_output_dir), "--verbose"]
