@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve npm latest, verify registry tarballs, and run the isolated probe.
+# Resolve npm latest, verify registry tarballs, and run isolated package plus public-sync probes.
 # Direct tarball extraction avoids npm's intentional install-date cutoff while preserving
 # registry integrity verification and the exact package layout used by the npm launcher.
 set -euo pipefail
@@ -55,3 +55,4 @@ cd "$repo_root"
 uv run python tests/probes/probe_codex_plugin_package.py \
   --codex "$codex" \
   --expected-version "$version"
+uv run python tests/probes/probe_ai_config_sync_codex.py --codex "$codex"

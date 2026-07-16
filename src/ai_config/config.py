@@ -120,8 +120,14 @@ def _parse_plugin(data: dict[str, Any], index: int) -> PluginConfig:
         raise ConfigValidationError(f"Plugin at index {index} must be a dict, got: {type(data)}")
 
     plugin_id = data.get("id")
-    if not plugin_id:
-        raise ConfigValidationError(f"Plugin at index {index} must have 'id' field")
+    if not isinstance(plugin_id, str) or not plugin_id:
+        raise ConfigValidationError(
+            f"Plugin at index {index} must have 'id' as a non-empty string field"
+        )
+    if plugin_id.count("@") > 1 or ("@" in plugin_id and not all(plugin_id.split("@", 1))):
+        raise ConfigValidationError(
+            f"Plugin '{plugin_id}' id must be 'plugin-name' or 'plugin-name@marketplace-name'"
+        )
 
     scope = data.get("scope", "user")
     if scope not in ("user", "project", "local"):
@@ -163,8 +169,15 @@ def _parse_claude_config(data: dict[str, Any], base_dir: Path | None = None) -> 
     if raw_plugins:
         if not isinstance(raw_plugins, list):
             raise ConfigValidationError(f"Plugins must be a list, got: {type(raw_plugins)}")
+        seen_plugin_ids: set[str] = set()
         for i, plugin_data in enumerate(raw_plugins):
-            plugins.append(_parse_plugin(plugin_data, i))
+            plugin = _parse_plugin(plugin_data, i)
+            if plugin.id in seen_plugin_ids:
+                raise ConfigValidationError(
+                    f"Duplicate plugin id '{plugin.id}' at index {i}; configured identities must be unique"
+                )
+            seen_plugin_ids.add(plugin.id)
+            plugins.append(plugin)
 
     conversion = _parse_conversion(data.get("conversion"), base_dir)
 

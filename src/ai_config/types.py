@@ -4,7 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Literal, TypeAlias
+
+CodexLifecycleActionName: TypeAlias = Literal[
+    "register_codex_marketplace",
+    "install_codex_plugin",
+    "update_codex_plugin",
+    "reinstall_codex_plugin",
+    "noop_codex_plugin",
+    "remove_codex_plugin",
+    "remove_codex_marketplace",
+]
+SyncActionName: TypeAlias = (
+    Literal[
+        "install",
+        "uninstall",
+        "enable",
+        "disable",
+        "register_marketplace",
+    ]
+    | CodexLifecycleActionName
+)
 
 
 class PluginSource(str, Enum):
@@ -46,6 +66,10 @@ class PluginConfig:
     def __post_init__(self) -> None:
         if not self.id:
             raise ValueError("Plugin id cannot be empty")
+        if self.id.count("@") > 1 or "@" in self.id and not all(self.id.split("@", 1)):
+            raise ValueError(
+                f"Plugin id must be 'plugin-name' or 'plugin-name@marketplace-name', got: {self.id}"
+            )
 
     @property
     def marketplace(self) -> str | None:
@@ -132,18 +156,7 @@ class PluginStatus:
 class SyncAction:
     """A single action to be taken during sync."""
 
-    action: Literal[
-        "install",
-        "uninstall",
-        "enable",
-        "disable",
-        "register_marketplace",
-        "register_codex_marketplace",
-        "install_codex_plugin",
-        "update_codex_plugin",
-        "remove_codex_plugin",
-        "remove_codex_marketplace",
-    ]
+    action: SyncActionName
     target: str  # plugin id or marketplace name
     scope: Literal["user", "project", "local"] | None = None
     reason: str = ""

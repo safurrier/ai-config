@@ -456,11 +456,19 @@ class CodexEmitter:
         from ai_config.converters.codex_package import codex_package_spec
 
         result = EmitResult(target=self.target)
-        spec = codex_package_spec(ir.identity.plugin_id, ir.identity.version, Path("."))
+        try:
+            spec = codex_package_spec(ir.identity.plugin_id, ir.identity.version, Path("."))
+        except ValueError as error:
+            result.add_diagnostic(
+                Severity.ERROR,
+                str(error),
+                component_ref=f"package:{ir.identity.plugin_id}",
+            )
+            return result
         package_root = spec.package_relative_path
         result.add_cleanup_path(spec.marketplace_relative_path)
         manifest: dict[str, Any] = {
-            "name": ir.identity.plugin_id,
+            "name": spec.plugin_name,
             "version": spec.version,
             "description": ir.identity.description
             or f"Converted Codex package for {ir.identity.name}",
@@ -514,10 +522,10 @@ class CodexEmitter:
             "interface": {"displayName": f"ai-config: {ir.identity.name}"},
             "plugins": [
                 {
-                    "name": ir.identity.plugin_id,
+                    "name": spec.plugin_name,
                     "source": {
                         "source": "local",
-                        "path": f"./plugins/{ir.identity.plugin_id}",
+                        "path": f"./plugins/{spec.plugin_name}",
                     },
                     "policy": {
                         "installation": "AVAILABLE",

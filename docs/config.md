@@ -124,6 +124,10 @@ conversion:
 
 When `output_dir` is not set, output goes to the home directory (`~`) for `user` scope or the current directory for `project` scope.
 
+For Codex conversion, the source plugin's `.claude-plugin/plugin.json` identity is normalized once
+and used for every generated path and runtime selector. Source `version` values must use SemVer
+2.0.0. Configured sources that normalize to the same Codex identity fail before mutation.
+
 See [Conversion](conversion.md) for a full guide on what gets converted and how.
 
 ## Full Example

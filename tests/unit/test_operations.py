@@ -52,15 +52,18 @@ def sample_config() -> AIConfig:
 
 
 @pytest.fixture
-def mock_installed_plugins() -> list[InstalledPlugin]:
-    """Mock installed plugins."""
+def mock_installed_plugins(tmp_path: Path) -> list[InstalledPlugin]:
+    """Mock installed plugins backed by a valid local source package."""
+    plugin_path = tmp_path / "plugin1"
+    (plugin_path / ".claude-plugin").mkdir(parents=True)
+    (plugin_path / ".claude-plugin/plugin.json").write_text('{"name":"plugin1","version":"1.0.0"}')
     return [
         InstalledPlugin(
             id="plugin1@my-marketplace",
             version="1.0.0",
             scope="user",
             enabled=True,
-            install_path="/path/to/plugin1",
+            install_path=str(plugin_path),
         ),
     ]
 
@@ -273,6 +276,10 @@ class TestSyncTarget:
 
         # Ensure deterministic home path resolution
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        report = ConversionReport(
+            source_plugin=PluginIdentity(plugin_id="plugin1", name="plugin1", version="1.0.0"),
+            target_tool=TargetTool.CODEX,
+        )
 
         with (
             patch(
@@ -283,7 +290,10 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch(
+                "ai_config.operations.convert_plugin",
+                return_value={TargetTool.CODEX: report},
+            ) as mock_convert,
         ):
             result = sync_target(target)
 
@@ -373,6 +383,10 @@ class TestSyncTarget:
         target = TargetConfig(type="claude", config=target_config)
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        report = ConversionReport(
+            source_plugin=PluginIdentity(plugin_id="plugin1", name="plugin1", version="1.0.0"),
+            target_tool=TargetTool.CODEX,
+        )
 
         with (
             patch(
@@ -388,7 +402,10 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch(
+                "ai_config.operations.convert_plugin",
+                return_value={TargetTool.CODEX: report},
+            ) as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -702,6 +719,163 @@ class TestSyncTarget:
 
             assert result.success is False
             assert any("Could not find plugin.json manifest" in error for error in result.errors)
+
+    def test_codex_sync_uses_emitted_normalized_identity_roundtrip(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        """Config identity and lifecycle selector converge on the emitted normalized identity."""
+        plugin_path = tmp_path / "source"
+        (plugin_path / ".claude-plugin").mkdir(parents=True)
+        (plugin_path / ".claude-plugin/plugin.json").write_text(
+            '{"name":"My Plugin!","version":"1.2.3"}'
+        )
+        installed = InstalledPlugin(
+            id="My Plugin!@market",
+            version="1.2.3",
+            scope="user",
+            enabled=True,
+            install_path=str(plugin_path),
+        )
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(PluginConfig(id=installed.id),),
+                conversion=ConversionConfig(
+                    targets=("codex",), output_dir=str(tmp_path / "output")
+                ),
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=([installed], []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=([], []),
+            ),
+        ):
+            result = sync_target(target, force_convert=True)
+
+        assert result.success is True
+        specs = isolate_codex_lifecycle.call_args.args[0]
+        assert [spec.plugin_id for spec in specs] == ["my-plugin@ai-config-my-plugin"]
+        assert specs[0].source_plugin_id == "My Plugin!@market"
+        emitted_manifest = next(
+            (tmp_path / "output").glob(
+                ".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json"
+            )
+        )
+        assert json.loads(emitted_manifest.read_text())["name"] == "my-plugin"
+
+    def test_codex_sync_config_and_manifest_identity_mismatch_fails_before_emission(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        """A config selector cannot silently point at a differently named emitted package."""
+        source = tmp_path / "source"
+        (source / ".claude-plugin").mkdir(parents=True)
+        (source / ".claude-plugin/plugin.json").write_text(
+            '{"name":"manifest-name","version":"1.0.0"}'
+        )
+        installed = InstalledPlugin(
+            id="config-name@market",
+            version="1.0.0",
+            scope="user",
+            enabled=True,
+            install_path=str(source),
+        )
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(PluginConfig(id=installed.id),),
+                conversion=ConversionConfig(
+                    targets=("codex",), output_dir=str(tmp_path / "output")
+                ),
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=([installed], []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=([], []),
+            ),
+            patch("ai_config.operations.convert_plugin") as convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+        assert result.success is False
+        assert any("identity mismatch" in error for error in result.errors)
+        convert.assert_not_called()
+        isolate_codex_lifecycle.assert_not_called()
+
+    def test_codex_sync_normalized_collision_fails_before_emission(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        """Two configured sources cannot silently collapse onto one package selector."""
+        installed: list[InstalledPlugin] = []
+        configs: list[PluginConfig] = []
+        for index, name in enumerate(("My Plugin!", "my-plugin")):
+            source = tmp_path / f"source-{index}"
+            (source / ".claude-plugin").mkdir(parents=True)
+            (source / ".claude-plugin/plugin.json").write_text(
+                json.dumps({"name": name, "version": "1.0.0"})
+            )
+            plugin_id = f"{name}@market-{index}"
+            installed.append(
+                InstalledPlugin(
+                    id=plugin_id,
+                    version="1.0.0",
+                    scope="user",
+                    enabled=True,
+                    install_path=str(source),
+                )
+            )
+            configs.append(PluginConfig(id=plugin_id))
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=tuple(configs),
+                conversion=ConversionConfig(
+                    targets=("codex",), output_dir=str(tmp_path / "output")
+                ),
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(installed, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=([], []),
+            ),
+            patch("ai_config.operations.convert_plugin") as convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+        assert result.success is False
+        assert any("identity collision" in error for error in result.errors)
+        convert.assert_not_called()
+        isolate_codex_lifecycle.assert_not_called()
+        assert not (tmp_path / "output").exists()
 
     def test_sync_skips_conversion_when_disabled(
         self,

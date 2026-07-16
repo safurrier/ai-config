@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Codex removal and update are constrained by ai-config ownership metadata and fail closed on marketplace name collisions.
+- Codex removal and update are constrained by ai-config ownership metadata and fail closed on normalized identity collisions, ambiguous runtime state, malformed CLI responses, and SemVer downgrades.
+- Codex status, dry-run, and JSON output now explain register, install, update, reinstall/repair, remove, and no-op lifecycle actions.
+- Codex subprocesses now have finite process-group timeouts and sanitized bounded failure output; the public `ai-config sync` lifecycle has an isolated real-Codex probe.
 
 ## [0.5.0] - 2026-05-08
 

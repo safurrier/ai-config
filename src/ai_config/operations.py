@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ai_config.adapters import claude
+from ai_config.adapters.codex import CodexCommandError
 from ai_config.codex_lifecycle import sync_codex_packages
 from ai_config.converters import InstallScope, TargetTool, convert_plugin
+from ai_config.converters.claude_parser import normalize_portable_name, parse_claude_plugin
 from ai_config.converters.codex_package import CodexPackageSpec, codex_package_spec
 from ai_config.types import (
     AIConfig,
@@ -25,6 +28,15 @@ from ai_config.types import (
 )
 
 _CONVERSION_CACHE_VERSION = 4
+
+
+@dataclass(frozen=True)
+class _ConversionCandidate:
+    """Resolved source and normalized package identity for one configured plugin."""
+
+    config_id: str
+    plugin_path: Path
+    codex_spec: CodexPackageSpec | None
 
 
 def _conversion_cache_path() -> Path:
@@ -380,7 +392,11 @@ def _sync_conversions(
     codex_enabled = TargetTool.CODEX in targets
     codex_specs: list[CodexPackageSpec] = []
     refreshed_codex_ids: set[str] = set()
+    candidates: list[_ConversionCandidate] = []
+    codex_sources: dict[str, str] = {}
 
+    # Resolve and normalize every desired identity before writing any package. This keeps
+    # config selectors, emitted manifests, ownership, and Codex CLI selectors on one key.
     for plugin_config in config.plugins:
         if not plugin_config.enabled:
             continue
@@ -396,11 +412,62 @@ def _sync_conversions(
             )
             continue
 
+        spec: CodexPackageSpec | None = None
         if codex_enabled:
-            codex_specs.append(
-                codex_package_spec(plugin_config.plugin_name, installed.version, output_dir)
+            ir = parse_claude_plugin(plugin_path)
+            parse_errors = [
+                diagnostic.message
+                for diagnostic in ir.diagnostics
+                if diagnostic.severity.value == "error"
+            ]
+            if parse_errors:
+                errors.extend(
+                    f"Conversion failed for {plugin_config.id}: {message}"
+                    for message in parse_errors
+                )
+                continue
+            configured_identity = normalize_portable_name(plugin_config.plugin_name, "plugin")
+            if configured_identity != ir.identity.plugin_id:
+                errors.append(
+                    f"Codex identity mismatch for configured plugin '{plugin_config.id}': "
+                    f"config normalizes to '{configured_identity}', but source manifest normalizes "
+                    f"to '{ir.identity.plugin_id}'. Make the config selector and manifest name agree; "
+                    "no package or lifecycle state was changed."
+                )
+                continue
+            try:
+                spec = codex_package_spec(
+                    configured_identity,
+                    ir.identity.version,
+                    output_dir,
+                    source_plugin_id=plugin_config.id,
+                )
+            except ValueError as error:
+                errors.append(f"Conversion failed for {plugin_config.id}: {error}")
+                continue
+            conflicting_source = codex_sources.get(spec.plugin_id)
+            if conflicting_source is not None:
+                errors.append(
+                    f"Normalized Codex plugin identity collision for '{spec.plugin_id}' from "
+                    f"'{conflicting_source}' and '{plugin_config.id}'. Rename one source plugin; "
+                    "no Codex package or lifecycle state was changed."
+                )
+                continue
+            codex_sources[spec.plugin_id] = plugin_config.id
+            codex_specs.append(spec)
+        candidates.append(
+            _ConversionCandidate(
+                config_id=plugin_config.id,
+                plugin_path=plugin_path,
+                codex_spec=spec,
             )
+        )
 
+    if errors:
+        return actions, errors
+
+    for candidate in candidates:
+        plugin_path = candidate.plugin_path
         plugin_hash = _compute_plugin_hash(plugin_path)
         if not force_convert and plugin_hash is not None:
             signature_map = cache_entries.get(str(plugin_path), {})
@@ -424,21 +491,29 @@ def _sync_conversions(
             ]
             if report_errors:
                 errors.extend(
-                    f"Conversion failed for {plugin_config.id}: {message}"
+                    f"Conversion failed for {candidate.config_id}: {message}"
                     for message in report_errors
                 )
                 continue
 
-            if codex_enabled:
+            if candidate.codex_spec is not None:
                 codex_report = reports.get(TargetTool.CODEX)
-                if codex_report is not None:
-                    refreshed_codex_ids.add(
-                        codex_package_spec(
-                            codex_report.source_plugin.plugin_id,
-                            codex_report.source_plugin.version,
-                            output_dir,
-                        ).plugin_id
+                if codex_report is None:
+                    errors.append(
+                        f"Conversion failed for {candidate.config_id}: missing Codex conversion report"
                     )
+                    continue
+                if (
+                    codex_report.source_plugin.plugin_id != candidate.codex_spec.plugin_name
+                    or (codex_report.source_plugin.version or "0.0.0")
+                    != candidate.codex_spec.version
+                ):
+                    errors.append(
+                        f"Conversion failed for {candidate.config_id}: normalized source identity "
+                        "changed between lifecycle preflight and package emission"
+                    )
+                    continue
+                refreshed_codex_ids.add(candidate.codex_spec.plugin_id)
 
             if not dry_run and plugin_hash is not None:
                 signature_map = cache_entries.setdefault(str(plugin_path), {})
@@ -447,8 +522,8 @@ def _sync_conversions(
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 cache_dirty = True
-        except Exception as e:
-            errors.append(f"Conversion failed for {plugin_config.id}: {e}")
+        except (OSError, ValueError) as error:
+            errors.append(f"Conversion failed for {candidate.config_id}: {error}")
 
     if errors:
         return actions, errors
@@ -463,13 +538,13 @@ def _sync_conversions(
             )
             actions.extend(
                 SyncAction(
-                    action=action.action,  # type: ignore[arg-type]
+                    action=action.action,
                     target=action.target,
                     reason=action.reason,
                 )
                 for action in lifecycle_actions
             )
-        except Exception as error:
+        except (CodexCommandError, OSError, ValueError) as error:
             errors.append(str(error))
 
     if cache_dirty and not errors:

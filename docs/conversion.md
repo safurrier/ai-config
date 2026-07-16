@@ -55,10 +55,17 @@ layout or rewrite unrelated Codex settings.
    whether a loose file is user-authored.
 5. Remove only legacy files you recognize as old ai-config output.
 
-Each generated marketplace name is `ai-config-<plugin>` and each installed selector is
-`<plugin>@ai-config-<plugin>`. ai-config records only those owned entries in
+Each generated marketplace name is `ai-config-<normalized-plugin>` and each installed selector is
+`<normalized-plugin>@ai-config-<normalized-plugin>`. The normalized identity from the source
+manifest is used consistently for package paths, both manifests, ownership, Codex CLI selectors,
+and drift checks. Two configured sources that normalize to the same identity fail before files or
+runtime state change.
+
+Source package versions must be valid SemVer 2.0.0 values such as `1.2.3` or `1.2.3-rc.1`.
+Same-version content refreshes are allowed, upgrades are applied, and ownership/runtime downgrades
+fail closed with a remediation message. ai-config records only owned entries in
 `.ai-config/codex/ownership.json`. Removal and update are limited to that state. A collision with an
-unrelated marketplace name fails without mutation.
+unrelated marketplace or plugin fails without mutation.
 
 ## Sync-driven conversion
 
@@ -125,5 +132,11 @@ ai-config sync --force-convert
 ```
 
 Sync hashes plugin source and conversion settings. Changed Codex packages are reinstalled through
-the CLI; unchanged sync is idempotent. Lifecycle failures name the exact stage, command, and
-remediation and do not claim successful convergence.
+the CLI; unchanged sync reports an explicit no-op. Dry-run and `sync --json` report register,
+install, update, reinstall/repair, remove, and no-op actions with reasons. `status --config ...
+--json` exposes the same planned drift actions.
+
+Every Codex subprocess has a finite timeout and process-group cleanup. ai-config accepts only the
+validated Codex 0.144.x JSON contract: malformed, partial, duplicate, inconsistent, or unknown
+version responses fail closed. Lifecycle failures sanitize child output, name the exact stage and
+command, include remediation, and never claim successful convergence.

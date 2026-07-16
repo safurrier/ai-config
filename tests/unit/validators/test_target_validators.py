@@ -44,6 +44,42 @@ class TestCodexValidator:
         results = CodexOutputValidator().validate_all(tmp_path)
         assert any(result.status == "fail" and "name" in result.check_name for result in results)
 
+    @pytest.mark.parametrize("version", ["1.0", "01.0.0", "latest"])
+    def test_manifest_invalid_semver_fails(self, tmp_path: Path, version: str) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        manifest = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+        )
+        payload = json.loads(manifest.read_text())
+        payload["version"] = version
+        manifest.write_text(json.dumps(payload))
+
+        results = CodexOutputValidator().validate_all(tmp_path)
+
+        assert any(
+            result.status == "fail" and result.check_name.endswith("_version") for result in results
+        )
+
+    def test_marketplace_normalized_identity_mutation_fails(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        marketplace = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/.agents/plugins/marketplace.json")
+        )
+        payload = json.loads(marketplace.read_text())
+        payload["plugins"][0]["source"]["path"] = "./plugins/other"
+        marketplace.write_text(json.dumps(payload))
+
+        results = CodexOutputValidator().validate_all(tmp_path)
+
+        assert any(
+            result.status == "fail" and result.check_name.endswith("_identity")
+            for result in results
+        )
+
     def test_marketplace_reference_escape_fails(self, tmp_path: Path) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 

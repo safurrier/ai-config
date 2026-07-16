@@ -152,7 +152,7 @@ class TestCodexToolValidation:
     def test_codex_pinned_version(self, all_tools_container: Container) -> None:
         exit_code, output = exec_in_container(all_tools_container, "codex --version")
         assert exit_code == 0, f"Codex CLI not available: {output}"
-        assert "0.144.4" in output
+        assert "0.144.5" in output
 
     def test_generated_package_full_lifecycle(self, all_tools_container: Container) -> None:
         """The pinned all-tools lane proves install, discovery, update, and removal."""
@@ -160,11 +160,24 @@ class TestCodexToolValidation:
             all_tools_container,
             "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
             "uv run python tests/probes/probe_codex_plugin_package.py "
-            "--codex /usr/local/bin/codex --expected-version 0.144.4",
+            "--codex /usr/local/bin/codex --expected-version 0.144.5",
         )
         assert exit_code == 0, f"Codex package lifecycle probe failed: {output}"
         assert '"result": "passed"' in output
         assert "unrelated-state-preservation" in output
+
+    def test_public_sync_full_lifecycle(self, all_tools_container: Container) -> None:
+        """The public command owns register/install/update/repair/remove convergence."""
+        exit_code, output = exec_in_container(
+            all_tools_container,
+            "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
+            "uv run python tests/probes/probe_ai_config_sync_codex.py "
+            "--codex /usr/local/bin/codex",
+        )
+        assert exit_code == 0, f"Public ai-config sync lifecycle probe failed: {output}"
+        assert '"result": "passed"' in output
+        assert "status-drift-reporting" in output
+        assert "owned-removal" in output
 
     def test_codex_features_match_package_contract(self, all_tools_container: Container) -> None:
         exit_code, output = exec_in_container(all_tools_container, "codex features list")

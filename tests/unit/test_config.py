@@ -299,6 +299,27 @@ class TestLoadConfig:
         with pytest.raises(ConfigValidationError, match="enabled must be boolean"):
             load_config(config_file)
 
+    @pytest.mark.parametrize("plugin_id", ["name@", "@market", "name@one@two"])
+    def test_ambiguous_plugin_identity_fails(self, tmp_path: Path, plugin_id: str) -> None:
+        """Plugin selectors must have one unambiguous optional marketplace suffix."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "version: 1\ntargets:\n  - type: claude\n    config:\n      plugins:\n"
+            f"        - id: '{plugin_id}'\n"
+        )
+        with pytest.raises(ConfigValidationError, match="plugin-name@marketplace-name"):
+            load_config(config_file)
+
+    def test_duplicate_plugin_identity_fails(self, tmp_path: Path) -> None:
+        """Configured identities must be unique before sync mutation."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "version: 1\ntargets:\n  - type: claude\n    config:\n      plugins:\n"
+            "        - id: demo@market\n        - id: demo@market\n"
+        )
+        with pytest.raises(ConfigValidationError, match="Duplicate plugin id"):
+            load_config(config_file)
+
     def test_plugin_defaults(self, tmp_path: Path) -> None:
         """Plugin should have default scope and enabled values."""
         config_file = tmp_path / "config.yaml"

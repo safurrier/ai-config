@@ -67,6 +67,7 @@ ai-config sync
 | `--fresh`, `--force` | Full rebuild: clear cache + reconvert everything |
 | `--force-convert` | Reconvert only (without clearing plugin cache) |
 | `--verify` | Verify sync state after completion |
+| `--json` | Output planned/completed actions and reasons as JSON |
 
 What it does:
 
@@ -75,7 +76,8 @@ What it does:
 - Updates plugin configurations
 - Runs conversion if `conversion` section is configured (see [Conversion](conversion.md))
 
-Exits non-zero if any target had errors.
+Codex conversion reports register, install, update, reinstall/repair, remove, and no-op actions with
+reasons. Exits non-zero if any target had errors.
 
 ## status
 
@@ -89,9 +91,9 @@ ai-config status
 
 | Option | Description |
 |--------|-------------|
-| `-c, --config PATH` | Path to config file |
+| `-c, --config PATH` | Path to config file; also computes lifecycle drift |
 | `--verify` | Verify current state matches config |
-| `--json` | Output as JSON |
+| `--json` | Output as JSON, including planned lifecycle actions and reasons |
 
 Displays:
 

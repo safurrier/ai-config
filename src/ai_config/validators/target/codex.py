@@ -16,6 +16,7 @@ else:
     import tomli as tomllib  # type: ignore[import-not-found]
 
 from ai_config.converters.codex_package import CODEX_OUTPUT_ROOT
+from ai_config.semver import SemanticVersion
 from ai_config.validators.base import ValidationResult
 
 VALID_CODEX_HOOK_EVENTS = {
@@ -299,9 +300,22 @@ class CodexOutputValidator:
                 self._result(
                     f"codex_package_{expected_name}_version",
                     "fail",
-                    "Package manifest needs a version",
+                    "Package manifest needs a Semantic Versioning 2.0.0 version",
+                    fix_hint="Set the source plugin version to a value such as 1.2.3.",
                 )
             )
+        else:
+            try:
+                SemanticVersion.parse(version, context=f"Codex package {expected_name} version")
+            except ValueError as error:
+                results.append(
+                    self._result(
+                        f"codex_package_{expected_name}_version",
+                        "fail",
+                        str(error),
+                        fix_hint="Set the source plugin version to a valid SemVer value such as 1.2.3.",
+                    )
+                )
         skills_ref = manifest.get("skills")
         if skills_ref is not None:
             if not isinstance(skills_ref, str):
@@ -414,6 +428,22 @@ class CodexOutputValidator:
                         f"codex_marketplace_{root.name}_escape",
                         "fail",
                         "Marketplace package path escapes its owned root",
+                    )
+                )
+                continue
+            expected_marketplace_name = f"ai-config-{name}"
+            expected_path = f"./plugins/{name}"
+            if root.name != expected_marketplace_name or path_value != expected_path:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_identity",
+                        "fail",
+                        "Marketplace directory, plugin name, and local source path must share "
+                        f"the normalized identity '{name}'",
+                        details=(
+                            f"expected marketplace {expected_marketplace_name} and source "
+                            f"{expected_path}; got {root.name} and {path_value}"
+                        ),
                     )
                 )
                 continue

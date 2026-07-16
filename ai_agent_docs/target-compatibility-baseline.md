@@ -2,7 +2,7 @@
 
 This file records the runtime assumptions behind ai-config target conversion.
 
-Last checked: 2026-07-15
+Last checked: 2026-07-16
 Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0.
 
 ## Summary
@@ -15,23 +15,23 @@ Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0.
 | OpenCode | `.opencode/skills/`, `opencode.json`, `opencode.lsp.json` | `opencode debug skill/config`, `opencode mcp list` |
 | Pi | project `.pi/` or user `.pi/agent/` skills, prompts, extensions | RPC `get_commands` and extension marker probe |
 
-## Codex 0.144.4 evidence
+## Codex 0.144.5 evidence
 
-The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-15:
+The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
 
 ```text
-resolved package: @openai/codex@0.144.4
-version output:   codex-cli 0.144.4
+resolved package: @openai/codex@0.144.5
+version output:   codex-cli 0.144.5
 binary:           <temporary>/install/node_modules/@openai/codex/bin/codex.js
-main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.144.4.tgz
-main integrity:    sha512-DTHzYatlKq9dw55E0/HsbK4tRCEKabuJ10ybbqpsG8gVv/kvwEdg3Z4OI3cvLXKa21xkIa4lkGlZoO/HmqmFFw==
-darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.144.4-darwin-arm64.tgz
-platform integrity: sha512-6J3g498cM2oA7vYIJhpuGJlnIi/M5JdYmjB5BZ1Of5HQ0ziIlplFSvH801oVy9J5TQFp642ODzOu/ZEokDUXsg==
+main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.144.5.tgz
+main integrity:    sha512-jjB+K+OMv572mKhS+2QuLxWXDJNdpwbPenf+V+8bdq7wg4Scqt3cn6WEekD8wPqDVZqck0HSX17K9rD9kbDJQA==
+darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-darwin-arm64.tgz
+platform integrity: sha512-zcT6NfBCqLFt+BReNSETTZW6v6PdbH0dzNtm9j7l7mDGqwPbKZDGJdnpkBao2389I0ZacyIKgSZoI0vez1d4Dw==
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
 The direct extraction in `tests/probes/probe_latest_codex.sh` is intentional. npm's configured
-install-date cutoff rejected a normal fresh install because 0.144.4 was newer than the cutoff.
+install-date cutoff rejected a normal fresh install because 0.144.5 was newer than the cutoff.
 The lane still resolves the live tag, reads each registry URL and integrity value, verifies SHA-512,
 and recreates npm's main-plus-platform package layout. It does not call an older installed Codex
 "latest."
@@ -62,7 +62,7 @@ Observed help surfaces:
 | `codex plugin marketplace upgrade --help` | Refresh configured Git marketplace snapshots. |
 | `codex plugin marketplace remove --help` | Remove a configured marketplace source by name |
 
-Official sources checked on 2026-07-15:
+Official sources checked on 2026-07-16:
 
 - [Codex changelog](https://developers.openai.com/codex/changelog)
 - [Plugins](https://learn.chatgpt.com/docs/plugins)
@@ -88,9 +88,17 @@ Official sources checked on 2026-07-15:
 
 `ai-config sync` uses the Codex CLI for marketplace and installed-cache state. ai-config owns only
 its generated marketplace directories and `.ai-config/codex/ownership.json`; Codex owns
-`$CODEX_HOME/config.toml`, enablement, and cache. Removal is limited to entries recorded in the
-ownership file. Marketplace name collisions fail closed. Possible old loose output is reported by
-`doctor` and never removed without proof of ownership.
+`$CODEX_HOME/config.toml`, enablement, and cache. Parsed source identity is the sole normalized key
+for package/marketplace manifests, ownership, CLI selectors, and drift checks. Normalized collisions,
+duplicate runtime records, source/path mismatches, and SemVer downgrades fail before mutation.
+Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
+by `doctor` and never removed without proof of ownership.
+
+The adapter intentionally accepts only the observed Codex 0.144.x contract. It validates the CLI
+version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
+list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
+and inconsistent success responses are errors. Every call uses a finite timeout, starts a separate
+process group, kills descendants on timeout, and bounds/strips control characters from error output.
 
 ## Isolated runtime probe
 
@@ -98,8 +106,12 @@ ownership file. Marketplace name collisions fail closed. Possible old loose outp
 tests/probes/probe_latest_codex.sh
 ```
 
-The probe creates fresh `HOME` and `CODEX_HOME`, removes `OPENAI_API_KEY`, `CODEX_API_KEY`,
-`CHATGPT_API_KEY`, `OPENAI_ORG_ID`, and `OPENAI_PROJECT_ID`, then proves:
+The latest shell lane runs both `probe_codex_plugin_package.py` and
+`probe_ai_config_sync_codex.py`. Each creates fresh `HOME` and `CODEX_HOME`, removes
+`OPENAI_API_KEY`, `CODEX_API_KEY`, `CHATGPT_API_KEY`, `OPENAI_ORG_ID`, and
+`OPENAI_PROJECT_ID`.
+
+The isolated generated-package probe proves:
 
 1. generated package and marketplace validation;
 2. marketplace add/list and plugin available/install/list;
@@ -110,7 +122,13 @@ The probe creates fresh `HOME` and `CODEX_HOME`, removes `OPENAI_API_KEY`, `CODE
 7. managed removal leaves an unrelated marketplace, plugin, disabled/enabled state, and scalar config;
 8. strict Codex doctor still loads the resulting config.
 
-The Docker all-tools image pins `@openai/codex@0.144.4`. The separate workflow latest lane resolves
+The public-command probe invokes `python -m ai_config sync --config <isolated> --json` against a
+disposable source marketplace and real Codex binary. It proves first registration/install,
+unchanged no-op, SemVer refresh/update and discovery, status drift reporting, disabled-plugin
+reinstall, missing-plugin repair, owned removal, and preservation of unrelated marketplace,
+plugin enablement, and scalar config. The pinned all-tools E2E lane runs both probes.
+
+The Docker all-tools image pins `@openai/codex@0.144.5`. The separate workflow latest lane resolves
 and probes `@latest` so reproducibility and drift detection remain independent.
 
 ## Other target assumptions

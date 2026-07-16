@@ -215,6 +215,18 @@ class TestCodexEmitter:
             "path": "./plugins/dev-tools",
         }
 
+    def test_invalid_package_semver_is_actionable_without_output(self, tmp_path: Path) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="bad-version", name="bad-version", version="latest")
+        )
+
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path)
+
+        assert result.has_errors()
+        assert any("Semantic Versioning" in diagnostic.message for diagnostic in result.diagnostics)
+        assert result.files == []
+
     def test_never_emits_legacy_loose_output(self, ir, tmp_path: Path) -> None:
         result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)

@@ -1,5 +1,6 @@
 """Tests for ai_config.cli module."""
 
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
@@ -93,6 +94,26 @@ class TestSyncCommand:
             assert "Dry run mode" in result.output
             assert "install" in result.output
 
+    def test_sync_json_reports_action_reason(self, runner: CliRunner, config_file: Path) -> None:
+        """Machine output includes lifecycle action and explanation without Rich preamble."""
+        sync_result = SyncResult()
+        sync_result.add_success(
+            SyncAction(
+                action="reinstall_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Installed generated plugin is disabled",
+            )
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--dry-run", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        action = payload["targets"]["claude"]["actions"][0]
+        assert action["action"] == "reinstall_codex_plugin"
+        assert action["reason"] == "Installed generated plugin is disabled"
+
     def test_sync_with_errors(self, runner: CliRunner, config_file: Path) -> None:
         """Shows errors from sync."""
         sync_result = SyncResult(success=False, errors=["Something went wrong"])
@@ -170,6 +191,36 @@ class TestStatusCommand:
 
             assert result.exit_code == 0
             assert '"id": "my-plugin"' in result.output
+
+    def test_status_json_reports_planned_lifecycle_drift(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        """Status JSON exposes the same planned lifecycle actions and reasons as dry-run."""
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_success(
+            SyncAction(
+                action="install_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Generated Codex plugin is not installed",
+            )
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["planned_actions"] == [
+            {
+                "action": "install_codex_plugin",
+                "target": "my-plugin@ai-config-my-plugin",
+                "scope": None,
+                "reason": "Generated Codex plugin is not installed",
+            }
+        ]
 
     def test_status_no_plugins(self, runner: CliRunner) -> None:
         """Shows message when no plugins installed."""
