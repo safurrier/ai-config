@@ -207,7 +207,13 @@ def sync(
             },
         }
         console.print_json(json.dumps(output))
-        if any(not result.success for result in results.values()) or discrepancies:
+        if (
+            any(
+                not result.success or bool(result.actions_failed) or bool(result.errors)
+                for result in results.values()
+            )
+            or discrepancies
+        ):
             raise click.exceptions.Exit(1)
         return
 
@@ -231,7 +237,12 @@ def sync(
                     action.reason or "-",
                 )
             console.print(table)
-        else:
+        elif (
+            result.success
+            and not result.actions_failed
+            and not result.errors
+            and (not verify or dry_run)
+        ):
             console.print(f"  [success]{SYMBOLS['pass']}[/success] No changes needed")
 
         if result.actions_failed:
@@ -246,8 +257,11 @@ def sync(
             for error in result.errors:
                 console.print(f"  {SYMBOLS['fail']} {error}")
 
-    # Exit non-zero if any target had errors
-    if any(not result.success for result in results.values()):
+    # Exit non-zero if any target had errors or failed actions.
+    if any(
+        not result.success or bool(result.actions_failed) or bool(result.errors)
+        for result in results.values()
+    ):
         sys.exit(1)
 
     # Verify if requested
@@ -399,9 +413,14 @@ def status(
             for action in planned_actions:
                 table.add_row(action.action, action.target, action.reason or "-")
             console.print(table)
-        else:
+        elif not result.errors and not drift_discrepancies:
             console.print(f"  [success]{SYMBOLS['pass']}[/success] No lifecycle actions needed")
         for drift_result in drift_results.values():
+            for action in drift_result.actions_failed:
+                console.print(
+                    f"  [error]{SYMBOLS['fail']} Failed to inspect "
+                    f"{action.action} for {action.target}[/error]"
+                )
             for error in drift_result.errors:
                 console.print(f"  [error]{SYMBOLS['fail']} {error}[/error]")
 
@@ -412,13 +431,15 @@ def status(
             if loaded_config is None:
                 load_config(config_path)
             discrepancies = drift_discrepancies
+            if result.errors:
+                console.print("[error]Cannot verify because status inspection failed.[/error]")
+                sys.exit(1)
             if discrepancies:
                 console.print("[error]Out of sync:[/error]")
                 for d in discrepancies:
                     console.print(f"  {SYMBOLS['fail']} {d}")
                 sys.exit(1)
-            else:
-                console.print(f"[success]{SYMBOLS['pass']} All in sync![/success]")
+            console.print(f"[success]{SYMBOLS['pass']} All in sync![/success]")
         except ConfigError as e:
             error_console.print(f"[error]Cannot verify - config error:[/error] {e}")
             sys.exit(1)

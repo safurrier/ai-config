@@ -9,6 +9,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +17,9 @@ from ai_config.semver import SemanticVersion
 
 _SUPPORTED_CODEX_MAJOR_MINOR = (0, 144)
 _DEFAULT_TIMEOUT_SECONDS = 30.0
+_TERMINATION_GRACE_SECONDS = 0.5
+_REAP_TIMEOUT_SECONDS = 0.5
+_PROCESS_GROUP_POLL_SECONDS = 0.02
 _MAX_ERROR_OUTPUT = 4_000
 _KNOWN_SOURCE_TYPES = {"local", "git", "github", "remote"}
 _ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -44,6 +48,16 @@ def _timeout_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _sanitize_output(value: str) -> str:
@@ -153,25 +167,41 @@ class CodexCLI:
     def _stop_process_tree(self, process: subprocess.Popen[str]) -> None:
         """Terminate a timed-out command and every descendant in its process group."""
         if os.name == "posix":
+            process_group_id = process.pid
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                os.killpg(process_group_id, signal.SIGTERM)
             except ProcessLookupError:
-                return
+                pass
+
+            deadline = time.monotonic() + _TERMINATION_GRACE_SECONDS
+            while time.monotonic() < deadline:
+                process.poll()
+                if not _process_group_exists(process_group_id):
+                    break
+                time.sleep(_PROCESS_GROUP_POLL_SECONDS)
+
+            if _process_group_exists(process_group_id):
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         else:
             process.terminate()
-        try:
-            process.communicate(timeout=0.5)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-        if os.name == "posix":
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+                process.communicate(timeout=_TERMINATION_GRACE_SECONDS)
                 return
-        else:
-            process.kill()
-        process.communicate()
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+        try:
+            process.communicate(timeout=_REAP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            if process.poll() is None:
+                process.kill()
+            try:
+                process.communicate(timeout=_REAP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
 
     def _run(
         self,

@@ -98,9 +98,10 @@ The adapter intentionally accepts only the observed Codex 0.144.x contract. It v
 version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
 list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
 and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
-control characters from error output. POSIX calls start a separate process group and kill descendants
-on timeout. Non-POSIX cleanup is limited to the direct child; 0.6.0 does not advertise descendant
-cleanup on those platforms.
+control characters from error output. POSIX calls start a separate process group; after a bounded
+SIGTERM grace period, timeout cleanup inspects and kills any remaining group even if the direct child
+already exited, then performs a bounded direct-child reap. Non-POSIX cleanup is limited to the direct
+child; 0.6.0 does not advertise descendant cleanup on those platforms.
 
 ## Isolated runtime probe
 

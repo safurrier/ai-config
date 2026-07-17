@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import stat
 import time
 from pathlib import Path
@@ -23,6 +24,25 @@ from ai_config.codex_lifecycle import (
     validate_codex_transitions,
 )
 from ai_config.converters.codex_package import CODEX_OWNERSHIP_FILE, codex_package_spec
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
+            return True
+        time.sleep(0.02)
+    return not _pid_exists(pid)
 
 
 class FakeCodexCLI:
@@ -721,21 +741,49 @@ def test_cli_failure_sanitizes_and_bounds_output(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group descendant test requires POSIX")
-def test_cli_timeout_kills_forked_descendant(tmp_path: Path) -> None:
-    marker = tmp_path / "descendant-survived"
+def test_cli_timeout_kills_forked_descendant_after_parent_closes_pipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    descendant_pid_path = tmp_path / "descendant.pid"
+    descendant_code = (
+        "import os, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"open({str(descendant_pid_path)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(30)\n"
+    )
     executable = tmp_path / "codex-timeout.py"
     executable.write_text(
         "#!/usr/bin/env python3\n"
-        "import subprocess, sys, time\n"
+        "import os, signal, subprocess, sys, time\n"
         "if sys.argv[1:] == ['--version']:\n"
         "    print('codex-cli 0.144.5')\n"
         "    raise SystemExit(0)\n"
-        f"subprocess.Popen([sys.executable, '-c', \"import time; time.sleep(0.8); open({str(marker)!r}, 'w').write('alive')\"])\n"
+        f"descendant_code = {descendant_code!r}\n"
+        "descendant = subprocess.Popen(\n"
+        "    [sys.executable, '-c', descendant_code],\n"
+        "    stdin=subprocess.DEVNULL,\n"
+        "    stdout=subprocess.DEVNULL,\n"
+        "    stderr=subprocess.DEVNULL,\n"
+        "    close_fds=True,\n"
+        "    preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN),\n"
+        ")\n"
+        f"open({str(descendant_pid_path)!r}, 'w').write(str(descendant.pid))\n"
         "time.sleep(30)\n"
     )
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
 
-    with pytest.raises(CodexCommandError, match="timed out"):
-        CodexCLI(str(executable), timeout_seconds=0.2).list_marketplaces()
-    time.sleep(1.0)
-    assert not marker.exists()
+    cli = CodexCLI(str(executable), timeout_seconds=0.5)
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    descendant_pid: int | None = None
+    try:
+        with pytest.raises(CodexCommandError, match="timed out"):
+            cli.list_marketplaces()
+        deadline = time.monotonic() + 1.0
+        while not descendant_pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert descendant_pid_path.exists(), "hostile descendant did not start"
+        descendant_pid = int(descendant_pid_path.read_text())
+        assert _wait_for_pid_exit(descendant_pid, 1.0), "timed-out descendant survived cleanup"
+    finally:
+        if descendant_pid is not None and _pid_exists(descendant_pid):
+            os.kill(descendant_pid, signal.SIGKILL)

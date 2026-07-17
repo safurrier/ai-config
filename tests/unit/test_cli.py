@@ -145,6 +145,43 @@ class TestSyncCommand:
 
             assert "Something went wrong" in result.output
 
+    def test_sync_first_action_failure_never_claims_no_changes(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult()
+        sync_result.add_failure(
+            SyncAction(action="register_marketplace", target="my-marketplace"),
+            "registration failed",
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file)])
+
+        assert result.exit_code == 1
+        assert "registration failed" in result.output
+        assert "No changes needed" not in result.output
+
+    def test_sync_true_noop_claims_no_changes(self, runner: CliRunner, config_file: Path) -> None:
+        with patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file)])
+
+        assert result.exit_code == 0
+        assert "No changes needed" in result.output
+
+    def test_sync_verification_drift_never_claims_no_changes(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        with (
+            patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}),
+            patch("ai_config.cli.verify_sync", return_value=["claude: reinstall required"]),
+        ):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "reinstall required" in result.output
+        assert "No changes needed" not in result.output
+        assert "All in sync" not in result.output
+
     def test_sync_force_convert_flag(self, runner: CliRunner, config_file: Path) -> None:
         """Force-convert flag is passed through to sync_config."""
         sync_result = SyncResult()
@@ -273,6 +310,38 @@ class TestStatusCommand:
 
         assert result.exit_code == 1
         assert "inspection failed" in result.output
+
+    def test_status_drift_inspection_failure_never_claims_sync(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_failure(
+            SyncAction(action="install_codex_plugin", target="my-plugin@ai-config-my-plugin"),
+            "Codex inspection failed",
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "Codex inspection failed" in result.output
+        assert "No lifecycle actions needed" not in result.output
+        assert "All in sync" not in result.output
+
+    def test_status_true_noop_claims_sync(self, runner: CliRunner, config_file: Path) -> None:
+        status_result = StatusResult(target_type="claude")
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 0
+        assert "No lifecycle actions needed" in result.output
+        assert "All in sync" in result.output
 
     def test_status_no_plugins(self, runner: CliRunner) -> None:
         """Shows message when no plugins installed."""

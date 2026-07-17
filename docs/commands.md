@@ -78,7 +78,8 @@ What it does:
 
 Codex conversion reports register, install, update, reinstall/repair, remove, and no-op actions with
 reasons. JSON distinguishes `planned_actions`, `completed_actions`, and `failed_actions`. Sync exits
-non-zero if any target fails or post-sync lifecycle verification finds drift.
+non-zero if any target fails or post-sync lifecycle verification finds drift, and terminal output only
+prints `No changes needed` after a clean result.
 
 ## status
 
@@ -103,8 +104,9 @@ Displays:
 - Any sync issues
 
 With `--config` or `--verify`, status uses the same lifecycle planner as sync and exits non-zero for
-any non-no-op action or inspection error. It never reports `All in sync` from Claude-only state while
-Codex package drift remains.
+any non-no-op action or inspection error. Terminal output only prints `No lifecycle actions needed`
+or `All in sync` after clean inspection and planning; it never derives those claims from Claude-only
+state while Codex package drift remains.
 
 ## watch
 

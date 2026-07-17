@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-07-15
-
 ### Added
 
 - Codex conversion now emits one self-contained plugin package and local marketplace per source plugin under `.ai-config/codex/marketplaces/`.
@@ -33,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desired, temporarily unavailable, disabled, removed, and target-removed conversion states now reconcile separately; unavailable sources retain ownership while disabled/removed state is cleaned up.
 - Codex status, verification, dry-run, and JSON output use lifecycle planning truth and distinguish planned, completed, failed, remove, repair, and no-op actions.
 - Conversion cache hits verify generated package/marketplace existence and integrity, repairing deleted or tampered owned output during normal sync.
-- POSIX Codex subprocesses now have finite process-group timeouts and descendant cleanup; non-POSIX cleanup is explicitly limited to the direct child. Failure output is sanitized and bounded, and the public `ai-config sync` lifecycle has an isolated real-Codex probe.
+- POSIX Codex subprocesses now have finite process-group timeouts and terminate any remaining descendants after a bounded grace period, even if the direct child exits first; non-POSIX cleanup is explicitly limited to the direct child. Failure output is sanitized and bounded, and the public `ai-config sync` lifecycle has an isolated real-Codex probe.
 
 ## [0.5.0] - 2026-05-08
 
@@ -151,8 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for GitHub and local marketplaces
 - User and project scope plugin installation
 
-[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/safurrier/ai-config/compare/v0.5.0...v0.6.0
+[Unreleased]: https://github.com/safurrier/ai-config/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/safurrier/ai-config/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/safurrier/ai-config/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/safurrier/ai-config/compare/v0.4.0...v0.4.1

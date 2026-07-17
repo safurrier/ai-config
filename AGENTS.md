@@ -156,7 +156,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 2. Use Keep a Changelog format: Added, Changed, Deprecated, Removed, Fixed, Security
 
 **To release a new version:**
-1. Move `[Unreleased]` entries to new version section with date
+1. Move `[Unreleased]` entries to a new version section with the actual release date
 2. Update version in `pyproject.toml`
 3. Update comparison links at bottom of CHANGELOG.md
 4. Create PR, merge to main
