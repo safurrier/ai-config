@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, cast
 
 from ai_config.codex_lifecycle import sync_codex_packages
 from ai_config.converters import TargetTool, convert_plugin
@@ -58,11 +57,11 @@ def run(
     return result
 
 
-def load_json(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+def load_json(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     value: object = json.loads(result.stdout)
     if not isinstance(value, dict):
         raise AssertionError("expected JSON object")
-    return cast(dict[str, Any], value)
+    return value
 
 
 def make_unrelated_marketplace(root: Path) -> tuple[str, str]:
@@ -110,7 +109,7 @@ def set_enabled(config_path: Path, plugin_id: str, enabled: bool) -> None:
     config_path.write_text(content.replace(old, new))
 
 
-def probe(codex: str, expected_version: str | None = None) -> dict[str, Any]:
+def probe(codex: str, expected_version: str | None = None) -> dict[str, object]:
     """Exercise generation, validation, discovery, update, idempotence, and removal."""
     repo_root = Path(__file__).resolve().parents[2]
     source = repo_root / "tests/fixtures/sample-plugins/complete-plugin"

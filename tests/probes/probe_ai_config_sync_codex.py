@@ -109,7 +109,9 @@ def _run_ai_config(config: Path, env: dict[str, str], *extra: str) -> dict[str, 
     return payload
 
 
-def _run_status(config: Path, env: dict[str, str]) -> dict[str, object]:
+def _run_status(
+    config: Path, env: dict[str, str], *, expected_returncode: int = 0
+) -> dict[str, object]:
     result = subprocess.run(
         [sys.executable, "-m", "ai_config", "status", "--config", str(config), "--json"],
         env=env,
@@ -119,9 +121,10 @@ def _run_status(config: Path, env: dict[str, str]) -> dict[str, object]:
         timeout=90,
         start_new_session=os.name == "posix",
     )
-    if result.returncode != 0:
+    if result.returncode != expected_returncode:
         raise AssertionError(
-            f"public ai-config status failed ({result.returncode})\n"
+            f"public ai-config status returned {result.returncode}, expected "
+            f"{expected_returncode}\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     payload: object = json.loads(result.stdout)
@@ -137,9 +140,9 @@ def _actions(payload: dict[str, object]) -> dict[str, str]:
     claude = targets.get("claude")
     if not isinstance(claude, dict):
         raise AssertionError(f"missing Claude target in sync result: {payload}")
-    actions = claude.get("actions")
+    actions = claude.get("completed_actions")
     if not isinstance(actions, list):
-        raise AssertionError(f"missing actions in sync result: {payload}")
+        raise AssertionError(f"missing completed actions in sync result: {payload}")
     parsed: dict[str, str] = {}
     for action in actions:
         if not isinstance(action, dict):
@@ -209,6 +212,21 @@ def probe(codex: str) -> dict[str, object]:
         if set(unchanged) != {"noop_codex_plugin"}:
             raise AssertionError(f"unchanged public sync did not converge to no-op: {unchanged}")
 
+        generated_skill = (
+            output
+            / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools"
+            / "skills/code-review/SKILL.md"
+        )
+        generated_bytes = generated_skill.read_bytes()
+        generated_skill.write_text("tampered generated output\n")
+        repaired_output = _actions(_run_ai_config(config, env))
+        if "update_codex_plugin" not in repaired_output:
+            raise AssertionError(
+                f"generated-output tampering did not trigger repair: {repaired_output}"
+            )
+        if generated_skill.read_bytes() != generated_bytes:
+            raise AssertionError("normal sync did not restore tampered generated output")
+
         manifest_path = plugin / ".claude-plugin/plugin.json"
         manifest = json.loads(manifest_path.read_text())
         manifest["version"] = "1.1.0"
@@ -227,7 +245,7 @@ def probe(codex: str) -> dict[str, object]:
 
         config_path = codex_home / "config.toml"
         set_enabled(config_path, _MANAGED_PLUGIN_ID, False)
-        status = _run_status(config, env)
+        status = _run_status(config, env, expected_returncode=1)
         planned = status.get("planned_actions")
         if not isinstance(planned, list) or not any(
             isinstance(action, dict) and action.get("action") == "reinstall_codex_plugin"
@@ -283,6 +301,7 @@ def probe(codex: str) -> dict[str, object]:
         "lifecycle": [
             "first-sync-register-install",
             "unchanged-noop",
+            "generated-output-integrity-repair",
             "source-refresh-update",
             "status-drift-reporting",
             "disabled-drift-reinstall",

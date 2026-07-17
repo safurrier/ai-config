@@ -54,7 +54,7 @@ class SemanticVersion:
         if core != other_core:
             return core < other_core
         if not self.prerelease:
-            return bool(other.prerelease)
+            return False
         if not other.prerelease:
             return True
         for left, right in zip(self.prerelease, other.prerelease, strict=False):

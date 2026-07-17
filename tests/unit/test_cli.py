@@ -110,9 +110,31 @@ class TestSyncCommand:
 
         assert result.exit_code == 0
         payload = json.loads(result.output)
-        action = payload["targets"]["claude"]["actions"][0]
+        action = payload["targets"]["claude"]["planned_actions"][0]
         assert action["action"] == "reinstall_codex_plugin"
         assert action["reason"] == "Installed generated plugin is disabled"
+
+    def test_sync_json_distinguishes_completed_and_failed_actions(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult(success=False, errors=["permission denied"])
+        sync_result.add_success(
+            SyncAction(action="remove_codex_plugin", target="demo@market", reason="removed")
+        )
+        sync_result.actions_failed.append(
+            SyncAction(action="remove_codex_marketplace", target="market", reason="removed")
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)["targets"]["claude"]
+        assert [item["action"] for item in payload["completed_actions"]] == ["remove_codex_plugin"]
+        assert [item["action"] for item in payload["failed_actions"]] == [
+            "remove_codex_marketplace"
+        ]
+        assert payload["planned_actions"] == []
 
     def test_sync_with_errors(self, runner: CliRunner, config_file: Path) -> None:
         """Shows errors from sync."""
@@ -211,7 +233,7 @@ class TestStatusCommand:
         ):
             result = runner.invoke(main, ["status", "--config", str(config_file), "--json"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         payload = json.loads(result.output)
         assert payload["planned_actions"] == [
             {
@@ -221,6 +243,36 @@ class TestStatusCommand:
                 "reason": "Generated Codex plugin is not installed",
             }
         ]
+
+    def test_status_verify_uses_lifecycle_drift_for_exit_and_message(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_success(
+            SyncAction(
+                action="reinstall_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Generated package integrity drifted",
+            )
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "reinstall_codex_plugin" in result.output
+        assert "All in sync" not in result.output
+
+    def test_status_terminal_inspection_error_exits_nonzero(self, runner: CliRunner) -> None:
+        status_result = StatusResult(target_type="claude", errors=["inspection failed"])
+        with patch("ai_config.cli.get_status", return_value=status_result):
+            result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 1
+        assert "inspection failed" in result.output
 
     def test_status_no_plugins(self, runner: CliRunner) -> None:
         """Shows message when no plugins installed."""

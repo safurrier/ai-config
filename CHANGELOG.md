@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** the `codex` target now produces package-native skills, hooks, and MCP declarations instead of loose `.codex/skills`, `.codex/prompts`, `.codex/hooks.json`, or direct shared MCP configuration.
 - Claude commands always become Codex package skills and are reported as degraded when Claude-only argument substitution cannot be preserved.
-- Codex lifecycle failures now identify the exact stage and command with actionable remediation.
+- Codex lifecycle failures now identify the exact stage and command with actionable remediation and preserve completed/failed action evidence for retry.
 
 ### Removed
 
@@ -29,9 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Codex removal and update are constrained by ai-config ownership metadata and fail closed on normalized identity collisions, ambiguous runtime state, malformed CLI responses, and SemVer downgrades.
-- Codex status, dry-run, and JSON output now explain register, install, update, reinstall/repair, remove, and no-op lifecycle actions.
-- Codex subprocesses now have finite process-group timeouts and sanitized bounded failure output; the public `ai-config sync` lifecycle has an isolated real-Codex probe.
+- Codex removal and update are constrained by ai-config ownership metadata and fail closed before generated-state mutation on normalized package namespace collisions, ambiguous runtime state, malformed CLI responses, and SemVer downgrades.
+- Desired, temporarily unavailable, disabled, removed, and target-removed conversion states now reconcile separately; unavailable sources retain ownership while disabled/removed state is cleaned up.
+- Codex status, verification, dry-run, and JSON output use lifecycle planning truth and distinguish planned, completed, failed, remove, repair, and no-op actions.
+- Conversion cache hits verify generated package/marketplace existence and integrity, repairing deleted or tampered owned output during normal sync.
+- POSIX Codex subprocesses now have finite process-group timeouts and descendant cleanup; non-POSIX cleanup is explicitly limited to the direct child. Failure output is sanitized and bounded, and the public `ai-config sync` lifecycle has an isolated real-Codex probe.
 
 ## [0.5.0] - 2026-05-08
 

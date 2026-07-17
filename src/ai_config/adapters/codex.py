@@ -415,9 +415,104 @@ class CodexCLI:
                 remediation,
             )
 
+    def _validate_available_plugin(
+        self,
+        entry: object,
+        *,
+        index: int,
+        args: list[str],
+        payload: dict[str, object],
+        remediation: str,
+    ) -> str:
+        object_entry = _as_object_dict(entry)
+        if object_entry is None:
+            raise self._schema_error(
+                "list-plugins",
+                args,
+                payload,
+                f"available[{index}] must be an object with string keys",
+                remediation,
+            )
+        plugin_id = object_entry.get("pluginId")
+        name = object_entry.get("name")
+        marketplace_name = object_entry.get("marketplaceName")
+        version = object_entry.get("version")
+        source = _as_object_dict(object_entry.get("source"))
+        marketplace_source = _as_object_dict(object_entry.get("marketplaceSource"))
+        if (
+            not isinstance(plugin_id, str)
+            or not plugin_id
+            or not isinstance(name, str)
+            or not name
+            or not isinstance(marketplace_name, str)
+            or not marketplace_name
+            or not isinstance(version, str)
+            or object_entry.get("installed") is not False
+            or not isinstance(object_entry.get("enabled"), bool)
+            or not isinstance(object_entry.get("installPolicy"), str)
+            or not isinstance(object_entry.get("authPolicy"), str)
+        ):
+            raise self._schema_error(
+                "list-plugins",
+                args,
+                payload,
+                f"available[{index}] is missing required typed fields",
+                remediation,
+            )
+        if plugin_id != f"{name}@{marketplace_name}":
+            raise self._schema_error(
+                "list-plugins",
+                args,
+                payload,
+                f"available[{index}] plugin identity fields disagree",
+                remediation,
+            )
+        try:
+            SemanticVersion.parse(version, context=f"available Codex plugin {plugin_id} version")
+        except ValueError as error:
+            raise self._schema_error(
+                "list-plugins", args, payload, f"available[{index}] {error}", remediation
+            ) from error
+        source_type = source.get("source") if source is not None else None
+        source_path = source.get("path") if source is not None else None
+        marketplace_source_type = (
+            marketplace_source.get("sourceType") if marketplace_source is not None else None
+        )
+        marketplace_source_value = (
+            marketplace_source.get("source") if marketplace_source is not None else None
+        )
+        if source_type not in _KNOWN_SOURCE_TYPES:
+            detail = f"available[{index}].source has an unknown source type"
+            raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        if source_type == "local" and (not isinstance(source_path, str) or not source_path):
+            detail = f"available[{index}].source.path must be a non-empty string"
+            raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        if source_type != "local" and (
+            source is None or not isinstance(source.get("url"), str) or not source.get("url")
+        ):
+            detail = f"available[{index}].source.url must be a non-empty string"
+            raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        if (
+            marketplace_source_type not in _KNOWN_SOURCE_TYPES
+            or not isinstance(marketplace_source_value, str)
+            or not marketplace_source_value
+        ):
+            detail = f"available[{index}].marketplaceSource has an unknown source type"
+            raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        if source_type == "local" and marketplace_source_type == "local":
+            if not isinstance(source_path, str):
+                detail = f"available[{index}].source.path must be a non-empty string"
+                raise self._schema_error("list-plugins", args, payload, detail, remediation)
+            source_root = Path(source_path).resolve()
+            marketplace_root = Path(marketplace_source_value).resolve()
+            if marketplace_root not in source_root.parents:
+                detail = f"available[{index}] plugin source is outside its marketplace root"
+                raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        return plugin_id
+
     def list_plugins(self) -> list[CodexInstalledPlugin]:
         self._ensure_supported_version()
-        args = ["plugin", "list", "--json"]
+        args = ["plugin", "list", "--available", "--json"]
         remediation = "Run `codex plugin list --json` and repair Codex config errors."
         payload = self.run_json("list-plugins", args, remediation=remediation)
         installed = payload.get("installed")
@@ -430,14 +525,25 @@ class CodexCLI:
                 "installed and available must both be arrays",
                 remediation,
             )
-        if any(_as_object_dict(entry) is None for entry in available):
-            raise self._schema_error(
-                "list-plugins",
-                args,
-                payload,
-                "available entries must be objects with string keys",
-                remediation,
+        available_seen: set[str] = set()
+        for index, entry in enumerate(available):
+            plugin_id = self._validate_available_plugin(
+                entry,
+                index=index,
+                args=args,
+                payload=payload,
+                remediation=remediation,
             )
+            if plugin_id in available_seen:
+                raise self._schema_error(
+                    "list-plugins",
+                    args,
+                    payload,
+                    f"duplicate available plugin '{plugin_id}'",
+                    remediation,
+                )
+            available_seen.add(plugin_id)
+
         results: list[CodexInstalledPlugin] = []
         seen: set[str] = set()
         for index, entry in enumerate(installed):
@@ -484,6 +590,14 @@ class CodexCLI:
                     args,
                     payload,
                     f"installed[{index}] plugin identity fields disagree",
+                    remediation,
+                )
+            if plugin_id in available_seen:
+                raise self._schema_error(
+                    "list-plugins",
+                    args,
+                    payload,
+                    f"plugin '{plugin_id}' appears in both installed and available rows",
                     remediation,
                 )
             if plugin_id in seen:

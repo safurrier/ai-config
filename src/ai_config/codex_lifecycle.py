@@ -11,6 +11,7 @@ from typing import Protocol
 
 from ai_config.adapters.codex import (
     CodexCLI,
+    CodexCommandError,
     CodexInstalledPlugin,
     CodexMarketplace,
     CodexPluginInstall,
@@ -42,6 +43,28 @@ class CodexLifecycleAction:
     action: CodexLifecycleActionName
     target: str
     reason: str
+
+
+@dataclass(frozen=True)
+class CodexLifecycleExecutionError(RuntimeError):
+    """Lifecycle failure retaining the complete plan and partial progress."""
+
+    planned_actions: tuple[CodexLifecycleAction, ...]
+    completed_actions: tuple[CodexLifecycleAction, ...]
+    failed_action: CodexLifecycleAction | None
+    cause: str
+
+    def __str__(self) -> str:
+        failed = (
+            f"{self.failed_action.action} for {self.failed_action.target}"
+            if self.failed_action is not None
+            else "ownership checkpoint"
+        )
+        return (
+            f"Codex lifecycle failed during {failed} after "
+            f"{len(self.completed_actions)}/{len(self.planned_actions)} planned actions: "
+            f"{self.cause}"
+        )
 
 
 @dataclass(frozen=True)
@@ -116,25 +139,49 @@ def _load_ownership(output_dir: Path) -> dict[str, _OwnershipEntry]:
                 "refusing ambiguous lifecycle state."
             )
         SemanticVersion.parse(version, context=f"owned Codex package {plugin_id} version")
+        resolved_marketplace_path = Path(marketplace_path).resolve()
+        owned_root = (output_dir / ".ai-config" / "codex" / "marketplaces").resolve()
+        if resolved_marketplace_path.parent != owned_root:
+            raise ValueError(
+                f"Owned Codex marketplace path for '{plugin_id}' is outside {owned_root}; "
+                "refusing filesystem cleanup."
+            )
         parsed[plugin_id] = _OwnershipEntry(
             marketplace_name=marketplace_name,
-            marketplace_path=Path(marketplace_path).resolve(),
+            marketplace_path=resolved_marketplace_path,
             version=version,
         )
     return parsed
 
 
-def _write_ownership(output_dir: Path, specs: list[CodexPackageSpec]) -> None:
+def _write_ownership(
+    output_dir: Path,
+    specs: list[CodexPackageSpec],
+    retained: dict[str, _OwnershipEntry] | None = None,
+) -> None:
     path = output_dir / CODEX_OWNERSHIP_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     packages = {
-        spec.plugin_id: {
-            "marketplace_name": spec.marketplace_name,
-            "marketplace_path": str(spec.marketplace_path),
-            "version": spec.version,
+        plugin_id: {
+            "marketplace_name": entry.marketplace_name,
+            "marketplace_path": str(entry.marketplace_path),
+            "version": entry.version,
         }
-        for spec in sorted(specs, key=lambda item: item.plugin_id)
+        for plugin_id, entry in sorted((retained or {}).items())
     }
+    packages.update(
+        {
+            spec.plugin_id: {
+                "marketplace_name": spec.marketplace_name,
+                "marketplace_path": str(spec.marketplace_path),
+                "version": spec.version,
+            }
+            for spec in sorted(specs, key=lambda item: item.plugin_id)
+        }
+    )
+    if not packages:
+        path.unlink(missing_ok=True)
+        return
     temporary = path.with_suffix(".tmp")
     temporary.write_text(
         json.dumps({"version": _OWNERSHIP_VERSION, "packages": packages}, indent=2) + "\n"
@@ -196,6 +243,24 @@ def _validate_transition(plugin_id: str, previous: str, desired: str, *, source:
         )
 
 
+def owned_codex_plugin_ids(output_dir: Path) -> set[str]:
+    """Return strictly validated plugin IDs from one owned output ledger."""
+    return set(_load_ownership(output_dir))
+
+
+def validate_codex_transitions(
+    specs: list[CodexPackageSpec],
+    prior_output_dirs: list[Path],
+) -> None:
+    """Reject downgrades across current and retired generated output roots."""
+    desired = _index_specs(specs)
+    for output_dir in prior_output_dirs:
+        for plugin_id, entry in _load_ownership(output_dir).items():
+            spec = desired.get(plugin_id)
+            if spec is not None:
+                _validate_transition(plugin_id, entry.version, spec.version, source="ownership")
+
+
 def _validate_runtime_identity(spec: CodexPackageSpec, installed: CodexInstalledPlugin) -> None:
     expected_source = (spec.marketplace_path / "plugins" / spec.plugin_name).resolve()
     if (
@@ -217,12 +282,18 @@ def _plan_actions(
     marketplaces: dict[str, CodexMarketplace],
     plugins: dict[str, CodexInstalledPlugin],
     refreshed_plugin_ids: set[str],
+    retained_plugin_ids: set[str],
+    removal_reasons: dict[str, str],
+    default_removal_reason: str,
 ) -> list[CodexLifecycleAction]:
     actions: list[CodexLifecycleAction] = []
-    stale_ids = sorted(set(previous) - set(desired))
+    if set(desired) & retained_plugin_ids:
+        raise ValueError("A Codex package cannot be both desired and temporarily unavailable")
+    stale_ids = sorted(set(previous) - set(desired) - retained_plugin_ids)
 
     for plugin_id in stale_ids:
         entry = previous[plugin_id]
+        removal_reason = removal_reasons.get(plugin_id, default_removal_reason)
         marketplace = marketplaces.get(entry.marketplace_name)
         if marketplace is not None and marketplace.root != entry.marketplace_path:
             raise ValueError(
@@ -244,19 +315,16 @@ def _plan_actions(
                     f"Codex plugin ownership changed for '{plugin_id}'; ai-config will not remove "
                     "ambiguous runtime state. Resolve the collision and retry."
                 )
-            actions.append(
-                CodexLifecycleAction(
-                    "remove_codex_plugin", plugin_id, "Source plugin is no longer configured"
-                )
-            )
+            actions.append(CodexLifecycleAction("remove_codex_plugin", plugin_id, removal_reason))
         if marketplace is not None:
             actions.append(
                 CodexLifecycleAction(
                     "remove_codex_marketplace",
                     entry.marketplace_name,
-                    "Generated marketplace is no longer configured",
+                    removal_reason,
                 )
             )
+        actions.append(CodexLifecycleAction("remove_codex_package", plugin_id, removal_reason))
 
     for plugin_id, spec in sorted(desired.items()):
         old = previous.get(plugin_id)
@@ -350,6 +418,18 @@ def _plan_actions(
     return actions
 
 
+def _validate_install_result(
+    plugin_id: str,
+    spec: CodexPackageSpec,
+    installed: CodexPluginInstall,
+) -> None:
+    if installed.plugin_id != plugin_id or installed.version != spec.version:
+        raise ValueError(
+            f"Codex install result for '{plugin_id}' did not converge to generated version "
+            f"{spec.version}; reported {installed.plugin_id} at {installed.version}."
+        )
+
+
 def sync_codex_packages(
     specs: list[CodexPackageSpec],
     *,
@@ -357,6 +437,11 @@ def sync_codex_packages(
     refreshed_plugin_ids: set[str],
     dry_run: bool = False,
     cli: CodexLifecycleClient | None = None,
+    retained_plugin_ids: set[str] | None = None,
+    removal_reasons: dict[str, str] | None = None,
+    default_removal_reason: str = "Source plugin is no longer configured",
+    ignored_runtime_plugin_ids: set[str] | None = None,
+    ignored_runtime_marketplace_names: set[str] | None = None,
 ) -> list[CodexLifecycleAction]:
     """Converge generated Codex packages without touching unrelated Codex state."""
     desired = _index_specs(specs)
@@ -364,45 +449,84 @@ def sync_codex_packages(
     codex: CodexLifecycleClient = cli or CodexCLI()
     marketplaces = _index_marketplaces(codex.list_marketplaces())
     plugins = _index_plugins(codex.list_plugins())
-    actions = _plan_actions(desired, previous, marketplaces, plugins, refreshed_plugin_ids)
+    ignored_plugins = ignored_runtime_plugin_ids or set()
+    ignored_marketplaces = ignored_runtime_marketplace_names or set()
+    if (ignored_plugins or ignored_marketplaces) and not dry_run:
+        raise ValueError("Runtime state may be ignored only during a validated dry-run migration")
+    for plugin_id in ignored_plugins:
+        plugins.pop(plugin_id, None)
+    for marketplace_name in ignored_marketplaces:
+        marketplaces.pop(marketplace_name, None)
+    retained_ids = retained_plugin_ids or set()
+    actions = _plan_actions(
+        desired,
+        previous,
+        marketplaces,
+        plugins,
+        refreshed_plugin_ids,
+        retained_ids,
+        removal_reasons or {},
+        default_removal_reason,
+    )
 
     if dry_run:
         return actions
+    if not actions and not desired and retained_ids:
+        return []
 
-    stale_ids = sorted(set(previous) - set(desired))
-    for plugin_id in stale_ids:
-        entry = previous[plugin_id]
-        if plugin_id in plugins:
-            codex.remove_plugin(plugin_id)
-        if entry.marketplace_name in marketplaces:
-            codex.remove_marketplace(entry.marketplace_name)
-        owned_root = (output_dir / ".ai-config" / "codex" / "marketplaces").resolve()
-        if entry.marketplace_path != owned_root and owned_root in entry.marketplace_path.parents:
-            shutil.rmtree(entry.marketplace_path, ignore_errors=True)
-
-    action_by_plugin = {
-        action.target: action.action
-        for action in actions
-        if action.action
-        in {"install_codex_plugin", "update_codex_plugin", "reinstall_codex_plugin"}
-    }
-    for plugin_id, spec in sorted(desired.items()):
-        if spec.marketplace_name not in marketplaces:
-            codex.add_marketplace(str(spec.marketplace_path), spec.marketplace_name)
-        plugin_action = action_by_plugin.get(plugin_id)
-        if plugin_action in {"update_codex_plugin", "reinstall_codex_plugin"}:
-            codex.remove_plugin(plugin_id)
-        if plugin_action in {
-            "install_codex_plugin",
-            "update_codex_plugin",
-            "reinstall_codex_plugin",
-        }:
-            installed = codex.add_plugin(plugin_id)
-            if installed.plugin_id != plugin_id or installed.version != spec.version:
-                raise ValueError(
-                    f"Codex install result for '{plugin_id}' did not converge to generated version "
-                    f"{spec.version}; reported {installed.plugin_id} at {installed.version}."
+    completed: list[CodexLifecycleAction] = []
+    for action in actions:
+        try:
+            if action.action == "remove_codex_plugin":
+                codex.remove_plugin(action.target)
+            elif action.action == "remove_codex_marketplace":
+                codex.remove_marketplace(action.target)
+            elif action.action == "remove_codex_package":
+                entry = previous[action.target]
+                if entry.marketplace_path.is_dir() and not entry.marketplace_path.is_symlink():
+                    shutil.rmtree(entry.marketplace_path)
+                elif entry.marketplace_path.exists() or entry.marketplace_path.is_symlink():
+                    entry.marketplace_path.unlink()
+            elif action.action == "register_codex_marketplace":
+                spec = next(
+                    item for item in desired.values() if item.marketplace_name == action.target
                 )
+                codex.add_marketplace(str(spec.marketplace_path), spec.marketplace_name)
+            elif action.action in {"update_codex_plugin", "reinstall_codex_plugin"}:
+                spec = desired[action.target]
+                codex.remove_plugin(action.target)
+                installed = codex.add_plugin(action.target)
+                _validate_install_result(action.target, spec, installed)
+            elif action.action == "install_codex_plugin":
+                spec = desired[action.target]
+                installed = codex.add_plugin(action.target)
+                _validate_install_result(action.target, spec, installed)
+            elif action.action != "noop_codex_plugin":
+                raise ValueError(f"Unsupported Codex lifecycle action: {action.action}")
+            completed.append(action)
+        except (CodexCommandError, OSError, ValueError) as error:
+            raise CodexLifecycleExecutionError(
+                planned_actions=tuple(actions),
+                completed_actions=tuple(completed),
+                failed_action=action,
+                cause=str(error),
+            ) from error
 
-    _write_ownership(output_dir, specs)
-    return actions
+    retained_entries = {
+        plugin_id: previous[plugin_id] for plugin_id in retained_ids if plugin_id in previous
+    }
+    ownership_action = CodexLifecycleAction(
+        "write_codex_ownership",
+        str(output_dir / CODEX_OWNERSHIP_FILE),
+        "Persist the converged ai-config ownership ledger",
+    )
+    try:
+        _write_ownership(output_dir, specs, retained_entries)
+    except OSError as error:
+        raise CodexLifecycleExecutionError(
+            planned_actions=(*actions, ownership_action),
+            completed_actions=tuple(completed),
+            failed_action=ownership_action,
+            cause=str(error),
+        ) from error
+    return completed

@@ -14,6 +14,8 @@ CodexLifecycleActionName: TypeAlias = Literal[
     "noop_codex_plugin",
     "remove_codex_plugin",
     "remove_codex_marketplace",
+    "remove_codex_package",
+    "write_codex_ownership",
 ]
 SyncActionName: TypeAlias = (
     Literal[

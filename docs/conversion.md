@@ -131,12 +131,20 @@ ai-config doctor --target all ./output-dir
 ai-config sync --force-convert
 ```
 
-Sync hashes plugin source and conversion settings. Changed Codex packages are reinstalled through
-the CLI; unchanged sync reports an explicit no-op. Dry-run and `sync --json` report register,
-install, update, reinstall/repair, remove, and no-op actions with reasons. `status --config ...
---json` exposes the same planned drift actions.
+Sync hashes plugin source, conversion settings, and owned generated marketplace bytes. A cache hit
+is accepted only while the package and marketplace still exist without symlinks and match the saved
+fingerprint, so normal sync repairs deleted or tampered output. Dry-run and JSON output distinguish
+planned, completed, and failed actions. `status --config ... --json` exits non-zero when lifecycle
+planning finds a non-no-op action or an inspection error.
 
-Every Codex subprocess has a finite timeout and process-group cleanup. ai-config accepts only the
+Configured sources are tracked separately as desired, temporarily unavailable, or disabled. A
+temporarily unavailable source retains prior ownership; a disabled/removed source is cleaned up.
+Removing or disabling the Codex target also reconciles prior owned roots, including a prior custom
+`output_dir` recorded in the conversion cache.
+
+Every Codex subprocess has a finite timeout. On POSIX, each command starts in a separate process
+group and timeout cleanup kills descendants. Non-POSIX platforms receive direct-child timeout
+cleanup only; ai-config 0.6.0 does not claim descendant cleanup there. The adapter accepts only the
 validated Codex 0.144.x JSON contract: malformed, partial, duplicate, inconsistent, or unknown
-version responses fail closed. Lifecycle failures sanitize child output, name the exact stage and
-command, include remediation, and never claim successful convergence.
+version responses fail closed. Lifecycle failures retain ownership for retry, sanitize child output,
+name the exact stage and command, include remediation, and report completed and failed actions.

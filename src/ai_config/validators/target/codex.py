@@ -6,7 +6,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
 import yaml
 
@@ -30,6 +30,25 @@ VALID_CODEX_HOOK_EVENTS = {
 VALID_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
+class _DuplicateGeneratedJSONKey(ValueError):
+    """Raised when an owned generated manifest contains an ambiguous key."""
+
+
+def _generated_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateGeneratedJSONKey(f"duplicate JSON key '{key}'")
+        result[key] = value
+    return result
+
+
+def _object_dict(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        return None
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
 class CodexOutputValidator:
     """Validate generated package manifests, marketplaces, and ownership boundaries."""
 
@@ -39,7 +58,7 @@ class CodexOutputValidator:
     def _result(
         self,
         check_name: str,
-        status: str,
+        status: Literal["pass", "warn", "fail"],
         message: str,
         *,
         details: str | None = None,
@@ -47,7 +66,7 @@ class CodexOutputValidator:
     ) -> ValidationResult:
         return ValidationResult(
             check_name=check_name,
-            status=status,  # type: ignore[arg-type]
+            status=status,
             message=message,
             details=details,
             fix_hint=fix_hint,
@@ -99,10 +118,10 @@ class CodexOutputValidator:
 
     def _load_json(
         self, path: Path, check_name: str
-    ) -> tuple[dict[str, Any] | None, list[ValidationResult]]:
+    ) -> tuple[dict[str, object] | None, list[ValidationResult]]:
         try:
-            value: object = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
+            value: object = json.loads(path.read_text(), object_pairs_hook=_generated_json_object)
+        except (OSError, json.JSONDecodeError, _DuplicateGeneratedJSONKey) as error:
             return None, [
                 self._result(
                     check_name,
@@ -161,7 +180,7 @@ class CodexOutputValidator:
         return candidate
 
     def _validate_hooks(
-        self, package_root: Path, manifest: dict[str, Any]
+        self, package_root: Path, manifest: dict[str, object]
     ) -> list[ValidationResult]:
         reference = manifest.get("hooks")
         if reference is None:
@@ -206,7 +225,8 @@ class CodexOutputValidator:
                 )
                 continue
             for group in groups:
-                handlers = group.get("hooks") if isinstance(group, dict) else None
+                group_object = _object_dict(group)
+                handlers = group_object.get("hooks") if group_object is not None else None
                 if not isinstance(handlers, list):
                     results.append(
                         self._result(
@@ -217,8 +237,13 @@ class CodexOutputValidator:
                     )
                     continue
                 for handler in handlers:
-                    command = handler.get("command") if isinstance(handler, dict) else None
-                    if not isinstance(command, str) or handler.get("type") != "command":
+                    handler_object = _object_dict(handler)
+                    command = handler_object.get("command") if handler_object is not None else None
+                    if (
+                        not isinstance(command, str)
+                        or handler_object is None
+                        or handler_object.get("type") != "command"
+                    ):
                         results.append(
                             self._result(
                                 f"codex_package_hook_{event}_command",
@@ -244,7 +269,7 @@ class CodexOutputValidator:
             )
         return results
 
-    def _validate_mcp(self, manifest: dict[str, Any]) -> list[ValidationResult]:
+    def _validate_mcp(self, manifest: dict[str, object]) -> list[ValidationResult]:
         servers = manifest.get("mcpServers")
         if servers is None:
             return []
@@ -254,7 +279,10 @@ class CodexOutputValidator:
             ]
         results: list[ValidationResult] = []
         for name, config in servers.items():
-            valid = isinstance(config, dict) and bool(config.get("command") or config.get("url"))
+            config_object = _object_dict(config)
+            valid = config_object is not None and bool(
+                config_object.get("command") or config_object.get("url")
+            )
             if not valid:
                 results.append(
                     self._result(
@@ -404,12 +432,22 @@ class CodexOutputValidator:
                     )
                 )
                 continue
-            entry = plugins[0]
+            entry = _object_dict(plugins[0])
+            if entry is None:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_plugins",
+                        "fail",
+                        "Generated marketplace plugin entry must use string keys",
+                    )
+                )
+                continue
             name = entry.get("name")
-            source = entry.get("source")
-            path_value = source.get("path") if isinstance(source, dict) else None
+            source = _object_dict(entry.get("source"))
+            path_value = source.get("path") if source is not None else None
             if (
                 not isinstance(name, str)
+                or source is None
                 or not isinstance(path_value, str)
                 or source.get("source") != "local"
             ):

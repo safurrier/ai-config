@@ -17,7 +17,11 @@ from ai_config.adapters.codex import (
     CodexMarketplace,
     CodexPluginInstall,
 )
-from ai_config.codex_lifecycle import sync_codex_packages
+from ai_config.codex_lifecycle import (
+    CodexLifecycleExecutionError,
+    sync_codex_packages,
+    validate_codex_transitions,
+)
 from ai_config.converters.codex_package import CODEX_OWNERSHIP_FILE, codex_package_spec
 
 
@@ -62,6 +66,19 @@ class FakeCodexCLI:
 
     def remove_plugin(self, plugin_id: str) -> None:
         self.calls.append(("remove_plugin", plugin_id))
+
+
+class FailingCodexCLI(FakeCodexCLI):
+    """Fail one named mutation after recording the attempted call."""
+
+    def __init__(self, fail_at: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.fail_at = fail_at
+
+    def remove_marketplace(self, name: str) -> None:
+        super().remove_marketplace(name)
+        if self.fail_at == "remove_marketplace":
+            raise OSError("marketplace cleanup failed")
 
 
 def _package(
@@ -218,6 +235,36 @@ def test_version_upgrade_reports_update_and_downgrade_fails_closed(tmp_path: Pat
         )
 
 
+def test_prerelease_to_release_transition_is_an_upgrade(tmp_path: Path) -> None:
+    prerelease = _package(tmp_path, version="1.0.0-rc.1")
+    _establish_ownership(prerelease, tmp_path)
+    release = codex_package_spec("demo", "1.0.0", tmp_path)
+    cli = FakeCodexCLI(
+        marketplaces=[_marketplace(release)],
+        plugins=[_installed(release, version="1.0.0-rc.1")],
+        install_version="1.0.0",
+    )
+
+    actions = sync_codex_packages(
+        [release], output_dir=tmp_path, refreshed_plugin_ids=set(), dry_run=True, cli=cli
+    )
+
+    assert [action.action for action in actions] == ["update_codex_plugin"]
+
+
+def test_cross_output_downgrade_fails_before_migration(tmp_path: Path) -> None:
+    old_root = tmp_path / "old"
+    old = _package(old_root, version="2.0.0")
+    _establish_ownership(old, old_root)
+    downgraded = codex_package_spec("demo", "1.9.0", tmp_path / "new")
+
+    with pytest.raises(ValueError, match="would downgrade"):
+        validate_codex_transitions([downgraded], [old_root])
+
+    assert old.marketplace_path.is_dir()
+    assert (old_root / CODEX_OWNERSHIP_FILE).is_file()
+
+
 def test_normalized_identity_collision_fails_before_cli(tmp_path: Path) -> None:
     first = _package(tmp_path, source_plugin_id="My Plugin@one")
     duplicate = codex_package_spec("demo", "1.0.0", tmp_path, source_plugin_id="demo@two")
@@ -231,6 +278,97 @@ def test_normalized_identity_collision_fails_before_cli(tmp_path: Path) -> None:
             cli=cli,
         )
     assert cli.calls == []
+
+
+def test_temporarily_unavailable_source_retains_owned_state(tmp_path: Path) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+    cli = FakeCodexCLI(marketplaces=[_marketplace(spec)], plugins=[_installed(spec)])
+
+    actions = sync_codex_packages(
+        [],
+        output_dir=tmp_path,
+        refreshed_plugin_ids=set(),
+        retained_plugin_ids={spec.plugin_id},
+        cli=cli,
+    )
+
+    assert actions == []
+    assert cli.calls == []
+    ownership = json.loads((tmp_path / CODEX_OWNERSHIP_FILE).read_text())
+    assert set(ownership["packages"]) == {spec.plugin_id}
+    assert spec.marketplace_path.is_dir()
+
+
+def test_partial_cleanup_failure_reports_progress_and_retains_ownership(tmp_path: Path) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+    cli = FailingCodexCLI(
+        "remove_marketplace",
+        marketplaces=[_marketplace(spec)],
+        plugins=[_installed(spec)],
+    )
+
+    with pytest.raises(CodexLifecycleExecutionError) as caught:
+        sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=cli)
+
+    error = caught.value
+    assert [action.action for action in error.planned_actions] == [
+        "remove_codex_plugin",
+        "remove_codex_marketplace",
+        "remove_codex_package",
+    ]
+    assert [action.action for action in error.completed_actions] == ["remove_codex_plugin"]
+    assert error.failed_action.action == "remove_codex_marketplace"
+    ownership = json.loads((tmp_path / CODEX_OWNERSHIP_FILE).read_text())
+    assert set(ownership["packages"]) == {spec.plugin_id}
+    assert spec.marketplace_path.is_dir()
+
+    retry = FakeCodexCLI(marketplaces=[_marketplace(spec)])
+    actions = sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=retry)
+    assert [action.action for action in actions] == [
+        "remove_codex_marketplace",
+        "remove_codex_package",
+    ]
+    assert not spec.marketplace_path.exists()
+    assert not (tmp_path / CODEX_OWNERSHIP_FILE).exists()
+
+
+def test_filesystem_cleanup_failure_is_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+
+    def fail_cleanup(_path: Path) -> None:
+        raise OSError("generated package cleanup failed")
+
+    monkeypatch.setattr("ai_config.codex_lifecycle.shutil.rmtree", fail_cleanup)
+    with pytest.raises(CodexLifecycleExecutionError) as caught:
+        sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=FakeCodexCLI())
+
+    assert caught.value.failed_action.action == "remove_codex_package"
+    ownership = json.loads((tmp_path / CODEX_OWNERSHIP_FILE).read_text())
+    assert set(ownership["packages"]) == {spec.plugin_id}
+
+
+def test_ownership_checkpoint_failure_is_reported_as_failed_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+    cli = FakeCodexCLI(marketplaces=[_marketplace(spec)], plugins=[_installed(spec)])
+
+    def fail_ownership(*_args, **_kwargs) -> None:
+        raise OSError("ownership checkpoint failed")
+
+    monkeypatch.setattr("ai_config.codex_lifecycle._write_ownership", fail_ownership)
+    with pytest.raises(CodexLifecycleExecutionError) as caught:
+        sync_codex_packages([spec], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=cli)
+
+    assert caught.value.failed_action is not None
+    assert caught.value.failed_action.action == "write_codex_ownership"
+    assert [action.action for action in caught.value.completed_actions] == ["noop_codex_plugin"]
 
 
 def test_removal_touches_only_owned_state(tmp_path: Path) -> None:
@@ -261,12 +399,46 @@ def test_removal_touches_only_owned_state(tmp_path: Path) -> None:
     assert [action.action for action in actions] == [
         "remove_codex_plugin",
         "remove_codex_marketplace",
+        "remove_codex_package",
     ]
     assert cli.calls == [
         ("remove_plugin", spec.plugin_id),
         ("remove_marketplace", spec.marketplace_name),
     ]
     assert unrelated.read_text() == 'model = "keep"\n'
+
+
+def test_validated_output_migration_plans_replacement_state(tmp_path: Path) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old = _package(old_root)
+    _establish_ownership(old, old_root)
+    new = _package(new_root)
+    cli = FakeCodexCLI(marketplaces=[_marketplace(old)], plugins=[_installed(old)])
+
+    actions = sync_codex_packages(
+        [new],
+        output_dir=new_root,
+        refreshed_plugin_ids={new.plugin_id},
+        dry_run=True,
+        ignored_runtime_plugin_ids={old.plugin_id},
+        ignored_runtime_marketplace_names={old.marketplace_name},
+        cli=cli,
+    )
+
+    assert [action.action for action in actions] == [
+        "register_codex_marketplace",
+        "install_codex_plugin",
+    ]
+    with pytest.raises(ValueError, match="only during a validated dry-run migration"):
+        sync_codex_packages(
+            [new],
+            output_dir=new_root,
+            refreshed_plugin_ids={new.plugin_id},
+            ignored_runtime_plugin_ids={old.plugin_id},
+            ignored_runtime_marketplace_names={old.marketplace_name},
+            cli=cli,
+        )
 
 
 @pytest.mark.parametrize("root", [Path("/unrelated"), Path("/unknown")])
@@ -338,6 +510,53 @@ def test_cli_list_schema_rejects_partial_duplicate_and_inconsistent_results(
     monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: duplicate)
     with pytest.raises(CodexCommandError, match="identity fields disagree"):
         cli.list_plugins()
+
+
+def test_cli_available_rows_require_complete_typed_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    captured_args: list[str] = []
+    available = {
+        "pluginId": "demo@market",
+        "name": "demo",
+        "marketplaceName": "market",
+        "version": "1.0.0",
+        "installed": False,
+        "enabled": False,
+        "source": {"source": "local", "path": "/market/plugins/demo"},
+        "marketplaceSource": {"sourceType": "local", "source": "/market"},
+        "installPolicy": "AVAILABLE",
+        "authPolicy": "ON_INSTALL",
+    }
+
+    def valid_response(_stage, args, **_kwargs):
+        captured_args.extend(args)
+        return {"installed": [], "available": [available]}
+
+    monkeypatch.setattr(cli, "run_json", valid_response)
+    assert cli.list_plugins() == []
+    assert "--available" in captured_args
+
+    for mutation in (
+        {"pluginId": "other@market"},
+        {"version": "latest"},
+        {"installed": True},
+        {"enabled": "false"},
+        {"source": {"source": "local"}},
+    ):
+        malformed = {**available, **mutation}
+        monkeypatch.setattr(
+            cli,
+            "run_json",
+            lambda *_args, malformed=malformed, **_kwargs: {
+                "installed": [],
+                "available": [malformed],
+            },
+        )
+        with pytest.raises(CodexCommandError, match=r"available\[0\]"):
+            cli.list_plugins()
 
 
 def test_cli_preserves_typed_nonlocal_unrelated_state(

@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from ai_config.converters.claude_parser import normalize_portable_name
 from ai_config.converters.ir import (
     BinaryFile,
     Command,
@@ -466,8 +467,12 @@ class CodexEmitter:
             )
             return result
         package_root = spec.package_relative_path
+        command_skill_names = self._command_skill_names(result, ir)
+        if command_skill_names is None:
+            return result
+
         result.add_cleanup_path(spec.marketplace_relative_path)
-        manifest: dict[str, Any] = {
+        manifest: dict[str, object] = {
             "name": spec.plugin_name,
             "version": spec.version,
             "description": ir.identity.description
@@ -478,8 +483,8 @@ class CodexEmitter:
             manifest["skills"] = "./skills/"
         for skill in ir.skills():
             self._emit_skill(result, skill, package_root)
-        for command in ir.commands():
-            self._emit_command(result, command, package_root)
+        for command, skill_name in zip(ir.commands(), command_skill_names, strict=True):
+            self._emit_command(result, command, skill_name, package_root)
 
         hooks_data = self._build_hooks(result, ir.hooks(), package_root, ir.source_path)
         if hooks_data:
@@ -564,6 +569,42 @@ class CodexEmitter:
         )
         return result
 
+    def _command_skill_names(self, result: EmitResult, ir: PluginIR) -> list[str] | None:
+        """Validate the combined package skill namespace before creating any output."""
+        occupied: dict[str, tuple[str, str]] = {}
+        for skill in ir.skills():
+            existing = occupied.get(skill.name)
+            if existing is not None:
+                result.add_diagnostic(
+                    Severity.ERROR,
+                    f"Codex package skill namespace collision for '{skill.name}': multiple "
+                    "source skills normalize to the same identity. Rename one source component; "
+                    "no package output was emitted.",
+                    component_ref=f"skill:{skill.name}",
+                )
+                return None
+            occupied[skill.name] = ("skill", skill.name)
+
+        command_skill_names: list[str] = []
+        for command in ir.commands():
+            normalized = normalize_portable_name(command.name, "command", max_len=56)
+            skill_name = f"command-{normalized}"
+            existing = occupied.get(skill_name)
+            if existing is not None:
+                existing_kind, existing_name = existing
+                result.add_diagnostic(
+                    Severity.ERROR,
+                    "Codex package skill namespace collision for "
+                    f"'{skill_name}': {existing_kind} '{existing_name}' conflicts with "
+                    f"command '{command.name}'. Rename one source component; no package output "
+                    "was emitted.",
+                    component_ref=f"command:{command.name}",
+                )
+                return None
+            occupied[skill_name] = ("command", command.name)
+            command_skill_names.append(skill_name)
+        return command_skill_names
+
     def _emit_skill(self, result: EmitResult, skill: Skill, package_root: Path) -> None:
         skill_dir = package_root / "skills" / skill.name
         skill_path = skill_dir / "SKILL.md"
@@ -597,8 +638,13 @@ class CodexEmitter:
             lost_features=lost,
         )
 
-    def _emit_command(self, result: EmitResult, command: Command, package_root: Path) -> None:
-        skill_name = f"command-{command.name}"
+    def _emit_command(
+        self,
+        result: EmitResult,
+        command: Command,
+        skill_name: str,
+        package_root: Path,
+    ) -> None:
         skill_path = package_root / "skills" / skill_name / "SKILL.md"
         description = command.description or f"Converted Claude command: {command.name}"
         if command.argument_hint:
@@ -632,7 +678,7 @@ class CodexEmitter:
         hooks: list[Hook],
         package_root: Path,
         source_root: Path | None,
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, object]]]:
         supported_events = {
             "SessionStart",
             "PreToolUse",
@@ -641,7 +687,7 @@ class CodexEmitter:
             "UserPromptSubmit",
             "Stop",
         }
-        converted: dict[str, list[dict[str, Any]]] = {}
+        converted: dict[str, list[dict[str, object]]] = {}
         for hook in hooks:
             for event in hook.events:
                 if event.name not in supported_events:
@@ -652,7 +698,7 @@ class CodexEmitter:
                         notes="No documented Codex package hook equivalent",
                     )
                     continue
-                handlers: list[dict[str, Any]] = []
+                handlers: list[dict[str, object]] = []
                 lost: list[str] = []
                 for handler in event.handlers:
                     if handler.type.value != "command" or not handler.command:
@@ -664,7 +710,7 @@ class CodexEmitter:
                         lost.append("missing package support file")
                         continue
                     command = handler.command.replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
-                    converted_handler: dict[str, Any] = {
+                    converted_handler: dict[str, object] = {
                         "type": "command",
                         "command": command,
                     }
@@ -682,7 +728,7 @@ class CodexEmitter:
                         lost_features=lost,
                     )
                     continue
-                group: dict[str, Any] = {"hooks": handlers}
+                group: dict[str, object] = {"hooks": handlers}
                 if event.matcher and event.name in {
                     "PreToolUse",
                     "PermissionRequest",
@@ -744,8 +790,8 @@ class CodexEmitter:
         servers: list[McpServer],
         package_root: Path,
         source_root: Path | None,
-    ) -> dict[str, dict[str, Any]]:
-        converted: dict[str, dict[str, Any]] = {}
+    ) -> dict[str, dict[str, object]]:
+        converted: dict[str, dict[str, object]] = {}
         for server in servers:
             referenced_values = [
                 value
@@ -765,7 +811,7 @@ class CodexEmitter:
                     notes="Referenced package support file is missing or unsafe",
                 )
                 continue
-            config: dict[str, Any] = {}
+            config: dict[str, object] = {}
             if server.command:
                 config["command"] = server.command.replace(
                     "${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}"

@@ -31,6 +31,34 @@ class TestCodexValidator:
             "marketplace" in result.check_name and result.status == "pass" for result in results
         )
 
+    @pytest.mark.parametrize("manifest_kind", ["package", "marketplace", "hooks"])
+    def test_generated_manifest_duplicate_keys_fail(
+        self, tmp_path: Path, manifest_kind: str
+    ) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        if manifest_kind == "package":
+            path = next(
+                tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+            )
+            path.write_text('{"name":"dev-tools","name":"other","version":"1.0.0"}')
+        elif manifest_kind == "marketplace":
+            path = next(
+                tmp_path.glob(".ai-config/codex/marketplaces/*/.agents/plugins/marketplace.json")
+            )
+            path.write_text('{"name":"ai-config-dev-tools","name":"other","plugins":[]}')
+        else:
+            path = next(tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/hooks/hooks.json"))
+            path.write_text('{"hooks":{},"hooks":{}}')
+
+        results = CodexOutputValidator().validate_all(tmp_path)
+
+        assert any(
+            result.status == "fail" and "duplicate" in (result.details or "").lower()
+            for result in results
+        )
+
     def test_manifest_name_mismatch_fails(self, tmp_path: Path) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 

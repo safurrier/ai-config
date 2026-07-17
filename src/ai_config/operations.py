@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ai_config.adapters import claude
 from ai_config.adapters.codex import CodexCommandError
-from ai_config.codex_lifecycle import sync_codex_packages
+from ai_config.codex_lifecycle import (
+    CodexLifecycleAction,
+    CodexLifecycleExecutionError,
+    owned_codex_plugin_ids,
+    sync_codex_packages,
+    validate_codex_transitions,
+)
 from ai_config.converters import InstallScope, TargetTool, convert_plugin
 from ai_config.converters.claude_parser import normalize_portable_name, parse_claude_plugin
 from ai_config.converters.codex_package import CodexPackageSpec, codex_package_spec
@@ -27,7 +34,7 @@ from ai_config.types import (
     TargetConfig,
 )
 
-_CONVERSION_CACHE_VERSION = 4
+_CONVERSION_CACHE_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -48,18 +55,35 @@ def _load_conversion_cache() -> dict:
     """Load conversion cache data from disk."""
     cache_path = _conversion_cache_path()
     if not cache_path.exists():
-        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+        return {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {},
+            "codex_output_dirs": [],
+        }
     try:
         raw = json.loads(cache_path.read_text())
-        if not isinstance(raw, dict):
-            return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
-        if raw.get("version") != _CONVERSION_CACHE_VERSION:
-            return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
-        if not isinstance(raw.get("entries"), dict):
-            raw["entries"] = {}
-        return raw
-    except (OSError, json.JSONDecodeError):
-        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Invalid conversion cache at {cache_path}; clear the cache and retry: {error}"
+        ) from error
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid conversion cache object at {cache_path}; clear it and retry")
+    if raw.get("version") != _CONVERSION_CACHE_VERSION:
+        return {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {},
+            "codex_output_dirs": [],
+        }
+    if not isinstance(raw.get("entries"), dict):
+        raise ValueError(f"Invalid conversion cache entries at {cache_path}; clear it and retry")
+    output_dirs = raw.get("codex_output_dirs")
+    if not isinstance(output_dirs, list) or any(
+        not isinstance(output_dir, str) or not output_dir for output_dir in output_dirs
+    ):
+        raise ValueError(
+            f"Invalid conversion cache Codex output roots at {cache_path}; clear it and retry"
+        )
+    return raw
 
 
 def _save_conversion_cache(cache: dict) -> None:
@@ -92,6 +116,7 @@ def _compute_plugin_hash(plugin_path: Path) -> str | None:
             relpath = file_path.relative_to(plugin_path).as_posix()
             hasher.update(relpath.encode("utf-8"))
             hasher.update(b"\0")
+            hasher.update(b"x" if file_path.stat().st_mode & 0o111 else b"-")
             data = file_path.read_bytes()
             hasher.update(len(data).to_bytes(8, "big"))
             hasher.update(data)
@@ -141,7 +166,7 @@ def _resolve_local_marketplace_plugin_path(
 def _resolve_plugin_conversion_path(
     config: ClaudeTargetConfig,
     plugin_config: PluginConfig,
-    installed: claude.InstalledPlugin,
+    installed: claude.InstalledPlugin | None,
 ) -> Path | None:
     """Resolve the source path to use for cross-tool conversion.
 
@@ -149,7 +174,9 @@ def _resolve_plugin_conversion_path(
     after that cache was cleared. Prefer a live installPath, but fall back to
     the configured local marketplace source path when possible.
     """
-    installed_path = Path(installed.install_path) if installed.install_path else None
+    installed_path = (
+        Path(installed.install_path) if installed is not None and installed.install_path else None
+    )
     if installed_path is not None and installed_path.is_dir():
         return installed_path
 
@@ -351,9 +378,14 @@ def sync_target(
     result.errors.extend(plugin_errors)
 
     # Run conversion if configured
-    conversion_actions, conversion_errors = _sync_conversions(target.config, dry_run, force_convert)
+    conversion_actions, conversion_failures, conversion_errors = _sync_conversions(
+        target.config, dry_run, force_convert
+    )
     for action in conversion_actions:
         result.add_success(action)
+    if conversion_failures:
+        result.actions_failed.extend(conversion_failures)
+        result.success = False
     result.errors.extend(conversion_errors)
 
     # If there were any errors, mark as failed
@@ -363,125 +395,396 @@ def sync_target(
     return result
 
 
+def _compute_owned_codex_hash(spec: CodexPackageSpec) -> str | None:
+    """Hash an owned generated marketplace and reject symlinked content."""
+    root = spec.marketplace_path
+    if not root.is_dir() or root.is_symlink():
+        return None
+    hasher = hashlib.sha256()
+    try:
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                return None
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix()
+            data = path.read_bytes()
+            hasher.update(relative.encode("utf-8"))
+            hasher.update(b"\0")
+            hasher.update(b"x" if path.stat().st_mode & 0o111 else b"-")
+            hasher.update(len(data).to_bytes(8, "big"))
+            hasher.update(data)
+    except OSError:
+        return None
+    return hasher.hexdigest()
+
+
+def _owned_codex_output_dirs(
+    conversion: ConversionConfig | None,
+    cache: dict,
+) -> list[Path]:
+    """Find output roots only when they contain ai-config's ownership ledger."""
+    candidates: set[Path] = {Path.cwd().resolve(), Path.home().resolve()}
+    if conversion is not None:
+        candidates.add(_resolve_conversion_output_dir(conversion).resolve())
+    tracked_output_dirs = cache.get("codex_output_dirs", [])
+    if not isinstance(tracked_output_dirs, list) or any(
+        not isinstance(output_dir, str) or not output_dir for output_dir in tracked_output_dirs
+    ):
+        raise ValueError("Invalid cached Codex output roots; clear the cache and retry")
+    candidates.update(Path(output_dir).expanduser().resolve() for output_dir in tracked_output_dirs)
+    entries = cache.get("entries")
+    if isinstance(entries, dict):
+        for signature_map in entries.values():
+            if not isinstance(signature_map, dict):
+                raise ValueError("Invalid conversion cache entry table; clear the cache and retry")
+            for signature in signature_map:
+                if not isinstance(signature, str):
+                    raise ValueError(
+                        "Invalid conversion cache signature; clear the cache and retry"
+                    )
+                try:
+                    settings = json.loads(signature)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Invalid conversion cache signature JSON; clear the cache and retry"
+                    ) from error
+                if not isinstance(settings, dict):
+                    raise ValueError("Invalid conversion cache settings; clear the cache and retry")
+                targets_value = settings.get("targets")
+                output_dir_value = settings.get("output_dir")
+                if (
+                    isinstance(targets_value, list)
+                    and "codex" in targets_value
+                    and isinstance(output_dir_value, str)
+                ):
+                    candidates.add(Path(output_dir_value).expanduser().resolve())
+    owned_roots: list[Path] = []
+    for candidate in candidates:
+        if (candidate / ".ai-config" / "codex" / "ownership.json").is_file():
+            owned_roots.append(candidate)
+    owned_roots.sort(key=lambda item: item.as_posix())
+    return owned_roots
+
+
+def _sync_lifecycle_actions(actions: Iterable[CodexLifecycleAction]) -> list[SyncAction]:
+    return [
+        SyncAction(action=action.action, target=action.target, reason=action.reason)
+        for action in actions
+    ]
+
+
+def _apply_codex_lifecycle(
+    specs: list[CodexPackageSpec],
+    *,
+    output_dir: Path,
+    refreshed_plugin_ids: set[str],
+    retained_plugin_ids: set[str] | None = None,
+    removal_reasons: dict[str, str] | None = None,
+    default_removal_reason: str = "Source plugin is no longer configured",
+) -> tuple[list[SyncAction], list[SyncAction], list[str]]:
+    """Run one prevalidated lifecycle mutation while preserving partial progress."""
+    try:
+        completed = sync_codex_packages(
+            specs,
+            output_dir=output_dir,
+            refreshed_plugin_ids=refreshed_plugin_ids,
+            retained_plugin_ids=retained_plugin_ids,
+            removal_reasons=removal_reasons,
+            default_removal_reason=default_removal_reason,
+        )
+        return _sync_lifecycle_actions(completed), [], []
+    except CodexLifecycleExecutionError as error:
+        completed_actions = _sync_lifecycle_actions(error.completed_actions)
+        failed_actions = (
+            _sync_lifecycle_actions([error.failed_action])
+            if error.failed_action is not None
+            else []
+        )
+        return completed_actions, failed_actions, [str(error)]
+    except (CodexCommandError, OSError, ValueError) as error:
+        return [], [], [str(error)]
+
+
 def _sync_conversions(
     config: ClaudeTargetConfig,
     dry_run: bool = False,
     force_convert: bool = False,
-) -> tuple[list[SyncAction], list[str]]:
-    """Convert plugins and converge ai-config-owned Codex package lifecycle."""
-    if config.conversion is None or not config.conversion.enabled:
-        return [], []
-
+) -> tuple[list[SyncAction], list[SyncAction], list[str]]:
+    """Convert plugins and converge every prior owned Codex package root."""
     actions: list[SyncAction] = []
+    failed_actions: list[SyncAction] = []
     errors: list[str] = []
-    cache = _load_conversion_cache()
-    cache_entries = cache.setdefault("entries", {})
+    try:
+        cache = _load_conversion_cache()
+    except ValueError as error:
+        return [], [], [str(error)]
+    cache_entries = cache.get("entries")
+    if not isinstance(cache_entries, dict):
+        return [], [], ["Invalid conversion cache entries; clear the cache and retry"]
+    tracked_output_dirs = cache.get("codex_output_dirs", [])
+    if not isinstance(tracked_output_dirs, list) or any(
+        not isinstance(tracked, str) or not tracked for tracked in tracked_output_dirs
+    ):
+        return [], [], ["Invalid cached Codex output roots; clear the cache and retry"]
+    cache["codex_output_dirs"] = tracked_output_dirs
     cache_dirty = False
 
-    installed_plugins, plugin_errors = claude.list_installed_plugins()
-    if plugin_errors:
-        return [], plugin_errors
-
-    installed_by_id = {p.id: p for p in installed_plugins}
-
     conversion = config.conversion
-    output_dir = _resolve_conversion_output_dir(conversion)
-    targets = [TargetTool(t) for t in conversion.targets]
-    scope = InstallScope(conversion.scope)
-    signature = _conversion_signature(conversion, output_dir)
+    conversion_active = conversion is not None and conversion.enabled
+    if conversion_active and conversion is not None:
+        targets = [TargetTool(target) for target in conversion.targets]
+        output_dir = _resolve_conversion_output_dir(conversion)
+        scope = InstallScope(conversion.scope)
+        signature = _conversion_signature(conversion, output_dir)
+    else:
+        targets = []
+        output_dir = (
+            _resolve_conversion_output_dir(conversion) if conversion is not None else Path.cwd()
+        )
+        scope = InstallScope.PROJECT
+        signature = ""
     codex_enabled = TargetTool.CODEX in targets
+    resolved_output_dir = str(output_dir.resolve())
+    if codex_enabled and resolved_output_dir not in tracked_output_dirs:
+        tracked_output_dirs.append(resolved_output_dir)
+        tracked_output_dirs.sort()
+        cache_dirty = True
+    try:
+        prior_output_dirs = _owned_codex_output_dirs(conversion, cache)
+    except ValueError as error:
+        return [], [], [str(error)]
+    retained_root_strings = {str(root.resolve()) for root in prior_output_dirs}
+    if codex_enabled:
+        retained_root_strings.add(resolved_output_dir)
+    pruned_output_dirs = [
+        tracked for tracked in tracked_output_dirs if tracked in retained_root_strings
+    ]
+    if pruned_output_dirs != tracked_output_dirs:
+        tracked_output_dirs[:] = pruned_output_dirs
+        cache_dirty = True
+    retiring_output_dirs = [
+        root
+        for root in prior_output_dirs
+        if not codex_enabled or root.resolve() != output_dir.resolve()
+    ]
+
+    installed_by_id: dict[str, claude.InstalledPlugin] = {}
+    if conversion_active:
+        installed_plugins, plugin_errors = claude.list_installed_plugins()
+        if plugin_errors:
+            return [], [], plugin_errors
+        installed_by_id = {plugin.id: plugin for plugin in installed_plugins}
+
     codex_specs: list[CodexPackageSpec] = []
-    refreshed_codex_ids: set[str] = set()
+    retained_codex_ids: set[str] = set()
+    removal_reasons: dict[str, str] = {}
     candidates: list[_ConversionCandidate] = []
     codex_sources: dict[str, str] = {}
+    has_blocking_errors = False
 
-    # Resolve and normalize every desired identity before writing any package. This keeps
-    # config selectors, emitted manifests, ownership, and Codex CLI selectors on one key.
-    for plugin_config in config.plugins:
-        if not plugin_config.enabled:
-            continue
-        installed = installed_by_id.get(plugin_config.id)
-        if not installed:
-            continue
-        plugin_path = _resolve_plugin_conversion_path(config, plugin_config, installed)
-        if plugin_path is None:
-            install_path = installed.install_path or "<missing>"
-            errors.append(
-                f"Conversion skipped for {plugin_config.id}: plugin source path not found "
-                f"(installPath={install_path})"
-            )
-            continue
-
-        spec: CodexPackageSpec | None = None
-        if codex_enabled:
-            ir = parse_claude_plugin(plugin_path)
-            parse_errors = [
-                diagnostic.message
-                for diagnostic in ir.diagnostics
-                if diagnostic.severity.value == "error"
-            ]
-            if parse_errors:
-                errors.extend(
-                    f"Conversion failed for {plugin_config.id}: {message}"
-                    for message in parse_errors
-                )
-                continue
+    if conversion_active:
+        for plugin_config in config.plugins:
             configured_identity = normalize_portable_name(plugin_config.plugin_name, "plugin")
-            if configured_identity != ir.identity.plugin_id:
-                errors.append(
-                    f"Codex identity mismatch for configured plugin '{plugin_config.id}': "
-                    f"config normalizes to '{configured_identity}', but source manifest normalizes "
-                    f"to '{ir.identity.plugin_id}'. Make the config selector and manifest name agree; "
-                    "no package or lifecycle state was changed."
-                )
+            configured_codex_id = f"{configured_identity}@ai-config-{configured_identity}"
+            if not plugin_config.enabled:
+                if codex_enabled:
+                    removal_reasons[configured_codex_id] = "Source plugin is disabled"
                 continue
-            try:
-                spec = codex_package_spec(
-                    configured_identity,
-                    ir.identity.version,
-                    output_dir,
-                    source_plugin_id=plugin_config.id,
-                )
-            except ValueError as error:
-                errors.append(f"Conversion failed for {plugin_config.id}: {error}")
-                continue
-            conflicting_source = codex_sources.get(spec.plugin_id)
-            if conflicting_source is not None:
-                errors.append(
-                    f"Normalized Codex plugin identity collision for '{spec.plugin_id}' from "
-                    f"'{conflicting_source}' and '{plugin_config.id}'. Rename one source plugin; "
-                    "no Codex package or lifecycle state was changed."
-                )
-                continue
-            codex_sources[spec.plugin_id] = plugin_config.id
-            codex_specs.append(spec)
-        candidates.append(
-            _ConversionCandidate(
-                config_id=plugin_config.id,
-                plugin_path=plugin_path,
-                codex_spec=spec,
-            )
-        )
 
-    if errors:
-        return actions, errors
+            installed = installed_by_id.get(plugin_config.id)
+            plugin_path = _resolve_plugin_conversion_path(config, plugin_config, installed)
+            if plugin_path is None:
+                if codex_enabled:
+                    retained_codex_ids.add(configured_codex_id)
+                install_path = (
+                    installed.install_path
+                    if installed is not None and installed.install_path
+                    else "<unavailable>"
+                )
+                errors.append(
+                    f"Conversion source for {plugin_config.id} is temporarily unavailable "
+                    f"(installPath={install_path}); prior owned Codex state was retained"
+                )
+                continue
 
-    for candidate in candidates:
-        plugin_path = candidate.plugin_path
-        plugin_hash = _compute_plugin_hash(plugin_path)
-        if not force_convert and plugin_hash is not None:
-            signature_map = cache_entries.get(str(plugin_path), {})
-            if isinstance(signature_map, dict):
-                cached = signature_map.get(signature)
-                if isinstance(cached, dict) and cached.get("hash") == plugin_hash:
+            spec: CodexPackageSpec | None = None
+            if codex_enabled:
+                try:
+                    ir = parse_claude_plugin(plugin_path)
+                except (OSError, ValueError) as error:
+                    has_blocking_errors = True
+                    errors.append(f"Conversion failed for {plugin_config.id}: {error}")
                     continue
+                parse_errors = [
+                    diagnostic.message
+                    for diagnostic in ir.diagnostics
+                    if diagnostic.severity.value == "error"
+                ]
+                if parse_errors:
+                    has_blocking_errors = True
+                    errors.extend(
+                        f"Conversion failed for {plugin_config.id}: {message}"
+                        for message in parse_errors
+                    )
+                    continue
+                if configured_identity != ir.identity.plugin_id:
+                    has_blocking_errors = True
+                    errors.append(
+                        f"Codex identity mismatch for configured plugin '{plugin_config.id}': "
+                        f"config normalizes to '{configured_identity}', but source manifest "
+                        f"normalizes to '{ir.identity.plugin_id}'. Make the config selector and "
+                        "manifest name agree; no package or lifecycle state was changed."
+                    )
+                    continue
+                try:
+                    spec = codex_package_spec(
+                        configured_identity,
+                        ir.identity.version,
+                        output_dir,
+                        source_plugin_id=plugin_config.id,
+                    )
+                except ValueError as error:
+                    has_blocking_errors = True
+                    errors.append(f"Conversion failed for {plugin_config.id}: {error}")
+                    continue
+                conflicting_source = codex_sources.get(spec.plugin_id)
+                if conflicting_source is not None:
+                    has_blocking_errors = True
+                    errors.append(
+                        f"Normalized Codex plugin identity collision for '{spec.plugin_id}' from "
+                        f"'{conflicting_source}' and '{plugin_config.id}'. Rename one source plugin; "
+                        "no Codex package or lifecycle state was changed."
+                    )
+                    continue
+                codex_sources[spec.plugin_id] = plugin_config.id
+                codex_specs.append(spec)
+            candidates.append(_ConversionCandidate(plugin_config.id, plugin_path, spec))
+
+    if has_blocking_errors:
+        return [], [], errors
+
+    if codex_enabled:
+        try:
+            validate_codex_transitions(codex_specs, prior_output_dirs)
+        except ValueError as error:
+            errors.append(str(error))
+            return [], [], errors
+
+    candidates_to_convert: list[tuple[_ConversionCandidate, str | None]] = []
+    for candidate in candidates:
+        plugin_hash = _compute_plugin_hash(candidate.plugin_path)
+        cache_valid = False
+        if not force_convert and plugin_hash is not None:
+            signature_map = cache_entries.get(str(candidate.plugin_path))
+            cached = signature_map.get(signature) if isinstance(signature_map, dict) else None
+            cache_valid = isinstance(cached, dict) and cached.get("hash") == plugin_hash
+            if cache_valid and candidate.codex_spec is not None:
+                if not isinstance(cached, dict):
+                    cache_valid = False
+                else:
+                    cached_output_hash = cached.get("codex_output_hash")
+                    cache_valid = isinstance(
+                        cached_output_hash, str
+                    ) and cached_output_hash == _compute_owned_codex_hash(candidate.codex_spec)
+        if not cache_valid:
+            candidates_to_convert.append((candidate, plugin_hash))
+
+    # Validate every emitter result in memory before lifecycle cleanup or generated writes.
+    for candidate, _plugin_hash in candidates_to_convert:
         try:
             reports = convert_plugin(
-                plugin_path=plugin_path,
+                plugin_path=candidate.plugin_path,
                 targets=targets,
                 output_dir=output_dir,
                 scope=scope,
-                dry_run=dry_run,
+                dry_run=True,
+                best_effort=True,
+            )
+        except (OSError, ValueError) as error:
+            errors.append(f"Conversion failed for {candidate.config_id}: {error}")
+            continue
+        report_errors = [
+            f"{target.value}: {diagnostic.message}"
+            for target, report in reports.items()
+            for diagnostic in report.errors
+        ]
+        errors.extend(
+            f"Conversion failed for {candidate.config_id}: {message}" for message in report_errors
+        )
+
+    preflight_actions: list[SyncAction] = []
+    target_removed_reason = "Codex conversion target is disabled or removed"
+    try:
+        for retiring_root in retiring_output_dirs:
+            planned = sync_codex_packages(
+                [],
+                output_dir=retiring_root,
+                refreshed_plugin_ids=set(),
+                dry_run=True,
+                removal_reasons={},
+                default_removal_reason=target_removed_reason,
+            )
+            preflight_actions.extend(_sync_lifecycle_actions(planned))
+        if codex_enabled:
+            migrating_ids = {
+                plugin_id
+                for retiring_root in retiring_output_dirs
+                for plugin_id in owned_codex_plugin_ids(retiring_root)
+            }
+            migrating_marketplaces = {
+                f"ai-config-{plugin_id.rsplit('@', 1)[0]}" for plugin_id in migrating_ids
+            }
+            planned = sync_codex_packages(
+                codex_specs,
+                output_dir=output_dir,
+                refreshed_plugin_ids={
+                    candidate.codex_spec.plugin_id
+                    for candidate, _hash in candidates_to_convert
+                    if candidate.codex_spec is not None
+                },
+                retained_plugin_ids=retained_codex_ids,
+                removal_reasons=removal_reasons,
+                ignored_runtime_plugin_ids=migrating_ids,
+                ignored_runtime_marketplace_names=migrating_marketplaces,
+                dry_run=True,
+            )
+            preflight_actions.extend(_sync_lifecycle_actions(planned))
+    except (CodexCommandError, OSError, ValueError) as error:
+        errors.append(str(error))
+
+    if errors:
+        return (preflight_actions if dry_run else []), [], errors
+    if dry_run:
+        return preflight_actions, [], []
+
+    for retiring_root in retiring_output_dirs:
+        completed, failed, lifecycle_errors = _apply_codex_lifecycle(
+            [],
+            output_dir=retiring_root,
+            refreshed_plugin_ids=set(),
+            removal_reasons={},
+            default_removal_reason=target_removed_reason,
+        )
+        actions.extend(completed)
+        failed_actions.extend(failed)
+        errors.extend(lifecycle_errors)
+        if lifecycle_errors:
+            return actions, failed_actions, errors
+        retiring_root_text = str(retiring_root.resolve())
+        if retiring_root_text in tracked_output_dirs:
+            tracked_output_dirs.remove(retiring_root_text)
+            cache_dirty = True
+
+    refreshed_codex_ids: set[str] = set()
+    for candidate, plugin_hash in candidates_to_convert:
+        try:
+            reports = convert_plugin(
+                plugin_path=candidate.plugin_path,
+                targets=targets,
+                output_dir=output_dir,
+                scope=scope,
+                dry_run=False,
                 best_effort=True,
             )
             report_errors = [
@@ -495,7 +798,6 @@ def _sync_conversions(
                     for message in report_errors
                 )
                 continue
-
             if candidate.codex_spec is not None:
                 codex_report = reports.get(TargetTool.CODEX)
                 if codex_report is None:
@@ -514,43 +816,50 @@ def _sync_conversions(
                     )
                     continue
                 refreshed_codex_ids.add(candidate.codex_spec.plugin_id)
-
-            if not dry_run and plugin_hash is not None:
-                signature_map = cache_entries.setdefault(str(plugin_path), {})
-                signature_map[signature] = {
+            if plugin_hash is not None:
+                signature_map = cache_entries.setdefault(str(candidate.plugin_path), {})
+                if not isinstance(signature_map, dict):
+                    signature_map = {}
+                    cache_entries[str(candidate.plugin_path)] = signature_map
+                cache_value = {
                     "hash": plugin_hash,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
+                if candidate.codex_spec is not None:
+                    output_hash = _compute_owned_codex_hash(candidate.codex_spec)
+                    if output_hash is None:
+                        errors.append(
+                            f"Conversion failed for {candidate.config_id}: generated Codex output "
+                            "is missing or contains symlinks"
+                        )
+                        continue
+                    cache_value["codex_output_hash"] = output_hash
+                signature_map[signature] = cache_value
                 cache_dirty = True
         except (OSError, ValueError) as error:
             errors.append(f"Conversion failed for {candidate.config_id}: {error}")
 
     if errors:
-        return actions, errors
+        return actions, failed_actions, errors
 
     if codex_enabled:
-        try:
-            lifecycle_actions = sync_codex_packages(
-                codex_specs,
-                output_dir=output_dir,
-                refreshed_plugin_ids=refreshed_codex_ids,
-                dry_run=dry_run,
-            )
-            actions.extend(
-                SyncAction(
-                    action=action.action,
-                    target=action.target,
-                    reason=action.reason,
-                )
-                for action in lifecycle_actions
-            )
-        except (CodexCommandError, OSError, ValueError) as error:
-            errors.append(str(error))
+        completed, failed, lifecycle_errors = _apply_codex_lifecycle(
+            codex_specs,
+            output_dir=output_dir,
+            refreshed_plugin_ids=refreshed_codex_ids,
+            retained_plugin_ids=retained_codex_ids,
+            removal_reasons=removal_reasons,
+        )
+        actions.extend(completed)
+        failed_actions.extend(failed)
+        errors.extend(lifecycle_errors)
 
     if cache_dirty and not errors:
-        _save_conversion_cache(cache)
-
-    return actions, errors
+        try:
+            _save_conversion_cache(cache)
+        except OSError as error:
+            errors.append(f"Failed to save conversion cache: {error}")
+    return actions, failed_actions, errors
 
 
 def _resolve_conversion_output_dir(conversion: ConversionConfig) -> Path:
@@ -684,52 +993,23 @@ def update_plugins(
     return result
 
 
-def verify_sync(config: AIConfig) -> list[str]:
-    """Verify that current state matches config.
-
-    Args:
-        config: Configuration to verify against.
-
-    Returns:
-        List of discrepancies found (empty if in sync).
-    """
+def sync_discrepancies(results: dict[str, SyncResult]) -> list[str]:
+    """Translate dry-run lifecycle plans and inspection failures into verification truth."""
     discrepancies: list[str] = []
-
-    for target in config.targets:
-        if target.type != "claude":
-            discrepancies.append(f"Unknown target type: {target.type}")
-            continue
-
-        # Check marketplaces
-        installed_mps, mp_errors = claude.list_installed_marketplaces()
-        if mp_errors:
-            discrepancies.extend(mp_errors)
-            continue
-
-        installed_mp_names = {mp.name for mp in installed_mps}
-        for name in target.config.marketplaces:
-            if name not in installed_mp_names:
-                discrepancies.append(f"Marketplace '{name}' is not registered")
-
-        # Check plugins
-        installed_plugins, plugin_errors = claude.list_installed_plugins()
-        if plugin_errors:
-            discrepancies.extend(plugin_errors)
-            continue
-
-        installed_by_id = {p.id: p for p in installed_plugins}
-
-        for plugin_config in target.config.plugins:
-            plugin_id = plugin_config.id
-            installed = installed_by_id.get(plugin_id)
-
-            if installed is None:
-                if plugin_config.enabled:
-                    discrepancies.append(f"Plugin '{plugin_id}' is not installed")
-            else:
-                if plugin_config.enabled and not installed.enabled:
-                    discrepancies.append(f"Plugin '{plugin_id}' should be enabled")
-                elif not plugin_config.enabled and installed.enabled:
-                    discrepancies.append(f"Plugin '{plugin_id}' should be disabled")
-
+    for target_type, result in results.items():
+        discrepancies.extend(f"{target_type}: {error}" for error in result.errors)
+        discrepancies.extend(
+            f"{target_type}: failed to inspect {action.action} for {action.target}"
+            for action in result.actions_failed
+        )
+        discrepancies.extend(
+            f"{target_type}: {action.action} required for {action.target}: {action.reason}"
+            for action in result.actions_taken
+            if action.action != "noop_codex_plugin"
+        )
     return discrepancies
+
+
+def verify_sync(config: AIConfig) -> list[str]:
+    """Verify all configured targets using the same dry-run planner as sync."""
+    return sync_discrepancies(sync_config(config, dry_run=True))

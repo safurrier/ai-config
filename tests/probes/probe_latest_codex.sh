@@ -52,7 +52,7 @@ printf 'platform_registry_tarball=%s\n' "$platform_evidence"
 printf 'install_method=integrity-verified direct registry tarball extraction (npm cutoff-safe)\n'
 printf 'binary=%s\n' "$codex"
 cd "$repo_root"
-uv run python tests/probes/probe_codex_plugin_package.py \
+uv --no-config run --locked python tests/probes/probe_codex_plugin_package.py \
   --codex "$codex" \
   --expected-version "$version"
-uv run python tests/probes/probe_ai_config_sync_codex.py --codex "$codex"
+uv --no-config run --locked python tests/probes/probe_ai_config_sync_codex.py --codex "$codex"

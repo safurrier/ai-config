@@ -16,6 +16,7 @@ from ai_config.converters.emitters import (
 )
 from ai_config.converters.ir import (
     BinaryFile,
+    Command,
     InstallScope,
     LspServer,
     MappingStatus,
@@ -245,6 +246,50 @@ class TestCodexEmitter:
         assert "name: code-review" in content
         assert "allowed-tools:" not in content
         assert "model:" not in content
+
+    def test_skill_and_command_namespace_collision_fails_without_output(
+        self, tmp_path: Path
+    ) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="collision", name="collision", version="1.0.0"),
+            components=[
+                Skill(
+                    name="command-foo",
+                    description="source skill",
+                    files=[
+                        TextFile(
+                            relpath="SKILL.md",
+                            content="---\nname: command-foo\ndescription: source skill\n---\nbody",
+                        )
+                    ],
+                ),
+                Command(name="Foo!", markdown="command body"),
+            ],
+        )
+
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path)
+
+        assert result.has_errors()
+        assert result.files == []
+        assert result.mappings == []
+        assert any("namespace collision" in item.message for item in result.diagnostics)
+        assert not (tmp_path / ".ai-config").exists()
+
+    def test_command_identity_is_normalized_before_emission(self, tmp_path: Path) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="commands", name="commands", version="1.0.0"),
+            components=[Command(name="My Command!", markdown="command body")],
+        )
+
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path)
+
+        path = next(file.path for file in result.files if file.path.name == "SKILL.md")
+        assert path.parts[-3:] == ("skills", "command-my-command", "SKILL.md")
+        assert "name: command-my-command" in (tmp_path / path).read_text()
+        mapping = next(item for item in result.mappings if item.component_kind == "command")
+        assert mapping.target_path == path
 
     def test_commands_always_become_package_skills_with_degraded_variables(
         self, ir, tmp_path: Path

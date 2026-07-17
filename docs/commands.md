@@ -77,7 +77,8 @@ What it does:
 - Runs conversion if `conversion` section is configured (see [Conversion](conversion.md))
 
 Codex conversion reports register, install, update, reinstall/repair, remove, and no-op actions with
-reasons. Exits non-zero if any target had errors.
+reasons. JSON distinguishes `planned_actions`, `completed_actions`, and `failed_actions`. Sync exits
+non-zero if any target fails or post-sync lifecycle verification finds drift.
 
 ## status
 
@@ -100,6 +101,10 @@ Displays:
 - Configured marketplaces and their status
 - Installed plugins (from config and extra)
 - Any sync issues
+
+With `--config` or `--verify`, status uses the same lifecycle planner as sync and exits non-zero for
+any non-no-op action or inspection error. It never reports `All in sync` from Claude-only state while
+Codex package drift remains.
 
 ## watch
 

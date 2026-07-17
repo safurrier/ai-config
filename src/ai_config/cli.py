@@ -23,6 +23,7 @@ from ai_config.config import (
 from ai_config.operations import (
     get_status,
     sync_config,
+    sync_discrepancies,
     update_plugins,
     verify_sync,
 )
@@ -164,7 +165,7 @@ def sync(
             "targets": {
                 target_type: {
                     "success": result.success,
-                    "actions": [
+                    "planned_actions": [
                         {
                             "action": action.action,
                             "target": action.target,
@@ -172,6 +173,28 @@ def sync(
                             "reason": action.reason,
                         }
                         for action in result.actions_taken
+                    ]
+                    if dry_run
+                    else [],
+                    "completed_actions": [
+                        {
+                            "action": action.action,
+                            "target": action.target,
+                            "scope": action.scope,
+                            "reason": action.reason,
+                        }
+                        for action in result.actions_taken
+                    ]
+                    if not dry_run
+                    else [],
+                    "failed_actions": [
+                        {
+                            "action": action.action,
+                            "target": action.target,
+                            "scope": action.scope,
+                            "reason": action.reason,
+                        }
+                        for action in result.actions_failed
                     ],
                     "errors": result.errors,
                 }
@@ -179,11 +202,12 @@ def sync(
             },
             "verification": {
                 "requested": verify,
+                "performed": verify and not dry_run,
                 "discrepancies": discrepancies,
             },
         }
         console.print_json(json.dumps(output))
-        if any(result.errors for result in results.values()) or discrepancies:
+        if any(not result.success for result in results.values()) or discrepancies:
             raise click.exceptions.Exit(1)
         return
 
@@ -191,7 +215,8 @@ def sync(
         console.print(f"\n[subheader]Target: {target_type}[/subheader]")
 
         if result.actions_taken:
-            # Use a table for actions
+            action_state = "Planned" if dry_run else "Completed"
+            console.print(f"[subheader]{action_state} actions:[/subheader]")
             table = Table(show_header=True, header_style="bold", box=None)
             table.add_column("Action", style="key")
             table.add_column("Target")
@@ -209,13 +234,20 @@ def sync(
         else:
             console.print(f"  [success]{SYMBOLS['pass']}[/success] No changes needed")
 
+        if result.actions_failed:
+            console.print("[error]Failed actions:[/error]")
+            for action in result.actions_failed:
+                console.print(
+                    f"  {SYMBOLS['fail']} {action.action} {action.target}: {action.reason}"
+                )
+
         if result.errors:
             console.print("[error]Errors:[/error]")
             for error in result.errors:
                 console.print(f"  {SYMBOLS['fail']} {error}")
 
     # Exit non-zero if any target had errors
-    if any(r.errors for r in results.values()):
+    if any(not result.success for result in results.values()):
         sys.exit(1)
 
     # Verify if requested
@@ -274,6 +306,8 @@ def status(
                 raise click.exceptions.Exit(1) from error
             result.errors.append(f"Cannot inspect drift: {error}")
 
+    drift_discrepancies = sync_discrepancies(drift_results or {})
+
     if as_json:
         output = {
             "target": result.target_type,
@@ -297,6 +331,7 @@ def status(
                 }
                 for drift_result in (drift_results or {}).values()
                 for action in drift_result.actions_taken
+                if action.action != "noop_codex_plugin"
             ],
             "errors": result.errors
             + [
@@ -306,7 +341,7 @@ def status(
             ],
         }
         console.print_json(json.dumps(output))
-        if output["errors"]:
+        if output["errors"] or drift_discrepancies:
             raise click.exceptions.Exit(1)
         return
 
@@ -354,6 +389,7 @@ def status(
             action
             for drift_result in drift_results.values()
             for action in drift_result.actions_taken
+            if action.action != "noop_codex_plugin"
         ]
         if planned_actions:
             table = Table(show_header=True, header_style="bold", box=None)
@@ -373,8 +409,9 @@ def status(
     if verify:
         console.print("\n[subheader]Verification:[/subheader]")
         try:
-            config = loaded_config or load_config(config_path)
-            discrepancies = verify_sync(config)
+            if loaded_config is None:
+                load_config(config_path)
+            discrepancies = drift_discrepancies
             if discrepancies:
                 console.print("[error]Out of sync:[/error]")
                 for d in discrepancies:
@@ -385,6 +422,9 @@ def status(
         except ConfigError as e:
             error_console.print(f"[error]Cannot verify - config error:[/error] {e}")
             sys.exit(1)
+
+    if result.errors or drift_discrepancies:
+        raise click.exceptions.Exit(1)
 
 
 @main.command(

@@ -97,8 +97,10 @@ by `doctor` and never removed without proof of ownership.
 The adapter intentionally accepts only the observed Codex 0.144.x contract. It validates the CLI
 version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
 list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
-and inconsistent success responses are errors. Every call uses a finite timeout, starts a separate
-process group, kills descendants on timeout, and bounds/strips control characters from error output.
+and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
+control characters from error output. POSIX calls start a separate process group and kill descendants
+on timeout. Non-POSIX cleanup is limited to the direct child; 0.6.0 does not advertise descendant
+cleanup on those platforms.
 
 ## Isolated runtime probe
 
@@ -124,9 +126,10 @@ The isolated generated-package probe proves:
 
 The public-command probe invokes `python -m ai_config sync --config <isolated> --json` against a
 disposable source marketplace and real Codex binary. It proves first registration/install,
-unchanged no-op, SemVer refresh/update and discovery, status drift reporting, disabled-plugin
-reinstall, missing-plugin repair, owned removal, and preservation of unrelated marketplace,
-plugin enablement, and scalar config. The pinned all-tools E2E lane runs both probes.
+unchanged no-op, automatic repair of tampered generated output, SemVer refresh/update and
+discovery, status drift reporting, disabled-plugin reinstall, missing-plugin repair, owned removal,
+and preservation of unrelated marketplace, plugin enablement, and scalar config. The pinned
+all-tools E2E lane runs both probes.
 
 The Docker all-tools image pins `@openai/codex@0.144.5`. The separate workflow latest lane resolves
 and probes `@latest` so reproducibility and drift detection remain independent.

@@ -7,10 +7,16 @@ from unittest.mock import patch
 import pytest
 
 from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
+from ai_config.codex_lifecycle import (
+    CodexLifecycleAction,
+    CodexLifecycleExecutionError,
+)
+from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import Diagnostic, PluginIdentity, Severity, TargetTool
 from ai_config.converters.report import ConversionReport
 from ai_config.operations import (
     _CONVERSION_CACHE_VERSION,
+    _compute_owned_codex_hash,
     _conversion_signature,
     _load_conversion_cache,
     get_status,
@@ -100,7 +106,45 @@ class TestConversionCache:
             )
         )
 
-        assert _load_conversion_cache() == {"version": _CONVERSION_CACHE_VERSION, "entries": {}}
+        assert _load_conversion_cache() == {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {},
+            "codex_output_dirs": [],
+        }
+
+    def test_current_conversion_cache_corruption_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        cache_path = tmp_path / "home" / ".ai-config" / "cache" / "conversion-hashes.json"
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text('{"version":')
+
+        with pytest.raises(ValueError, match="Invalid conversion cache"):
+            _load_conversion_cache()
+
+    def test_owned_codex_hash_detects_tampering_deletion_and_symlinks(self, tmp_path: Path) -> None:
+        spec = codex_package_spec("demo", "1.0.0", tmp_path)
+        manifest = spec.marketplace_path / ".agents/plugins/marketplace.json"
+        package = spec.marketplace_path / "plugins/demo/.codex-plugin/plugin.json"
+        manifest.parent.mkdir(parents=True)
+        package.parent.mkdir(parents=True)
+        manifest.write_text('{"name":"ai-config-demo"}')
+        package.write_text('{"name":"demo","version":"1.0.0"}')
+
+        original = _compute_owned_codex_hash(spec)
+        assert original is not None
+        package.write_text('{"name":"demo","version":"1.0.1"}')
+        assert _compute_owned_codex_hash(spec) != original
+        package.write_text('{"name":"demo","version":"1.0.0"}')
+        package.chmod(package.stat().st_mode | 0o111)
+        assert _compute_owned_codex_hash(spec) != original
+        package.unlink()
+        assert _compute_owned_codex_hash(spec) is not None
+        package.symlink_to(manifest)
+        assert _compute_owned_codex_hash(spec) is None
+        spec.marketplace_path.rename(spec.marketplace_path.with_name("deleted"))
+        assert _compute_owned_codex_hash(spec) is None
 
 
 class TestSyncTarget:
@@ -290,6 +334,7 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
+            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
             patch(
                 "ai_config.operations.convert_plugin",
                 return_value={TargetTool.CODEX: report},
@@ -302,7 +347,7 @@ class TestSyncTarget:
             call_args = mock_convert.call_args.kwargs
             assert call_args["plugin_path"] == Path(mock_installed_plugins[0].install_path)
             assert call_args["output_dir"] == Path(tmp_path / "home")
-            isolate_codex_lifecycle.assert_called_once()
+            assert isolate_codex_lifecycle.call_count == 2
 
     def test_sync_skips_conversion_when_hash_unchanged(
         self,
@@ -333,10 +378,13 @@ class TestSyncTarget:
         plugin_path = Path(mock_installed_plugins[0].install_path)
 
         cache = {
-            "version": 1,
+            "version": _CONVERSION_CACHE_VERSION,
             "entries": {
                 str(plugin_path): {
-                    signature: {"hash": "abc123"},
+                    signature: {
+                        "hash": "abc123",
+                        "codex_output_hash": "generated123",
+                    },
                 }
             },
         }
@@ -352,6 +400,10 @@ class TestSyncTarget:
             ),
             patch("ai_config.operations._load_conversion_cache", return_value=cache),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.operations._compute_owned_codex_hash",
+                return_value="generated123",
+            ),
             patch("ai_config.operations.convert_plugin") as mock_convert,
         ):
             result = sync_target(target)
@@ -402,6 +454,7 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
             patch(
                 "ai_config.operations.convert_plugin",
                 return_value={TargetTool.CODEX: report},
@@ -462,12 +515,14 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
             patch("ai_config.operations.convert_plugin", return_value={TargetTool.CODEX: report}),
             patch("ai_config.operations._save_conversion_cache", side_effect=_capture_cache),
         ):
             result = sync_target(target)
 
             assert result.success is True
+            assert saved_cache["codex_output_dirs"] == [str(output_dir.resolve())]
             assert "entries" in saved_cache
             assert str(plugin_path) in saved_cache["entries"]
             assert signature in saved_cache["entries"][str(plugin_path)]
@@ -666,7 +721,7 @@ class TestSyncTarget:
             result = sync_target(target, force_convert=True)
 
             assert result.success is False
-            assert any("plugin source path not found" in error for error in result.errors)
+            assert any("temporarily unavailable" in error for error in result.errors)
             mock_convert.assert_not_called()
 
     def test_sync_conversion_reports_conversion_diagnostics(
@@ -876,6 +931,272 @@ class TestSyncTarget:
         convert.assert_not_called()
         isolate_codex_lifecycle.assert_not_called()
         assert not (tmp_path / "output").exists()
+
+    def test_configured_unavailable_source_retains_owned_codex_identity(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        plugin = PluginConfig(id="missing-plugin@market", enabled=True)
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(plugin,),
+                conversion=ConversionConfig(
+                    targets=("codex",), output_dir=str(tmp_path / "output")
+                ),
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+        with (
+            patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+            patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+            patch(
+                "ai_config.operations.claude.install_plugin",
+                return_value=CommandResult(True, "", "", 0),
+            ),
+        ):
+            result = sync_target(target)
+
+        assert result.success is False
+        assert any("temporarily unavailable" in error for error in result.errors)
+        retained = isolate_codex_lifecycle.call_args.kwargs["retained_plugin_ids"]
+        assert retained == {"missing-plugin@ai-config-missing-plugin"}
+
+    def test_disabled_source_reconciles_prior_owned_codex_state(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(PluginConfig(id="disabled@market", enabled=False),),
+                conversion=ConversionConfig(
+                    targets=("codex",), output_dir=str(tmp_path / "output")
+                ),
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+            patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        ):
+            result = sync_target(target)
+
+        assert result.success is True
+        assert isolate_codex_lifecycle.call_args.args[0] == []
+        reasons = isolate_codex_lifecycle.call_args.kwargs["removal_reasons"]
+        assert reasons["disabled@ai-config-disabled"] == "Source plugin is disabled"
+
+    @pytest.mark.parametrize("conversion", [None, ConversionConfig(enabled=False)])
+    def test_removed_or_disabled_codex_target_reconciles_owned_state(
+        self,
+        conversion: ConversionConfig | None,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        output = tmp_path / "output"
+        ownership = output / ".ai-config/codex/ownership.json"
+        ownership.parent.mkdir(parents=True)
+        ownership.write_text('{"version":1,"packages":{}}')
+        if conversion is not None:
+            conversion = ConversionConfig(enabled=False, output_dir=str(output))
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(conversion=conversion),
+        )
+        monkeypatch.chdir(output)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+            patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        ):
+            result = sync_target(target)
+
+        assert result.success is True
+        assert isolate_codex_lifecycle.call_count == 2
+        assert isolate_codex_lifecycle.call_args.args[0] == []
+        assert isolate_codex_lifecycle.call_args.kwargs["output_dir"] == output
+
+    def test_target_removed_uses_cache_to_find_prior_custom_output(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        prior_output = tmp_path / "prior-custom-output"
+        ownership = prior_output / ".ai-config/codex/ownership.json"
+        ownership.parent.mkdir(parents=True)
+        ownership.write_text('{"version":1,"packages":{}}')
+        signature = json.dumps(
+            {
+                "targets": ["codex"],
+                "scope": "project",
+                "output_dir": str(prior_output),
+            },
+            sort_keys=True,
+        )
+        cache = {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {"/old/source": {signature: {"hash": "old"}}},
+            "codex_output_dirs": [str(prior_output)],
+        }
+        target = TargetConfig(type="claude", config=ClaudeTargetConfig(conversion=None))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch("ai_config.operations._load_conversion_cache", return_value=cache),
+            patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+            patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        ):
+            result = sync_target(target)
+
+        assert result.success is True
+        assert isolate_codex_lifecycle.call_count == 2
+        assert isolate_codex_lifecycle.call_args.kwargs["output_dir"] == prior_output
+        assert (
+            isolate_codex_lifecycle.call_args.kwargs["default_removal_reason"]
+            == "Codex conversion target is disabled or removed"
+        )
+
+    def test_cache_hit_reconverts_when_generated_codex_output_is_missing(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "output"
+        conversion = ConversionConfig(targets=("codex",), output_dir=str(output))
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(PluginConfig(id="plugin1@my-marketplace"),),
+                conversion=conversion,
+            ),
+        )
+        signature = _conversion_signature(conversion, output)
+        plugin_path = Path(mock_installed_plugins[0].install_path)
+        cache = {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {
+                str(plugin_path): {
+                    signature: {"hash": "abc123", "codex_output_hash": "generated123"}
+                }
+            },
+        }
+        report = ConversionReport(
+            source_plugin=PluginIdentity(plugin_id="plugin1", name="plugin1", version="1.0.0"),
+            target_tool=TargetTool.CODEX,
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations._load_conversion_cache", return_value=cache),
+            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.operations._compute_owned_codex_hash",
+                side_effect=[None, "generated123"],
+            ),
+            patch(
+                "ai_config.operations.convert_plugin",
+                return_value={TargetTool.CODEX: report},
+            ) as convert,
+        ):
+            result = sync_target(target)
+
+        assert result.success is True
+        assert convert.called
+
+    def test_lifecycle_preflight_failure_leaves_generated_bytes_unchanged(
+        self,
+        mock_installed_plugins: list[InstalledPlugin],
+        mock_installed_marketplaces: list[InstalledMarketplace],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        output = tmp_path / "output"
+        generated = output / ".ai-config/codex/marketplaces/ai-config-plugin1/marker"
+        generated.parent.mkdir(parents=True)
+        generated.write_bytes(b"before")
+        conversion = ConversionConfig(targets=("codex",), output_dir=str(output))
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(PluginConfig(id="plugin1@my-marketplace"),),
+                conversion=conversion,
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        isolate_codex_lifecycle.side_effect = ValueError("would downgrade ownership state")
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins",
+                return_value=(mock_installed_plugins, []),
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(mock_installed_marketplaces, []),
+            ),
+            patch("ai_config.operations.convert_plugin") as convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+        assert result.success is False
+        assert any("would downgrade" in error for error in result.errors)
+        assert generated.read_bytes() == b"before"
+        assert convert.call_count == 1
+        assert convert.call_args.kwargs["dry_run"] is True
+        assert isolate_codex_lifecycle.call_args.kwargs["dry_run"] is True
+
+    def test_partial_lifecycle_failure_preserves_completed_and_failed_actions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        isolate_codex_lifecycle,
+    ) -> None:
+        output = tmp_path / "output"
+        ownership = output / ".ai-config/codex/ownership.json"
+        ownership.parent.mkdir(parents=True)
+        ownership.write_text('{"version":1,"packages":{}}')
+        completed = CodexLifecycleAction("remove_codex_plugin", "demo@market", "removed")
+        failed = CodexLifecycleAction("remove_codex_marketplace", "market", "removed")
+        failure = CodexLifecycleExecutionError(
+            planned_actions=(completed, failed),
+            completed_actions=(completed,),
+            failed_action=failed,
+            cause="permission denied",
+        )
+        isolate_codex_lifecycle.side_effect = [list(failure.planned_actions), failure]
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                conversion=ConversionConfig(enabled=False, output_dir=str(output))
+            ),
+        )
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+            patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        ):
+            result = sync_target(target)
+
+        assert [action.action for action in result.actions_taken] == ["remove_codex_plugin"]
+        assert [action.action for action in result.actions_failed] == ["remove_codex_marketplace"]
+        assert result.success is False
 
     def test_sync_skips_conversion_when_disabled(
         self,
@@ -1173,7 +1494,7 @@ class TestVerifySync:
         ):
             discrepancies = verify_sync(sample_config)
 
-            assert any("not registered" in d for d in discrepancies)
+            assert any("register_marketplace required" in d for d in discrepancies)
 
     def test_missing_enabled_plugin(self, sample_config: AIConfig) -> None:
         """Detects missing enabled plugin."""
