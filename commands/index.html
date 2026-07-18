@@ -967,6 +967,10 @@
 <td><code>--verify</code></td>
 <td>Verify sync state after completion</td>
 </tr>
+<tr>
+<td><code>--json</code></td>
+<td>Output planned/completed actions and reasons as JSON</td>
+</tr>
 </tbody>
 </table>
 <p>What it does:</p>
@@ -976,7 +980,10 @@
 <li>Updates plugin configurations</li>
 <li>Runs conversion if <code>conversion</code> section is configured (see <a href="../conversion/">Conversion</a>)</li>
 </ul>
-<p>Exits non-zero if any target had errors.</p>
+<p>Codex conversion reports register, install, update, reinstall/repair, remove, and no-op actions with
+reasons. JSON distinguishes <code>planned_actions</code>, <code>completed_actions</code>, and <code>failed_actions</code>. Sync exits
+non-zero if any target fails or post-sync lifecycle verification finds drift, and terminal output only
+prints <code>No changes needed</code> after a clean result.</p>
 <h2 id="status">status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
 <p>Show current state of marketplaces and plugins.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ai-config<span class="w"> </span>status
@@ -992,7 +999,7 @@
 <tbody>
 <tr>
 <td><code>-c, --config PATH</code></td>
-<td>Path to config file</td>
+<td>Path to config file; also computes lifecycle drift</td>
 </tr>
 <tr>
 <td><code>--verify</code></td>
@@ -1000,7 +1007,7 @@
 </tr>
 <tr>
 <td><code>--json</code></td>
-<td>Output as JSON</td>
+<td>Output as JSON, including planned lifecycle actions and reasons</td>
 </tr>
 </tbody>
 </table>
@@ -1010,6 +1017,10 @@
 <li>Installed plugins (from config and extra)</li>
 <li>Any sync issues</li>
 </ul>
+<p>With <code>--config</code> or <code>--verify</code>, status uses the same lifecycle planner as sync and exits non-zero for
+any non-no-op action or inspection error. Terminal output only prints <code>No lifecycle actions needed</code>
+or <code>All in sync</code> after clean inspection and planning; it never derives those claims from Claude-only
+state while Codex package drift remains.</p>
 <h2 id="watch">watch<a class="headerlink" href="#watch" title="Permanent link">&para;</a></h2>
 <p>Auto-sync when config or plugin files change.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-config<span class="w"> </span>watch
@@ -1204,10 +1215,6 @@
 <td><code>--report-format FORMAT</code></td>
 <td>Report file format: <code>json</code> (default) or <code>markdown</code></td>
 </tr>
-<tr>
-<td><code>--commands-as-skills</code></td>
-<td>Convert commands to skills instead of prompts (Codex)</td>
-</tr>
 </tbody>
 </table>
 <p><strong>Arguments:</strong></p>
@@ -1227,7 +1234,7 @@
 </table>
 <p>Supported targets:</p>
 <ul>
-<li><strong>codex</strong> — OpenAI Codex (<code>.codex/skills/</code> plus <code>.codex/config.toml</code>, prompts, and hooks)</li>
+<li><strong>codex</strong> — OpenAI Codex (installable packages and local marketplaces under <code>.ai-config/codex/</code>; configured sync manages the Codex CLI lifecycle)</li>
 <li><strong>cursor</strong> — Cursor (<code>.cursor/</code> dir with skills, commands, hooks, and MCP config)</li>
 <li><strong>opencode</strong> — OpenCode (<code>opencode.json</code> + <code>.opencode/</code> skills dir)</li>
 <li><strong>pi</strong> — Pi (<code>.pi/</code> dir with skills, prompt templates, and extensions)</li>
