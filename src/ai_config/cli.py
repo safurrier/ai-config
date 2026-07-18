@@ -23,6 +23,7 @@ from ai_config.config import (
 from ai_config.operations import (
     get_status,
     sync_config,
+    sync_discrepancies,
     update_plugins,
     verify_sync,
 )
@@ -83,6 +84,7 @@ def main() -> None:
 @main.command(
     epilog="\b\nExamples:\n"
     "  ai-config sync --dry-run        Preview changes before applying\n"
+    "  ai-config sync --dry-run --json Machine-readable actions and reasons\n"
     "  ai-config sync                  Apply changes\n"
     "  ai-config sync --verify         Apply and verify result\n"
     "  ai-config sync --force          Full rebuild: clear cache + reconvert all\n"
@@ -105,12 +107,14 @@ def main() -> None:
     help="Force conversion only (without clearing plugin cache).",
 )
 @click.option("--verify", is_flag=True, help="Verify installed state matches config after sync.")
+@click.option("--json", "as_json", is_flag=True, help="Output actions and reasons as JSON.")
 def sync(
     config_path: Path | None,
     dry_run: bool,
     fresh: bool,
     force_convert: bool,
     verify: bool,
+    as_json: bool,
 ) -> None:
     """Install, enable, and disable plugins to match your config file.
 
@@ -138,8 +142,11 @@ def sync(
         force_convert = True
 
     if dry_run:
-        console.print("[warning]Dry run mode - no changes will be made[/warning]")
+        if not as_json:
+            console.print("[warning]Dry run mode - no changes will be made[/warning]")
         results = sync_config(config, dry_run=dry_run, fresh=fresh, force_convert=force_convert)
+    elif as_json:
+        results = sync_config(config, dry_run=False, fresh=fresh, force_convert=force_convert)
     else:
         # Use spinner for actual sync operations
         with Progress(
@@ -151,33 +158,110 @@ def sync(
             progress.add_task("Syncing plugins...", total=None)
             results = sync_config(config, dry_run=dry_run, fresh=fresh, force_convert=force_convert)
 
+    if as_json:
+        discrepancies = verify_sync(config) if verify and not dry_run else []
+        output = {
+            "dry_run": dry_run,
+            "targets": {
+                target_type: {
+                    "success": result.success,
+                    "planned_actions": [
+                        {
+                            "action": action.action,
+                            "target": action.target,
+                            "scope": action.scope,
+                            "reason": action.reason,
+                        }
+                        for action in result.actions_taken
+                    ]
+                    if dry_run
+                    else [],
+                    "completed_actions": [
+                        {
+                            "action": action.action,
+                            "target": action.target,
+                            "scope": action.scope,
+                            "reason": action.reason,
+                        }
+                        for action in result.actions_taken
+                    ]
+                    if not dry_run
+                    else [],
+                    "failed_actions": [
+                        {
+                            "action": action.action,
+                            "target": action.target,
+                            "scope": action.scope,
+                            "reason": action.reason,
+                        }
+                        for action in result.actions_failed
+                    ],
+                    "errors": result.errors,
+                }
+                for target_type, result in results.items()
+            },
+            "verification": {
+                "requested": verify,
+                "performed": verify and not dry_run,
+                "discrepancies": discrepancies,
+            },
+        }
+        console.print_json(json.dumps(output))
+        if (
+            any(
+                not result.success or bool(result.actions_failed) or bool(result.errors)
+                for result in results.values()
+            )
+            or discrepancies
+        ):
+            raise click.exceptions.Exit(1)
+        return
+
     for target_type, result in results.items():
         console.print(f"\n[subheader]Target: {target_type}[/subheader]")
 
         if result.actions_taken:
-            # Use a table for actions
+            action_state = "Planned" if dry_run else "Completed"
+            console.print(f"[subheader]{action_state} actions:[/subheader]")
             table = Table(show_header=True, header_style="bold", box=None)
             table.add_column("Action", style="key")
             table.add_column("Target")
             table.add_column("Scope", style="info")
+            table.add_column("Reason", style="dim")
 
             for action in result.actions_taken:
                 table.add_row(
                     action.action,
                     action.target,
                     action.scope or "-",
+                    action.reason or "-",
                 )
             console.print(table)
-        else:
+        elif (
+            result.success
+            and not result.actions_failed
+            and not result.errors
+            and (not verify or dry_run)
+        ):
             console.print(f"  [success]{SYMBOLS['pass']}[/success] No changes needed")
+
+        if result.actions_failed:
+            console.print("[error]Failed actions:[/error]")
+            for action in result.actions_failed:
+                console.print(
+                    f"  {SYMBOLS['fail']} {action.action} {action.target}: {action.reason}"
+                )
 
         if result.errors:
             console.print("[error]Errors:[/error]")
             for error in result.errors:
                 console.print(f"  {SYMBOLS['fail']} {error}")
 
-    # Exit non-zero if any target had errors
-    if any(r.errors for r in results.values()):
+    # Exit non-zero if any target had errors or failed actions.
+    if any(
+        not result.success or bool(result.actions_failed) or bool(result.errors)
+        for result in results.values()
+    ):
         sys.exit(1)
 
     # Verify if requested
@@ -197,14 +281,15 @@ def sync(
     epilog="\b\nExamples:\n"
     "  ai-config status                List installed plugins\n"
     "  ai-config status --verify       Compare installed state with config\n"
-    "  ai-config status --json         Machine-readable output",
+    "  ai-config status --json         Machine-readable installed state\n"
+    "  ai-config status -c config.yaml --json  Include planned lifecycle drift",
 )
 @click.option(
     "--config",
     "-c",
     "config_path",
     type=click.Path(exists=True, path_type=Path),
-    help="Path to config file (needed for --verify).",
+    help="Path to config file (enables lifecycle drift planning and --verify).",
 )
 @click.option("--verify", is_flag=True, help="Compare installed state against config file.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
@@ -220,6 +305,22 @@ def status(
     config and flag anything out of sync.
     """
     result = get_status()
+    drift_results = None
+    loaded_config = None
+    if config_path is not None or verify:
+        try:
+            loaded_config = load_config(config_path)
+            ref_errors = validate_marketplace_references(loaded_config)
+            if ref_errors:
+                raise ConfigError("; ".join(ref_errors))
+            drift_results = sync_config(loaded_config, dry_run=True)
+        except ConfigError as error:
+            if not as_json:
+                error_console.print(f"[error]Cannot inspect drift - config error:[/error] {error}")
+                raise click.exceptions.Exit(1) from error
+            result.errors.append(f"Cannot inspect drift: {error}")
+
+    drift_discrepancies = sync_discrepancies(drift_results or {})
 
     if as_json:
         output = {
@@ -235,9 +336,27 @@ def status(
                 for p in result.plugins
             ],
             "marketplaces": result.marketplaces,
-            "errors": result.errors,
+            "planned_actions": [
+                {
+                    "action": action.action,
+                    "target": action.target,
+                    "scope": action.scope,
+                    "reason": action.reason,
+                }
+                for drift_result in (drift_results or {}).values()
+                for action in drift_result.actions_taken
+                if action.action != "noop_codex_plugin"
+            ],
+            "errors": result.errors
+            + [
+                error
+                for drift_result in (drift_results or {}).values()
+                for error in drift_result.errors
+            ],
         }
         console.print_json(json.dumps(output))
+        if output["errors"] or drift_discrepancies:
+            raise click.exceptions.Exit(1)
         return
 
     # Display plugins table
@@ -278,22 +397,55 @@ def status(
         for error in result.errors:
             console.print(f"  {SYMBOLS['fail']} {error}")
 
+    if drift_results is not None:
+        console.print("\n[subheader]Planned lifecycle actions:[/subheader]")
+        planned_actions = [
+            action
+            for drift_result in drift_results.values()
+            for action in drift_result.actions_taken
+            if action.action != "noop_codex_plugin"
+        ]
+        if planned_actions:
+            table = Table(show_header=True, header_style="bold", box=None)
+            table.add_column("Action", style="key")
+            table.add_column("Target")
+            table.add_column("Reason", style="dim")
+            for action in planned_actions:
+                table.add_row(action.action, action.target, action.reason or "-")
+            console.print(table)
+        elif not result.errors and not drift_discrepancies:
+            console.print(f"  [success]{SYMBOLS['pass']}[/success] No lifecycle actions needed")
+        for drift_result in drift_results.values():
+            for action in drift_result.actions_failed:
+                console.print(
+                    f"  [error]{SYMBOLS['fail']} Failed to inspect "
+                    f"{action.action} for {action.target}[/error]"
+                )
+            for error in drift_result.errors:
+                console.print(f"  [error]{SYMBOLS['fail']} {error}[/error]")
+
     # Verify against config if requested
     if verify:
         console.print("\n[subheader]Verification:[/subheader]")
         try:
-            config = load_config(config_path)
-            discrepancies = verify_sync(config)
+            if loaded_config is None:
+                load_config(config_path)
+            discrepancies = drift_discrepancies
+            if result.errors:
+                console.print("[error]Cannot verify because status inspection failed.[/error]")
+                sys.exit(1)
             if discrepancies:
                 console.print("[error]Out of sync:[/error]")
                 for d in discrepancies:
                     console.print(f"  {SYMBOLS['fail']} {d}")
                 sys.exit(1)
-            else:
-                console.print(f"[success]{SYMBOLS['pass']} All in sync![/success]")
+            console.print(f"[success]{SYMBOLS['pass']} All in sync![/success]")
         except ConfigError as e:
             error_console.print(f"[error]Cannot verify - config error:[/error] {e}")
             sys.exit(1)
+
+    if result.errors or drift_discrepancies:
+        raise click.exceptions.Exit(1)
 
 
 @main.command(
@@ -796,11 +948,6 @@ def _doctor_target_mode(
     show_default=True,
     help="Format for the report file (used with --report).",
 )
-@click.option(
-    "--commands-as-skills",
-    is_flag=True,
-    help="Codex only: convert commands to skills instead of prompts.",
-)
 def convert(
     plugin_path: Path,
     targets: tuple[str, ...],
@@ -811,7 +958,6 @@ def convert(
     report_format: str,
     report_path: Path | None,
     report_file_format: str,
-    commands_as_skills: bool,
 ) -> None:
     """Convert a Claude Code plugin to other AI coding tools.
 
@@ -821,7 +967,7 @@ def convert(
 
     \b
     Targets:
-      codex      OpenAI Codex (Agent Skills, prompts, MCP, supported command hooks)
+      codex      OpenAI Codex (installable plugin package with skills, hooks, MCP)
       cursor     Cursor (skills, commands, hooks, MCP)
       opencode   OpenCode (skills, commands, MCP, LSP)
       pi         Pi (skills, prompt templates, supported hook extensions)
@@ -852,7 +998,6 @@ def convert(
             target_list,
             output_dir,
             scope=install_scope,
-            commands_as_skills=commands_as_skills,
         )
         console.print(preview)
         return
@@ -876,7 +1021,6 @@ def convert(
             scope=install_scope,
             dry_run=False,
             best_effort=best_effort,
-            commands_as_skills=commands_as_skills,
         )
 
     # Display results

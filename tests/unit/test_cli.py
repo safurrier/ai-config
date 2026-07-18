@@ -1,5 +1,6 @@
 """Tests for ai_config.cli module."""
 
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
@@ -67,7 +68,7 @@ class TestMainGroup:
         """Shows version info."""
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.5.0" in result.output
+        assert "0.6.0" in result.output
 
     def test_help(self, runner: CliRunner) -> None:
         """Shows help text."""
@@ -93,6 +94,48 @@ class TestSyncCommand:
             assert "Dry run mode" in result.output
             assert "install" in result.output
 
+    def test_sync_json_reports_action_reason(self, runner: CliRunner, config_file: Path) -> None:
+        """Machine output includes lifecycle action and explanation without Rich preamble."""
+        sync_result = SyncResult()
+        sync_result.add_success(
+            SyncAction(
+                action="reinstall_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Installed generated plugin is disabled",
+            )
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--dry-run", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        action = payload["targets"]["claude"]["planned_actions"][0]
+        assert action["action"] == "reinstall_codex_plugin"
+        assert action["reason"] == "Installed generated plugin is disabled"
+
+    def test_sync_json_distinguishes_completed_and_failed_actions(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult(success=False, errors=["permission denied"])
+        sync_result.add_success(
+            SyncAction(action="remove_codex_plugin", target="demo@market", reason="removed")
+        )
+        sync_result.actions_failed.append(
+            SyncAction(action="remove_codex_marketplace", target="market", reason="removed")
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)["targets"]["claude"]
+        assert [item["action"] for item in payload["completed_actions"]] == ["remove_codex_plugin"]
+        assert [item["action"] for item in payload["failed_actions"]] == [
+            "remove_codex_marketplace"
+        ]
+        assert payload["planned_actions"] == []
+
     def test_sync_with_errors(self, runner: CliRunner, config_file: Path) -> None:
         """Shows errors from sync."""
         sync_result = SyncResult(success=False, errors=["Something went wrong"])
@@ -101,6 +144,43 @@ class TestSyncCommand:
             result = runner.invoke(main, ["sync", "-c", str(config_file)])
 
             assert "Something went wrong" in result.output
+
+    def test_sync_first_action_failure_never_claims_no_changes(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult()
+        sync_result.add_failure(
+            SyncAction(action="register_marketplace", target="my-marketplace"),
+            "registration failed",
+        )
+
+        with patch("ai_config.cli.sync_config", return_value={"claude": sync_result}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file)])
+
+        assert result.exit_code == 1
+        assert "registration failed" in result.output
+        assert "No changes needed" not in result.output
+
+    def test_sync_true_noop_claims_no_changes(self, runner: CliRunner, config_file: Path) -> None:
+        with patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}):
+            result = runner.invoke(main, ["sync", "-c", str(config_file)])
+
+        assert result.exit_code == 0
+        assert "No changes needed" in result.output
+
+    def test_sync_verification_drift_never_claims_no_changes(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        with (
+            patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}),
+            patch("ai_config.cli.verify_sync", return_value=["claude: reinstall required"]),
+        ):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "reinstall required" in result.output
+        assert "No changes needed" not in result.output
+        assert "All in sync" not in result.output
 
     def test_sync_force_convert_flag(self, runner: CliRunner, config_file: Path) -> None:
         """Force-convert flag is passed through to sync_config."""
@@ -171,6 +251,98 @@ class TestStatusCommand:
             assert result.exit_code == 0
             assert '"id": "my-plugin"' in result.output
 
+    def test_status_json_reports_planned_lifecycle_drift(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        """Status JSON exposes the same planned lifecycle actions and reasons as dry-run."""
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_success(
+            SyncAction(
+                action="install_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Generated Codex plugin is not installed",
+            )
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["planned_actions"] == [
+            {
+                "action": "install_codex_plugin",
+                "target": "my-plugin@ai-config-my-plugin",
+                "scope": None,
+                "reason": "Generated Codex plugin is not installed",
+            }
+        ]
+
+    def test_status_verify_uses_lifecycle_drift_for_exit_and_message(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_success(
+            SyncAction(
+                action="reinstall_codex_plugin",
+                target="my-plugin@ai-config-my-plugin",
+                reason="Generated package integrity drifted",
+            )
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "reinstall_codex_plugin" in result.output
+        assert "All in sync" not in result.output
+
+    def test_status_terminal_inspection_error_exits_nonzero(self, runner: CliRunner) -> None:
+        status_result = StatusResult(target_type="claude", errors=["inspection failed"])
+        with patch("ai_config.cli.get_status", return_value=status_result):
+            result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 1
+        assert "inspection failed" in result.output
+
+    def test_status_drift_inspection_failure_never_claims_sync(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        status_result = StatusResult(target_type="claude")
+        drift = SyncResult()
+        drift.add_failure(
+            SyncAction(action="install_codex_plugin", target="my-plugin@ai-config-my-plugin"),
+            "Codex inspection failed",
+        )
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": drift}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "Codex inspection failed" in result.output
+        assert "No lifecycle actions needed" not in result.output
+        assert "All in sync" not in result.output
+
+    def test_status_true_noop_claims_sync(self, runner: CliRunner, config_file: Path) -> None:
+        status_result = StatusResult(target_type="claude")
+        with (
+            patch("ai_config.cli.get_status", return_value=status_result),
+            patch("ai_config.cli.sync_config", return_value={"claude": SyncResult()}),
+        ):
+            result = runner.invoke(main, ["status", "--config", str(config_file), "--verify"])
+
+        assert result.exit_code == 0
+        assert "No lifecycle actions needed" in result.output
+        assert "All in sync" in result.output
+
     def test_status_no_plugins(self, runner: CliRunner) -> None:
         """Shows message when no plugins installed."""
         status_result = StatusResult(target_type="claude")
@@ -219,7 +391,11 @@ class TestConvertCommand:
     """Tests for convert command."""
 
     def test_convert_scope_user_sets_output_dir(
-        self, runner: CliRunner, minimal_plugin: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        runner: CliRunner,
+        minimal_plugin: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Scope user should map output_dir to home when --output not provided."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")

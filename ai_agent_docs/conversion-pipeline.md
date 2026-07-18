@@ -1,112 +1,77 @@
 # Conversion Pipeline
 
-Architecture for converting Claude Code plugins to other AI coding tools.
+ai-config converts Claude plugins through a target-independent IR:
 
-## Pipeline Stages
-
-```
-Claude Plugin Directory
-        │
-   claude_parser.py    Parse: reads plugin.json, SKILL.md, hooks, MCP, LSP
-        │
-       ir.py            IR: tool-agnostic PluginIR (Pydantic models)
-        │
-   emitters.py          Emit: target-specific file generators
-        │
-   report.py            Report: structured conversion summary
-        │
-   convert.py           Orchestrator: ties all stages together
+```text
+Claude plugin directory -> ClaudePluginParser -> PluginIR -> target emitter -> EmitResult/report
 ```
 
-## Key Types (`converters/ir.py`)
+## Ownership boundaries
 
-- `PluginIR` — central type containing `PluginIdentity` + typed `components` list
-  - Accessor methods: `.skills()`, `.commands()`, `.hooks()`, `.mcp_servers()`, `.agents()`, `.lsp_servers()`
-  - Collects `Diagnostic` objects (never raises during parse/emit)
-- `TargetTool` — enum: `claude`, `codex`, `cursor`, `opencode`, `pi`
-- `InstallScope` — enum: `user`, `project`, `local`
-- `MappingStatus` — fidelity tracking: `native` > `transform` > `emulate` > `fallback` > `unsupported`
-- `Skill`, `Command`, `Hook`, `McpServer`, `Agent`, `LspServer` — component types
-- `TextFile`, `BinaryFile` — file content carriers
+`PluginIR` carries identity, skills, commands, hooks, MCP servers, agents, LSP servers, source paths,
+and diagnostics. Emitters do not mutate the IR. Each target owns an independent `EmitResult`,
+component mappings, diagnostics, and output paths.
 
-## Emitters (`converters/emitters.py`)
+| Emitter | Primary output | Shared-state behavior |
+|---|---|---|
+| `CodexEmitter` | `.ai-config/codex/marketplaces/<name>/` package + marketplace | emits owned sources only; sync uses Codex CLI for install/cache/config |
+| `CursorEmitter` | `.cursor/` plus MCP/hooks JSON | writes target files |
+| `OpenCodeEmitter` | `.opencode/`, `opencode.json`, `opencode.lsp.json` | writes target files |
+| `PiEmitter` | project `.pi/` or user `.pi/agent/` | writes target files/extensions |
 
-Duck-typed classes sharing the same shape (no explicit Protocol ABC):
+`EmitResult` contains emitted files, independent component mappings, diagnostics, and proven-owned
+cleanup paths. `write_to()` removes only explicit owned cleanup paths before writing. Target-native
+files under `targets/<target>/` override generated files at the target's natural root.
 
-| Emitter | Target | Config Format | Env Var Syntax |
-|---------|--------|---------------|----------------|
-| `CodexEmitter` | `.codex/skills/` + `.codex/` | TOML (`config.toml` with `[mcp_servers.*]`) + JSON (`hooks.json`) | `${VAR}` |
-| `CursorEmitter` | `.cursor/` | JSON (`mcp.json`, `hooks.json`) | `${env:VAR}` |
-| `OpenCodeEmitter` | `.opencode/` | JSON (`opencode.json`, `opencode.lsp.json`) | `{env:VAR}` |
-| `PiEmitter` | `.pi/` or `.pi/agent/` | Markdown skills/prompts + TypeScript extensions | `${VAR}` |
+## Codex package and lifecycle seam
 
-Factory: `get_emitter(target, scope, commands_as_skills) -> Emitter`
+`CodexEmitter` emits one marketplace per package so conversion is deterministic and does not need to
+merge a global marketplace file:
 
-The Codex emitter owns loose files, not installable plugin packages. It writes namespaced skills,
-deprecated prompts or command-as-skill output, MCP TOML, and hook JSON. `EmitResult.write_to()`
-merges existing Codex `config.toml` and `hooks.json` data instead of replacing shared user state.
-Target-native Codex files pass through the same loose output root and merge rules.
-
-Each emitter returns `EmitResult` containing:
-- `EmittedFile` list (path + content + binary flag)
-- `ComponentMapping` list (fidelity tracking per component)
-- `Diagnostic` list
-
-## Orchestrator (`converters/convert.py`)
-
-Three API tiers:
-
-```python
-# Full conversion with reports, optional file writing
-convert_plugin(plugin_path, targets, output_dir, scope, dry_run, best_effort) -> dict[TargetTool, ConversionReport]
-
-# Simple one-shot
-convert_plugin_simple(plugin_path, target, output_dir) -> EmitResult
-
-# Text preview only
-preview_conversion(plugin_path, targets) -> str
+```text
+.ai-config/codex/marketplaces/ai-config-<plugin>/
+├── .agents/plugins/marketplace.json
+└── plugins/<plugin>/
+    ├── .codex-plugin/plugin.json
+    ├── skills/**/SKILL.md
+    └── hooks/hooks.json
 ```
 
-## Reports (`converters/report.py`)
+`converters/codex_package.py` is the shared naming/path source of truth. The emitter never writes
+`CODEX_HOME`. `codex_lifecycle.py` reads ai-config's ownership file and delegates marketplace/plugin
+add/list/remove to `adapters/codex.py`. Codex remains responsible for cache and enablement.
 
-`ConversionReport` auto-categorizes components by `MappingStatus`:
-- `NATIVE`/`TRANSFORM` → converted
-- `FALLBACK`/`EMULATE` → degraded (with `lost_features`)
-- `UNSUPPORTED` → skipped
+Lifecycle convergence receives all desired package specs plus the set whose source changed:
 
-Output: `.summary()`, `.to_json()`, `.to_markdown()`
+- new package: add marketplace, install plugin;
+- changed or disabled managed package: remove/add through Codex CLI;
+- unchanged package: no mutation;
+- removed source: remove only the recorded plugin and marketplace, then delete only its generated
+  marketplace root;
+- unrelated marketplace name collision: fail closed;
+- command failure: include stage, exact command, output, and remediation.
 
-Each requested target owns its own `EmitResult`, `ConversionReport`, mappings, and output paths.
-Degraded Codex mappings do not change Cursor, OpenCode, or Pi mappings. An unexpected emitter
-exception still aborts the multi-target conversion unless best-effort mode is enabled. This
-per-target ownership boundary is also why an installable package must not silently replace the
-existing Codex mode.
+Conversion cache versioning invalidates old loose-output signatures. The ownership file is separate
+from the content hash cache because it defines the destructive boundary.
 
-## Experimental Codex package boundary
+## Fidelity and reports
 
-Issue #13 proved a public Codex plugin manifest and marketplace lifecycle with the fixture under
-`tests/fixtures/experimental/codex-plugin-marketplace/`. The fixture and
-`tests/probes/probe_codex_plugin_package.py` do not add a `TargetTool`, emitter factory branch,
-validator registration, config literal, sync path, or CLI choice.
+Each component produces its own mapping:
 
-The current IR can carry the package's tested skill and hook. It also carries MCP server definitions,
-which the public package contract accepts through `mcpServers`. It does not model all marketplace
-listing fields or published-plugin interface metadata. Commands need an explicit package mapping
-because the public bundle contract documents skills rather than loose custom prompts. Agents and LSP
-servers remain unsupported for Codex.
+- native: package skill, package/marketplace structure;
+- transform: command-to-skill without variables, package hooks, package MCP;
+- fallback/degraded: command variables, partial hook semantics;
+- unsupported: agents, LSP, or hook handlers/events without a Codex package equivalent.
 
-A package emitter would write an owned plugin directory and marketplace entry, not merge into shared
-`config.toml` or `hooks.json`. A separate package validator would check manifest and marketplace
-references; `CodexOutputValidator` must continue to check loose `.codex/` output. Existing mapping
-statuses and reports can represent package files without a cross-tool package abstraction. See the
-[compatibility baseline](target-compatibility-baseline.md#pluginpackage-contract) for the evidence,
-single decision, and follow-up slices.
+Reports and dry runs list package paths. Sync dry runs additionally list planned Codex marketplace
+and plugin lifecycle actions without invoking Codex.
 
-## Adding a New Target
+## Validation
 
-1. Add enum value to `TargetTool` in `ir.py`
-2. Create emitter class in `emitters.py` with `target` attr and `emit()` method
-3. Register in `get_emitter()` factory
-4. Create output validator in `validators/target/<tool>.py`
-5. Register in `validators/target/__init__.py` → `get_output_validator()`
-6. Add CLI choice in `cli.py` convert command
+`CodexOutputValidator` validates marketplace JSON, local source containment, manifest identity and
+version, package skill frontmatter, hook structure/root variables, and MCP declarations. It also
+reports possible legacy loose output without deleting it.
+
+Real runtime proof uses `tests/probes/probe_codex_plugin_package.py`: generation, doctor validation,
+CLI installation, enabled/disabled discovery, hook/MCP ingestion, update, idempotence, removal, and
+unrelated-state preservation in isolated homes.

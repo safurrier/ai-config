@@ -12,105 +12,161 @@ import pytest
 
 
 class TestCodexValidator:
-    """Tests for Codex output validation."""
+    """Tests for Codex package and ownership validation."""
 
-    def test_validate_skills_directory_exists(self, tmp_path: Path) -> None:
-        """Test that skills directory validation passes when present."""
+    def _emit(self, tmp_path: Path) -> Path:
+        from ai_config.converters import TargetTool, convert_plugin
+
+        plugin = Path(__file__).parent.parent.parent / "fixtures/sample-plugins/complete-plugin"
+        convert_plugin(plugin, [TargetTool.CODEX], output_dir=tmp_path)
+        return tmp_path
+
+    def test_generated_package_passes(self, tmp_path: Path) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        # Create valid Codex Agent Skills structure
-        skills_dir = tmp_path / ".codex" / "skills" / "my-skill"
-        skills_dir.mkdir(parents=True)
-        (skills_dir / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: A test skill\n---\n# My Skill"
+        results = CodexOutputValidator().validate_all(self._emit(tmp_path))
+        assert not [result for result in results if result.status == "fail"]
+        assert any("package" in result.check_name and result.status == "pass" for result in results)
+        assert any(
+            "marketplace" in result.check_name and result.status == "pass" for result in results
         )
 
-        validator = CodexOutputValidator()
-        results = validator.validate_skills(tmp_path)
-
-        assert len(results) >= 1
-        skill_result = next((r for r in results if "skill" in r.check_name.lower()), None)
-        assert skill_result is not None
-        assert skill_result.status == "pass"
-
-    def test_validate_skills_missing_skill_md(self, tmp_path: Path) -> None:
-        """Test that missing SKILL.md fails validation."""
+    @pytest.mark.parametrize("manifest_kind", ["package", "marketplace", "hooks"])
+    def test_generated_manifest_duplicate_keys_fail(
+        self, tmp_path: Path, manifest_kind: str
+    ) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        # Create directory without SKILL.md
-        skills_dir = tmp_path / ".codex" / "skills" / "my-skill"
-        skills_dir.mkdir(parents=True)
+        self._emit(tmp_path)
+        if manifest_kind == "package":
+            path = next(
+                tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+            )
+            path.write_text('{"name":"dev-tools","name":"other","version":"1.0.0"}')
+        elif manifest_kind == "marketplace":
+            path = next(
+                tmp_path.glob(".ai-config/codex/marketplaces/*/.agents/plugins/marketplace.json")
+            )
+            path.write_text('{"name":"ai-config-dev-tools","name":"other","plugins":[]}')
+        else:
+            path = next(tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/hooks/hooks.json"))
+            path.write_text('{"hooks":{},"hooks":{}}')
 
-        validator = CodexOutputValidator()
-        results = validator.validate_skills(tmp_path)
+        results = CodexOutputValidator().validate_all(tmp_path)
 
-        # Should warn or fail about missing SKILL.md
-        assert any(r.status in ("warn", "fail") for r in results)
-
-    def test_validate_skills_invalid_name(self, tmp_path: Path) -> None:
-        """Test that invalid skill names are caught."""
-        from ai_config.validators.target.codex import CodexOutputValidator
-
-        # Create skill with uppercase name (invalid)
-        skills_dir = tmp_path / ".codex" / "skills" / "MySkill"
-        skills_dir.mkdir(parents=True)
-        (skills_dir / "SKILL.md").write_text(
-            "---\nname: MySkill\ndescription: Invalid name\n---\n# Bad"
+        assert any(
+            result.status == "fail" and "duplicate" in (result.details or "").lower()
+            for result in results
         )
 
-        validator = CodexOutputValidator()
-        results = validator.validate_skills(tmp_path)
-
-        # Should warn about name
-        assert any(r.status == "warn" for r in results)
-
-    def test_validate_mcp_config_toml(self, tmp_path: Path) -> None:
-        """Test that valid MCP TOML config passes."""
+    def test_manifest_name_mismatch_fails(self, tmp_path: Path) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        # Create .codex directory
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir(parents=True)
+        self._emit(tmp_path)
+        manifest = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+        )
+        payload = json.loads(manifest.read_text())
+        payload["name"] = "wrong"
+        manifest.write_text(json.dumps(payload))
+        results = CodexOutputValidator().validate_all(tmp_path)
+        assert any(result.status == "fail" and "name" in result.check_name for result in results)
 
-        # Create valid config.toml
-        config_content = """
-[mcp_servers.test-server]
-command = "npx"
-args = ["-y", "test-server"]
-"""
-        (codex_dir / "config.toml").write_text(config_content)
-
-        validator = CodexOutputValidator()
-        results = validator.validate_mcp(tmp_path)
-
-        mcp_result = next((r for r in results if "mcp" in r.check_name.lower()), None)
-        assert mcp_result is not None
-        assert mcp_result.status == "pass"
-
-    def test_validate_mcp_invalid_toml(self, tmp_path: Path) -> None:
-        """Test that invalid TOML fails validation."""
+    @pytest.mark.parametrize("version", ["1.0", "01.0.0", "latest"])
+    def test_manifest_invalid_semver_fails(self, tmp_path: Path, version: str) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir(parents=True)
+        self._emit(tmp_path)
+        manifest = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+        )
+        payload = json.loads(manifest.read_text())
+        payload["version"] = version
+        manifest.write_text(json.dumps(payload))
 
-        # Invalid TOML
-        (codex_dir / "config.toml").write_text("this is not valid toml {{{")
+        results = CodexOutputValidator().validate_all(tmp_path)
 
-        validator = CodexOutputValidator()
-        results = validator.validate_mcp(tmp_path)
+        assert any(
+            result.status == "fail" and result.check_name.endswith("_version") for result in results
+        )
 
-        assert any(r.status == "fail" for r in results)
-
-    def test_validate_no_output(self, tmp_path: Path) -> None:
-        """Test validation when no Codex output exists."""
+    def test_marketplace_normalized_identity_mutation_fails(self, tmp_path: Path) -> None:
         from ai_config.validators.target.codex import CodexOutputValidator
 
-        validator = CodexOutputValidator()
-        results = validator.validate_all(tmp_path)
+        self._emit(tmp_path)
+        marketplace = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/.agents/plugins/marketplace.json")
+        )
+        payload = json.loads(marketplace.read_text())
+        payload["plugins"][0]["source"]["path"] = "./plugins/other"
+        marketplace.write_text(json.dumps(payload))
 
-        # Should indicate no output found
-        assert any("not found" in r.message.lower() or "no " in r.message.lower() for r in results)
+        results = CodexOutputValidator().validate_all(tmp_path)
+
+        assert any(
+            result.status == "fail" and result.check_name.endswith("_identity")
+            for result in results
+        )
+
+    def test_marketplace_reference_escape_fails(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        marketplace = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/.agents/plugins/marketplace.json")
+        )
+        payload = json.loads(marketplace.read_text())
+        payload["plugins"][0]["source"]["path"] = "../../../../outside"
+        marketplace.write_text(json.dumps(payload))
+        results = CodexOutputValidator().validate_all(tmp_path)
+        assert any(result.status == "fail" and "escape" in result.check_name for result in results)
+
+    def test_package_manifest_reference_escape_fails(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        manifest = next(
+            tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/.codex-plugin/plugin.json")
+        )
+        outside = tmp_path / "outside-hooks.json"
+        outside.write_text('{"hooks": {}}')
+        payload = json.loads(manifest.read_text())
+        payload["hooks"] = "../../../../../../outside-hooks.json"
+        manifest.write_text(json.dumps(payload))
+
+        results = CodexOutputValidator().validate_all(tmp_path)
+
+        assert any(
+            result.status == "fail" and "package_hooks_reference" in result.check_name
+            for result in results
+        )
+
+    def test_invalid_package_hooks_fail(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        self._emit(tmp_path)
+        hooks = next(tmp_path.glob(".ai-config/codex/marketplaces/*/plugins/*/hooks/hooks.json"))
+        hooks.write_text('{"hooks":{"Unknown":[]}}')
+        results = CodexOutputValidator().validate_all(tmp_path)
+        assert any(result.status == "fail" and "hook" in result.check_name for result in results)
+
+    def test_legacy_loose_output_warns_without_removal(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        legacy = tmp_path / ".codex/skills/user-skill/SKILL.md"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("user content")
+        results = CodexOutputValidator().validate_all(self._emit(tmp_path))
+        assert legacy.is_file()
+        assert any(result.status == "warn" and "legacy" in result.check_name for result in results)
+
+    def test_no_package_output_warns(self, tmp_path: Path) -> None:
+        from ai_config.validators.target.codex import CodexOutputValidator
+
+        results = CodexOutputValidator().validate_all(tmp_path)
+        assert any(
+            result.status == "warn" and "No generated" in result.message for result in results
+        )
 
 
 class TestCursorValidator:
@@ -206,11 +262,7 @@ class TestCursorValidator:
         cursor_dir = tmp_path / ".cursor"
         cursor_dir.mkdir(parents=True)
 
-        mcp = {
-            "mcpServers": {
-                "test-server": {"command": "npx", "args": ["-y", "test-mcp"]}
-            }
-        }
+        mcp = {"mcpServers": {"test-server": {"command": "npx", "args": ["-y", "test-mcp"]}}}
         (cursor_dir / "mcp.json").write_text(json.dumps(mcp))
 
         validator = CursorOutputValidator()

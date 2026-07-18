@@ -11,18 +11,14 @@ import base64
 import json
 import re
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[import-not-found]
-
+from ai_config.converters.claude_parser import normalize_portable_name
+from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import (
     BinaryFile,
     Command,
@@ -39,6 +35,7 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
+from ai_config.output_safety import validated_output_path
 
 _ENV_VAR_PATTERN = re.compile(
     r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
@@ -154,34 +151,30 @@ class EmitResult:
 
         Returns list of file paths that were/would be written.
         """
-        written = []
+        cleanup_targets = [
+            validated_output_path(output_dir, cleanup_path) for cleanup_path in self.cleanup_paths
+        ]
+        file_targets = [validated_output_path(output_dir, emitted.path) for emitted in self.files]
+        written: list[Path] = []
         if not dry_run:
-            for cleanup_path in self.cleanup_paths:
-                full_cleanup_path = output_dir / cleanup_path
-                if full_cleanup_path.is_dir() and not full_cleanup_path.is_symlink():
+            for cleanup_path, full_cleanup_path in zip(
+                self.cleanup_paths, cleanup_targets, strict=True
+            ):
+                full_cleanup_path = validated_output_path(output_dir, cleanup_path)
+                if full_cleanup_path.is_dir():
                     shutil.rmtree(full_cleanup_path)
-                elif full_cleanup_path.exists() or full_cleanup_path.is_symlink():
+                elif full_cleanup_path.exists():
                     full_cleanup_path.unlink()
 
-        for f in self.files:
-            full_path = output_dir / f.path
+        for emitted, full_path in zip(self.files, file_targets, strict=True):
             if not dry_run:
-                # Remove broken symlinks in the parent chain so mkdir can proceed
-                for parent in reversed(full_path.parent.parents):
-                    if parent.is_symlink() and not parent.exists():
-                        parent.unlink()
-                if full_path.parent.is_symlink() and not full_path.parent.exists():
-                    full_path.parent.unlink()
+                full_path = validated_output_path(output_dir, emitted.path)
                 full_path.parent.mkdir(parents=True, exist_ok=True)
-                if f.binary:
-                    full_path.write_bytes(f.content)  # type: ignore[arg-type]
-                elif f.path == Path(".codex") / "config.toml":
-                    _write_merged_codex_config(full_path, f.content)  # type: ignore[arg-type]
-                elif f.path == Path(".codex") / "hooks.json":
-                    _write_merged_codex_hooks(full_path, f.content)  # type: ignore[arg-type]
+                if emitted.binary:
+                    full_path.write_bytes(emitted.content)
                 else:
-                    full_path.write_text(f.content)  # type: ignore[arg-type]
-                if f.executable:
+                    full_path.write_text(emitted.content)
+                if emitted.executable:
                     full_path.chmod(full_path.stat().st_mode | 0o111)
             written.append(full_path)
         return written
@@ -453,378 +446,239 @@ def _resolve_claude_plugin_root(command: str, plugin_root: Path | None) -> str:
     return command.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
 
 
-def _merge_dicts(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge dictionaries, with incoming values winning on conflicts."""
-    merged = dict(existing)
-    for key, value in incoming.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge_dicts(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-_TOML_BARE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def _toml_key(key: Any) -> str:
-    """Serialize a TOML key, quoting keys that are not valid bare keys."""
-    key_text = str(key)
-    if _TOML_BARE_KEY_PATTERN.fullmatch(key_text):
-        return key_text
-    return json.dumps(key_text)
-
-
-def _toml_table_path(parts: tuple[str, ...]) -> str:
-    """Serialize a dotted TOML table path without splitting quoted key names."""
-    return ".".join(_toml_key(part) for part in parts)
-
-
-def _toml_value(value: Any) -> str:
-    """Serialize a small TOML value subset used by Codex config."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return str(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + "}"
-    return json.dumps(str(value))
-
-
-def _dump_toml(data: dict[str, Any]) -> str:
-    """Dump a simple TOML document while preserving mixed scalar/nested tables."""
-    lines: list[str] = []
-
-    def add_blank() -> None:
-        if lines and lines[-1] != "":
-            lines.append("")
-
-    def emit_table(table_path: tuple[str, ...], table_value: dict[str, Any]) -> None:
-        scalars = {k: v for k, v in table_value.items() if not isinstance(v, dict)}
-        nested = {k: v for k, v in table_value.items() if isinstance(v, dict)}
-
-        if scalars:
-            add_blank()
-            lines.append(f"[{_toml_table_path(table_path)}]")
-            for key, value in scalars.items():
-                lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
-
-        for nested_name, nested_value in nested.items():
-            emit_table((*table_path, str(nested_name)), nested_value)
-
-    top_level_scalars = {k: v for k, v in data.items() if not isinstance(v, dict)}
-    for key, value in top_level_scalars.items():
-        lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
-
-    for table_name, table_value in data.items():
-        if isinstance(table_value, dict):
-            emit_table((str(table_name),), table_value)
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _write_merged_codex_config(path: Path, content: str) -> None:
-    """Merge generated Codex config into an existing config.toml."""
-    incoming = tomllib.loads(content)
-    existing: dict[str, Any] = {}
-    if path.exists():
-        existing = tomllib.loads(path.read_text())
-    path.write_text(_dump_toml(_merge_dicts(existing, incoming)))
-
-
-def _write_merged_codex_hooks(path: Path, content: str) -> None:
-    """Merge generated Codex hooks into an existing hooks.json idempotently."""
-    incoming = json.loads(content)
-    existing = {"hooks": {}}
-    if path.exists():
-        existing = json.loads(path.read_text())
-    existing_hooks = existing.setdefault("hooks", {})
-    for event_name, groups in incoming.get("hooks", {}).items():
-        event_groups = existing_hooks.setdefault(event_name, [])
-        for group in groups:
-            if group not in event_groups:
-                event_groups.append(group)
-    path.write_text(json.dumps(existing, indent=2) + "\n")
-
-
 class CodexEmitter:
-    """Emit plugins in Codex format.
-
-    Satisfies the Emitter protocol with target, scope, and emit() method.
-    """
+    """Emit one self-contained package and local marketplace for Codex."""
 
     target = TargetTool.CODEX
 
-    def __init__(
-        self, scope: InstallScope = InstallScope.PROJECT, commands_as_skills: bool = False
-    ) -> None:
+    def __init__(self, scope: InstallScope = InstallScope.PROJECT) -> None:
         self.scope = scope
-        self.commands_as_skills = commands_as_skills
 
     def emit(self, ir: PluginIR) -> EmitResult:
-        """Emit IR to Codex format."""
+        """Emit IR using Codex's installable plugin package contract."""
         result = EmitResult(target=self.target)
-        plugin_id = ir.identity.plugin_id
+        try:
+            spec = codex_package_spec(ir.identity.plugin_id, ir.identity.version, Path("."))
+        except ValueError as error:
+            result.add_diagnostic(
+                Severity.ERROR,
+                str(error),
+                component_ref=f"package:{ir.identity.plugin_id}",
+            )
+            return result
+        package_root = spec.package_relative_path
+        command_skill_names = self._command_skill_names(result, ir)
+        if command_skill_names is None:
+            return result
 
-        # Emit skills
+        result.add_cleanup_path(spec.marketplace_relative_path)
+        manifest: dict[str, object] = {
+            "name": spec.plugin_name,
+            "version": spec.version,
+            "description": ir.identity.description
+            or f"Converted Codex package for {ir.identity.name}",
+        }
+
+        if ir.skills() or ir.commands():
+            manifest["skills"] = "./skills/"
         for skill in ir.skills():
-            self._emit_skill(result, skill, plugin_id)
+            self._emit_skill(result, skill, package_root)
+        for command, skill_name in zip(ir.commands(), command_skill_names, strict=True):
+            self._emit_command(result, command, skill_name, package_root)
 
-        # Emit commands as deprecated custom prompts
-        for cmd in ir.commands():
-            self._emit_command(result, cmd, plugin_id)
+        hooks_data = self._build_hooks(result, ir.hooks(), package_root, ir.source_path)
+        if hooks_data:
+            hooks_path = package_root / "hooks" / "hooks.json"
+            result.add_file(hooks_path, json.dumps({"hooks": hooks_data}, indent=2) + "\n")
+            manifest["hooks"] = "./hooks/hooks.json"
 
-        # Emit shared Codex config for MCP servers and hook feature flags.
-        mcp_servers = ir.mcp_servers()
-        hooks = ir.hooks()
-        if mcp_servers or hooks:
-            self._emit_config(result, mcp_servers, plugin_id, enable_hooks=bool(hooks))
+        mcp_servers = self._build_mcp_servers(
+            result, ir.mcp_servers(), package_root, ir.source_path
+        )
+        if mcp_servers:
+            manifest["mcpServers"] = mcp_servers
 
-        # Emit supported Codex hooks.
-        if hooks:
-            self._emit_hooks(result, hooks, plugin_root=ir.source_path)
-
-        # Agents not supported
         for agent in ir.agents():
             result.add_mapping(
                 "agent",
                 agent.name,
                 MappingStatus.UNSUPPORTED,
-                notes="Codex does not support agent definitions",
+                notes="Codex plugin packages do not support Claude agent definitions",
             )
-
-        # LSP not supported
         for lsp in ir.lsp_servers():
             result.add_mapping(
                 "lsp",
                 lsp.name,
                 MappingStatus.UNSUPPORTED,
-                notes="Codex does not support custom LSP servers",
+                notes="Codex plugin packages do not support custom LSP servers",
             )
 
+        manifest_path = package_root / ".codex-plugin" / "plugin.json"
+        result.add_file(manifest_path, json.dumps(manifest, indent=2) + "\n")
+        result.add_mapping(
+            "package",
+            ir.identity.plugin_id,
+            MappingStatus.NATIVE,
+            target_path=manifest_path,
+            notes="Generated installable Codex plugin package",
+        )
+        marketplace = {
+            "name": spec.marketplace_name,
+            "interface": {"displayName": f"ai-config: {ir.identity.name}"},
+            "plugins": [
+                {
+                    "name": spec.plugin_name,
+                    "source": {
+                        "source": "local",
+                        "path": f"./plugins/{spec.plugin_name}",
+                    },
+                    "policy": {
+                        "installation": "AVAILABLE",
+                        "authentication": "ON_INSTALL",
+                    },
+                    "category": "Developer Tools",
+                }
+            ],
+        }
+        marketplace_path = (
+            spec.marketplace_relative_path / ".agents" / "plugins" / "marketplace.json"
+        )
+        result.add_file(marketplace_path, json.dumps(marketplace, indent=2) + "\n")
+        result.add_mapping(
+            "marketplace",
+            spec.marketplace_name,
+            MappingStatus.NATIVE,
+            target_path=marketplace_path,
+            notes=f"Install as {spec.plugin_id} through the Codex plugin CLI",
+        )
         result.apply_target_native_files(
             plugin_root=ir.source_path,
             target=self.target,
-            base_dir=Path(".codex"),
+            base_dir=package_root,
         )
-
+        result.add_diagnostic(
+            Severity.INFO,
+            f"Generated Codex package {spec.plugin_id}; sync registers and installs it through `codex plugin`.",
+            component_ref=f"package:{ir.identity.plugin_id}",
+        )
+        result.add_diagnostic(
+            Severity.WARN,
+            "Legacy loose Codex output is preserved because ownership cannot be proven; "
+            "`doctor --target codex` reports stale .codex skills, prompts, hooks, and MCP config.",
+            component_ref="codex:legacy-output",
+        )
         return result
 
-    def _emit_skill(self, result: EmitResult, skill: Skill, plugin_id: str) -> None:
-        """Emit a skill to Codex format."""
-        # Codex uses the Agent Skills standard, discovered from .codex/skills.
-        # Namespace with the plugin id so multiple plugins can provide similarly
-        # named skills without colliding in the user's Codex home.
-        dir_name = f"{plugin_id}-{skill.name}"
-        skill_dir = Path(".codex") / "skills" / dir_name
+    def _command_skill_names(self, result: EmitResult, ir: PluginIR) -> list[str] | None:
+        """Validate the combined package skill namespace before creating any output."""
+        occupied: dict[str, tuple[str, str]] = {}
+        for skill in ir.skills():
+            existing = occupied.get(skill.name)
+            if existing is not None:
+                result.add_diagnostic(
+                    Severity.ERROR,
+                    f"Codex package skill namespace collision for '{skill.name}': multiple "
+                    "source skills normalize to the same identity. Rename one source component; "
+                    "no package output was emitted.",
+                    component_ref=f"skill:{skill.name}",
+                )
+                return None
+            occupied[skill.name] = ("skill", skill.name)
+
+        command_skill_names: list[str] = []
+        for command in ir.commands():
+            normalized = normalize_portable_name(command.name, "command", max_len=56)
+            skill_name = f"command-{normalized}"
+            existing = occupied.get(skill_name)
+            if existing is not None:
+                existing_kind, existing_name = existing
+                result.add_diagnostic(
+                    Severity.ERROR,
+                    "Codex package skill namespace collision for "
+                    f"'{skill_name}': {existing_kind} '{existing_name}' conflicts with "
+                    f"command '{command.name}'. Rename one source component; no package output "
+                    "was emitted.",
+                    component_ref=f"command:{command.name}",
+                )
+                return None
+            occupied[skill_name] = ("command", command.name)
+            command_skill_names.append(skill_name)
+        return command_skill_names
+
+    def _emit_skill(self, result: EmitResult, skill: Skill, package_root: Path) -> None:
+        skill_dir = package_root / "skills" / skill.name
         skill_path = skill_dir / "SKILL.md"
-
-        # Convert to markdown, stripping Claude-specific fields. Agent Skills
-        # frontmatter name must match the output directory.
-        content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
-
-        result.add_cleanup_path(Path(".agents") / "skills" / dir_name)
-        result.add_file(skill_path, content)
-
-        # Copy other skill files
-        for f in skill.files:
-            if f.relpath != "SKILL.md":
-                if isinstance(f, TextFile):
-                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
-                elif isinstance(f, BinaryFile):
-                    result.add_binary_file(
-                        skill_dir / f.relpath,
-                        _decode_b64_file(f),
-                        f.executable,
-                    )
-
+        result.add_file(skill_path, skill_to_markdown(skill, strip_claude_fields=True))
+        for file in skill.files:
+            if file.relpath == "SKILL.md":
+                continue
+            if isinstance(file, TextFile):
+                result.add_file(skill_dir / file.relpath, file.content, file.executable)
+            elif isinstance(file, BinaryFile):
+                result.add_binary_file(
+                    skill_dir / file.relpath,
+                    _decode_b64_file(file),
+                    file.executable,
+                )
+        lost = (
+            ["Claude-only skill execution metadata"]
+            if skill.allowed_tools or skill.model or skill.context or skill.agent
+            else []
+        )
         result.add_mapping(
             "skill",
             skill.name,
-            MappingStatus.NATIVE,
+            MappingStatus.NATIVE if not lost else MappingStatus.TRANSFORM,
             target_path=skill_path,
+            notes=(
+                "Package-local Agent Skill"
+                if not lost
+                else "Package-local skill with Claude-only fields removed"
+            ),
+            lost_features=lost,
         )
 
-    def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command to Codex format.
-
-        By default, commands are emitted as prompts (deprecated but 1:1 with Claude commands).
-        With commands_as_skills=True, they're emitted as skills (auto-discoverable).
-        """
-        result.add_cleanup_path(Path(".agents") / "skills" / f"{plugin_id}-cmd-{cmd.name}")
-        if self.commands_as_skills:
-            self._emit_command_as_skill(result, cmd, plugin_id)
-        else:
-            self._emit_command_as_prompt(result, cmd, plugin_id)
-
-    def _emit_command_as_prompt(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command as a deprecated custom prompt (default, 1:1 with Claude).
-
-        Prompts provide explicit invocation via /prompts:<name>, matching Claude's
-        /command behavior. This is deprecated in Codex but preserves user expectations.
-        """
-        # Codex custom prompts are loaded from ~/.codex/prompts/
-        # We always emit under .codex/prompts relative to output root.
-        prompt_name = f"{plugin_id}-{cmd.name}"
-        prompt_path = Path(".codex") / "prompts" / f"{prompt_name}.md"
-
-        # Build frontmatter
-        meta: dict[str, Any] = {}
-        if cmd.description:
-            meta["description"] = cmd.description
-        if cmd.argument_hint:
-            meta["argument-hint"] = cmd.argument_hint
-
-        if meta:
-            frontmatter = yaml.dump(meta, default_flow_style=False)
-            content = f"---\n{frontmatter}---\n\n{cmd.markdown}"
-        else:
-            content = cmd.markdown
-
-        result.add_file(prompt_path, content)
-
-        result.add_mapping(
-            "command",
-            cmd.name,
-            MappingStatus.FALLBACK,
-            target_path=prompt_path,
-            notes=f"Invoke with /prompts:{prompt_name} (prompts are deprecated in Codex)",
-            lost_features=["Deprecated prompts (may be removed in Codex)"],
-        )
-
-        if self.scope == InstallScope.PROJECT:
-            result.add_diagnostic(
-                Severity.WARN,
-                "Codex only loads prompts from ~/.codex/prompts/. "
-                "For project scope, use --commands-as-skills or run with scope=user.",
-                component_ref=f"command:{cmd.name}",
-            )
-
-        result.add_diagnostic(
-            Severity.INFO,
-            f"Command '{cmd.name}' → /prompts:{prompt_name} (use --commands-as-skills for auto-discovery)",
-            component_ref=f"command:{cmd.name}",
-        )
-
-    def _emit_command_as_skill(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
-        """Emit a command as a skill (opt-in, auto-discoverable).
-
-        Skills are auto-discoverable and can be implicitly invoked by Codex.
-        Use --commands-as-skills flag to enable this mode.
-        """
-        # Emit as a skill directory with SKILL.md
-        skill_name = f"{plugin_id}-cmd-{cmd.name}"
-        skill_dir = Path(".codex") / "skills" / skill_name
-        skill_path = skill_dir / "SKILL.md"
-
-        # Build SKILL.md with frontmatter
-        meta: dict[str, Any] = {"name": skill_name}
-        if cmd.description:
-            meta["description"] = cmd.description
-
-        content = cmd.markdown
-
-        # Add argument hint as part of the skill description if present
-        if cmd.argument_hint:
-            meta["description"] = f"{cmd.description or ''} Arguments: {cmd.argument_hint}".strip()
-
-        frontmatter = yaml.dump(meta, default_flow_style=False)
-        skill_content = f"---\n{frontmatter}---\n\n{content}"
-
-        result.add_file(skill_path, skill_content)
-
-        # Determine mapping status based on variable usage
-        if cmd.has_arguments_var or cmd.has_positional_vars:
-            status = MappingStatus.TRANSFORM
-            notes = "Command variables ($ARGUMENTS, $N) preserved in skill instructions"
-        else:
-            status = MappingStatus.NATIVE
-            notes = None
-
-        result.add_mapping(
-            "command",
-            cmd.name,
-            status,
-            target_path=skill_path,
-            notes=notes,
-        )
-
-        result.add_diagnostic(
-            Severity.INFO,
-            f"Command '{cmd.name}' converted to skill '{skill_name}' (auto-discoverable)",
-            component_ref=f"command:{cmd.name}",
-        )
-
-    def _emit_config(
+    def _emit_command(
         self,
         result: EmitResult,
-        servers: list[McpServer],
-        plugin_id: str,
-        *,
-        enable_hooks: bool = False,
+        command: Command,
+        skill_name: str,
+        package_root: Path,
     ) -> None:
-        """Emit Codex config.toml entries for MCP servers and features."""
-        lines = [f"# Codex config from plugin: {plugin_id}", ""]
-
-        if enable_hooks:
-            lines.extend(["[features]", "codex_hooks = true", ""])
-
-        for server in servers:
-            section_name = f"{plugin_id}-{server.name}"
-            lines.append(f"[mcp_servers.{section_name}]")
-
-            if server.command:
-                lines.append(f'command = "{server.command}"')
-            if server.args:
-                args_str = ", ".join(f'"{a}"' for a in server.args)
-                lines.append(f"args = [{args_str}]")
-            if server.url:
-                lines.append(f'url = "{server.url}"')
-            if server.cwd:
-                lines.append(f'cwd = "{server.cwd}"')
-            if server.env:
-                env_items = []
-                for k, v in server.env.items():
-                    env_items.append(f'"{k}" = "{_transform_env_value(v, TargetTool.CODEX)}"')
-                lines.append("env = {" + ", ".join(env_items) + "}")
-            lines.append("")
-
-            result.add_mapping(
-                "mcp_server",
-                server.name,
-                MappingStatus.TRANSFORM,
-                notes="Converted to Codex config.toml mcp_servers format",
-            )
-
-        config_path = Path(".codex") / "config.toml"
-        result.add_file(config_path, "\n".join(lines))
-
-        if servers:
-            result.add_diagnostic(
-                Severity.INFO,
-                f"MCP servers written to {config_path} under [mcp_servers.*]",
-                component_ref="mcp:*",
-            )
-        if enable_hooks:
-            result.add_diagnostic(
-                Severity.INFO,
-                f"Codex hooks enabled in {config_path} with features.codex_hooks",
-                component_ref="hook:*",
-            )
-        if self.scope == InstallScope.PROJECT and (servers or enable_hooks):
+        skill_path = package_root / "skills" / skill_name / "SKILL.md"
+        description = command.description or f"Converted Claude command: {command.name}"
+        if command.argument_hint:
+            description = f"{description} Arguments: {command.argument_hint}"
+        frontmatter = yaml.dump({"name": skill_name, "description": description}, sort_keys=False)
+        result.add_file(skill_path, f"---\n{frontmatter}---\n\n{command.markdown}\n")
+        degraded = command.has_arguments_var or command.has_positional_vars
+        result.add_mapping(
+            "command",
+            command.name,
+            MappingStatus.FALLBACK if degraded else MappingStatus.TRANSFORM,
+            target_path=skill_path,
+            notes=(
+                "Converted to a package skill; Claude argument variables remain literal instructions"
+                if degraded
+                else "Converted to a package-local Agent Skill"
+            ),
+            lost_features=["Claude slash-command argument substitution"] if degraded else [],
+        )
+        if degraded:
             result.add_diagnostic(
                 Severity.WARN,
-                "Codex may not auto-load project .codex/config.toml or hooks.json in all runtimes; "
-                "copy/merge these files into CODEX_HOME for active MCP/hook behavior",
-                component_ref="codex:config",
+                f"Command '{command.name}' uses Claude argument variables; "
+                "the Codex package skill keeps them as literal instructions.",
+                component_ref=f"command:{command.name}",
             )
 
-    def _emit_hooks(
-        self, result: EmitResult, hooks: list[Hook], *, plugin_root: Path | None = None
-    ) -> None:
-        """Emit supported Claude command hooks to Codex hooks.json."""
+    def _build_hooks(
+        self,
+        result: EmitResult,
+        hooks: list[Hook],
+        package_root: Path,
+        source_root: Path | None,
+    ) -> dict[str, list[dict[str, object]]]:
         supported_events = {
             "SessionStart",
             "PreToolUse",
@@ -833,8 +687,7 @@ class CodexEmitter:
             "UserPromptSubmit",
             "Stop",
         }
-        codex_hooks: dict[str, list[dict[str, Any]]] = {}
-
+        converted: dict[str, list[dict[str, object]]] = {}
         for hook in hooks:
             for event in hook.events:
                 if event.name not in supported_events:
@@ -842,82 +695,150 @@ class CodexEmitter:
                         "hook",
                         event.name,
                         MappingStatus.UNSUPPORTED,
-                        notes="Codex has no documented equivalent for this hook event",
-                    )
-                    result.add_diagnostic(
-                        Severity.WARN,
-                        f"Hook event '{event.name}' has no Codex equivalent",
-                        component_ref=f"hook:{event.name}",
+                        notes="No documented Codex package hook equivalent",
                     )
                     continue
-
-                command_hooks: list[dict[str, Any]] = []
+                handlers: list[dict[str, object]] = []
+                lost: list[str] = []
                 for handler in event.handlers:
-                    if handler.type.value == "command" and handler.command:
-                        command = _resolve_claude_plugin_root(handler.command, plugin_root)
-                        if command != handler.command:
-                            result.add_diagnostic(
-                                Severity.INFO,
-                                "Resolved ${CLAUDE_PLUGIN_ROOT} in Codex hook command",
-                                component_ref=f"hook:{event.name}",
-                            )
-                        command_hook: dict[str, Any] = {
-                            "type": "command",
-                            "command": command,
-                        }
-                        if handler.timeout_sec is not None:
-                            command_hook["timeout"] = handler.timeout_sec
-                        command_hooks.append(command_hook)
-                        if handler.is_async:
-                            result.add_diagnostic(
-                                Severity.WARN,
-                                "Codex command hooks do not support Claude async hook semantics",
-                                component_ref=f"hook:{event.name}",
-                            )
-                    else:
-                        result.add_diagnostic(
-                            Severity.WARN,
-                            f"Hook handler type '{handler.type.value}' is not supported in Codex",
-                            component_ref=f"hook:{event.name}",
-                        )
-
-                if not command_hooks:
+                    if handler.type.value != "command" or not handler.command:
+                        lost.append(f"{handler.type.value} handler")
+                        continue
+                    if not self._copy_referenced_support_files(
+                        result, package_root, source_root, handler.command
+                    ):
+                        lost.append("missing package support file")
+                        continue
+                    command = handler.command.replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+                    converted_handler: dict[str, object] = {
+                        "type": "command",
+                        "command": command,
+                    }
+                    if handler.timeout_sec is not None:
+                        converted_handler["timeout"] = handler.timeout_sec
+                    if handler.is_async:
+                        lost.append("async execution")
+                    handlers.append(converted_handler)
+                if not handlers:
+                    result.add_mapping(
+                        "hook",
+                        event.name,
+                        MappingStatus.UNSUPPORTED,
+                        notes="No Codex-compatible command handlers",
+                        lost_features=lost,
+                    )
                     continue
-
-                handler_group: dict[str, Any] = {"hooks": command_hooks}
+                group: dict[str, object] = {"hooks": handlers}
                 if event.matcher and event.name in {
                     "PreToolUse",
                     "PermissionRequest",
                     "PostToolUse",
                 }:
-                    handler_group["matcher"] = event.matcher
+                    group["matcher"] = event.matcher
                 elif event.matcher:
-                    result.add_diagnostic(
-                        Severity.WARN,
-                        f"Codex ignores matchers for {event.name} hooks",
-                        component_ref=f"hook:{event.name}",
-                    )
+                    lost.append("matcher")
+                converted.setdefault(event.name, []).append(group)
+                result.add_mapping(
+                    "hook",
+                    event.name,
+                    MappingStatus.TRANSFORM if not lost else MappingStatus.FALLBACK,
+                    target_path=package_root / "hooks" / "hooks.json",
+                    notes="Converted to package-native Codex hooks",
+                    lost_features=lost,
+                )
+        return converted
 
-                codex_hooks.setdefault(event.name, []).append(handler_group)
+    def _copy_referenced_support_files(
+        self,
+        result: EmitResult,
+        package_root: Path,
+        source_root: Path | None,
+        command: str,
+    ) -> bool:
+        """Copy files referenced through CLAUDE_PLUGIN_ROOT into the package."""
+        references = re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", command)
+        if not references:
+            return True
+        if source_root is None:
+            return False
+        valid = True
+        for reference in references:
+            relative = Path(reference)
+            source = source_root / relative
+            if not _is_safe_relative_path(relative) or source.is_symlink() or not source.is_file():
+                result.add_diagnostic(
+                    Severity.WARN,
+                    f"Codex hook support file is missing or unsafe: {reference}",
+                    component_ref=f"hook:file:{reference}",
+                )
+                valid = False
+                continue
+            target = package_root / relative
+            if any(file.path == target for file in result.files):
+                continue
+            content = source.read_bytes()
+            executable = bool(source.stat().st_mode & 0o111)
+            try:
+                result.add_file(target, content.decode("utf-8"), executable)
+            except UnicodeDecodeError:
+                result.add_binary_file(target, content, executable)
+        return valid
 
-        if not codex_hooks:
+    def _build_mcp_servers(
+        self,
+        result: EmitResult,
+        servers: list[McpServer],
+        package_root: Path,
+        source_root: Path | None,
+    ) -> dict[str, dict[str, object]]:
+        converted: dict[str, dict[str, object]] = {}
+        for server in servers:
+            referenced_values = [
+                value
+                for value in [server.command, server.cwd, *server.args, *server.env.values()]
+                if value
+            ]
+            if not all(
+                self._copy_referenced_support_files(
+                    result, package_root, source_root, referenced_value
+                )
+                for referenced_value in referenced_values
+            ):
+                result.add_mapping(
+                    "mcp_server",
+                    server.name,
+                    MappingStatus.UNSUPPORTED,
+                    notes="Referenced package support file is missing or unsafe",
+                )
+                continue
+            config: dict[str, object] = {}
+            if server.command:
+                config["command"] = server.command.replace(
+                    "${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}"
+                )
+            if server.args:
+                config["args"] = [
+                    value.replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+                    for value in server.args
+                ]
+            if server.url:
+                config["url"] = server.url
+            if server.env:
+                config["env"] = {
+                    key: _transform_env_value(value, TargetTool.CODEX)
+                    for key, value in server.env.items()
+                }
+            if server.cwd:
+                config["cwd"] = server.cwd.replace("${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}")
+            converted[server.name] = config
             result.add_mapping(
-                "hook",
-                "hooks",
-                MappingStatus.UNSUPPORTED,
-                notes="No Codex-compatible command hooks found",
+                "mcp_server",
+                server.name,
+                MappingStatus.TRANSFORM,
+                target_path=package_root / ".codex-plugin" / "plugin.json",
+                notes="Converted to package manifest mcpServers entry",
             )
-            return
-
-        hooks_path = Path(".codex") / "hooks.json"
-        result.add_file(hooks_path, json.dumps({"hooks": codex_hooks}, indent=2))
-        result.add_mapping(
-            "hook",
-            "hooks",
-            MappingStatus.TRANSFORM,
-            target_path=hooks_path,
-            notes="Converted supported Claude command hooks to Codex hooks.json",
-        )
+        return converted
 
 
 class CursorEmitter:
@@ -1628,18 +1549,10 @@ class PiEmitter:
 def get_emitter(
     target: TargetTool,
     scope: InstallScope = InstallScope.PROJECT,
-    commands_as_skills: bool = False,
 ) -> CodexEmitter | CursorEmitter | OpenCodeEmitter | PiEmitter:
-    """Get an emitter for the specified target tool.
-
-    Args:
-        target: Target tool to emit for
-        scope: Installation scope (user or project)
-        commands_as_skills: For Codex, convert commands to skills instead of prompts.
-            Default False emits commands as prompts for 1:1 behavior with Claude.
-    """
+    """Get an emitter for the specified target tool and scope."""
     if target == TargetTool.CODEX:
-        return CodexEmitter(scope, commands_as_skills=commands_as_skills)
+        return CodexEmitter(scope)
     elif target == TargetTool.CURSOR:
         return CursorEmitter(scope)
     elif target == TargetTool.OPENCODE:

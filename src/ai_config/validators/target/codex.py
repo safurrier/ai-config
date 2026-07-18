@@ -1,7 +1,4 @@
-"""Codex output validators for ai-config.
-
-Validates that converted plugin output is valid for OpenAI Codex.
-"""
+"""Validation for ai-config generated Codex plugin packages."""
 
 from __future__ import annotations
 
@@ -9,12 +6,17 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Literal
+
+import yaml
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib  # type: ignore[import-not-found]
 
+from ai_config.converters.codex_package import CODEX_OUTPUT_ROOT
+from ai_config.semver import SemanticVersion
 from ai_config.validators.base import ValidationResult
 
 VALID_CODEX_HOOK_EVENTS = {
@@ -25,503 +27,475 @@ VALID_CODEX_HOOK_EVENTS = {
     "UserPromptSubmit",
     "Stop",
 }
-VALID_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-MAX_SKILL_NAME_LENGTH = 64
-MAX_DESCRIPTION_LENGTH = 1024
+VALID_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+class _DuplicateGeneratedJSONKey(ValueError):
+    """Raised when an owned generated manifest contains an ambiguous key."""
+
+
+def _generated_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateGeneratedJSONKey(f"duplicate JSON key '{key}'")
+        result[key] = value
+    return result
+
+
+def _object_dict(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        return None
+    return {key: item for key, item in value.items() if isinstance(key, str)}
 
 
 class CodexOutputValidator:
-    """Validates Codex output directory structure and content."""
+    """Validate generated package manifests, marketplaces, and ownership boundaries."""
 
     name = "codex_output"
-    description = "Validates Codex converted output"
+    description = "Validates Codex plugin package output"
 
-    def validate_skills(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate Codex Agent Skills in .codex/skills/."""
+    def _result(
+        self,
+        check_name: str,
+        status: Literal["pass", "warn", "fail"],
+        message: str,
+        *,
+        details: str | None = None,
+        fix_hint: str | None = None,
+    ) -> ValidationResult:
+        return ValidationResult(
+            check_name=check_name,
+            status=status,
+            message=message,
+            details=details,
+            fix_hint=fix_hint,
+        )
+
+    def validate_legacy_output(self, output_dir: Path) -> list[ValidationResult]:
+        """Diagnose legacy loose output without deleting ambiguous user state."""
         results: list[ValidationResult] = []
-        skills_dir = output_dir / ".codex" / "skills"
-        legacy_skills_dir = output_dir / ".agents" / "skills"
-
-        if legacy_skills_dir.exists():
-            results.append(
-                ValidationResult(
-                    check_name="codex_legacy_agents_skills_dir",
-                    status="warn",
-                    message="Found legacy .agents/skills directory",
-                    details="Codex discovers Agent Skills from .codex/skills and $HOME/.codex/skills; .agents/skills is also scanned by other tools such as Pi.",
-                    fix_hint="Move Codex skills to .codex/skills",
+        codex_dir = output_dir / ".codex"
+        legacy_paths = [
+            codex_dir / "skills",
+            codex_dir / "prompts",
+            codex_dir / "hooks.json",
+        ]
+        for path in legacy_paths:
+            if path.exists():
+                results.append(
+                    self._result(
+                        f"codex_legacy_{path.name.replace('.', '_')}",
+                        "warn",
+                        f"Possible stale loose Codex output found: {path}",
+                        details="ai-config 0.6.0 emits installable packages and cannot prove this legacy path is ai-config-owned.",
+                        fix_hint="Review and remove only files you recognize as old ai-config output; unrelated Codex state is preserved.",
+                    )
                 )
-            )
-
-        if not skills_dir.exists():
-            results.append(
-                ValidationResult(
-                    check_name="codex_skills_dir",
-                    status="pass",
-                    message="No Codex Agent Skills directory (ok if no skills converted)",
+        config_path = codex_dir / "config.toml"
+        if config_path.exists():
+            try:
+                config = tomllib.loads(config_path.read_text())
+                if isinstance(config.get("mcp_servers"), dict):
+                    results.append(
+                        self._result(
+                            "codex_legacy_mcp_tables",
+                            "warn",
+                            f"Possible stale direct MCP tables found in {config_path}",
+                            details="Package MCP servers now belong in .codex-plugin/plugin.json. The shared config is not modified automatically.",
+                            fix_hint="Remove only MCP entries known to have been generated by ai-config before 0.6.0.",
+                        )
+                    )
+            except (OSError, tomllib.TOMLDecodeError):
+                results.append(
+                    self._result(
+                        "codex_shared_config_unreadable",
+                        "warn",
+                        f"Could not inspect unrelated Codex config at {config_path}",
+                    )
                 )
-            )
-            return results
-
-        skill_dirs = [d for d in skills_dir.iterdir() if d.is_dir()]
-
-        if not skill_dirs:
-            results.append(
-                ValidationResult(
-                    check_name="codex_skills_empty",
-                    status="warn",
-                    message="Codex Agent Skills directory exists but is empty",
-                )
-            )
-            return results
-
-        for skill_dir in skill_dirs:
-            results.extend(self._validate_skill(skill_dir))
-
         return results
+
+    def _load_json(
+        self, path: Path, check_name: str
+    ) -> tuple[dict[str, object] | None, list[ValidationResult]]:
+        try:
+            value: object = json.loads(path.read_text(), object_pairs_hook=_generated_json_object)
+        except (OSError, json.JSONDecodeError, _DuplicateGeneratedJSONKey) as error:
+            return None, [
+                self._result(
+                    check_name,
+                    "fail",
+                    f"Invalid JSON in {path}",
+                    details=str(error),
+                )
+            ]
+        if not isinstance(value, dict):
+            return None, [self._result(check_name, "fail", f"Expected JSON object in {path}")]
+        return value, []
 
     def _validate_skill(self, skill_dir: Path) -> list[ValidationResult]:
-        """Validate a single skill directory."""
-        results: list[ValidationResult] = []
-        skill_name = skill_dir.name
-
-        # Check SKILL.md exists
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_skill_{skill_name}_md",
-                    status="fail",
-                    message=f"Missing SKILL.md in {skill_dir}",
-                    fix_hint="Create a SKILL.md file with name and description frontmatter",
-                )
-            )
-            return results
-
-        # Parse and validate SKILL.md
-        try:
-            content = skill_md.read_text()
-            frontmatter = self._parse_frontmatter(content)
-
-            if not frontmatter:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_frontmatter",
-                        status="fail",
-                        message=f"No YAML frontmatter in {skill_md}",
-                        fix_hint="Add --- delimited YAML frontmatter with name and description",
-                    )
-                )
-                return results
-
-            # Validate name
-            name = frontmatter.get("name", "")
-            if not name:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_name",
-                        status="fail",
-                        message=f"Missing 'name' field in {skill_md}",
-                    )
-                )
-            elif not VALID_SKILL_NAME_PATTERN.match(name):
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_name_format",
-                        status="warn",
-                        message=f"Skill name '{name}' should be lowercase kebab-case",
-                        details="Valid pattern: ^[a-z0-9]+(-[a-z0-9]+)*$",
-                    )
-                )
-            elif len(name) > MAX_SKILL_NAME_LENGTH:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_name_length",
-                        status="warn",
-                        message=f"Skill name '{name}' exceeds {MAX_SKILL_NAME_LENGTH} chars",
-                    )
-                )
-            elif name != skill_dir.name:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_name_match",
-                        status="warn",
-                        message=f"Skill name '{name}' doesn't match directory '{skill_dir.name}'",
-                    )
-                )
-
-            # Validate description
-            description = frontmatter.get("description", "")
-            if not description:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_description",
-                        status="fail",
-                        message=f"Missing 'description' field in {skill_md}",
-                    )
-                )
-            elif len(description) > MAX_DESCRIPTION_LENGTH:
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}_description_length",
-                        status="warn",
-                        message=f"Description exceeds {MAX_DESCRIPTION_LENGTH} chars",
-                    )
-                )
-
-            # All checks passed for this skill
-            if not any(
-                r.check_name.startswith(f"codex_skill_{skill_name}")
-                and r.status in ("fail", "warn")
-                for r in results
-            ):
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_skill_{skill_name}",
-                        status="pass",
-                        message=f"Skill '{skill_name}' is valid",
-                    )
-                )
-
-        except Exception as e:
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_skill_{skill_name}_parse",
-                    status="fail",
-                    message=f"Failed to parse {skill_md}",
-                    details=str(e),
-                )
-            )
-
-        return results
-
-    def _parse_frontmatter(self, content: str) -> dict | None:
-        """Parse YAML frontmatter from SKILL.md content."""
-        import yaml
-
+        skill_path = skill_dir / "SKILL.md"
+        check = f"codex_package_skill_{skill_dir.name}"
+        if not skill_path.is_file():
+            return [self._result(check, "fail", f"Missing SKILL.md in {skill_dir}")]
+        content = skill_path.read_text()
         if not content.startswith("---"):
-            return None
-
+            return [self._result(check, "fail", f"Missing YAML frontmatter in {skill_path}")]
         parts = content.split("---", 2)
-        if len(parts) < 3:
+        try:
+            metadata = yaml.safe_load(parts[1]) if len(parts) == 3 else None
+        except yaml.YAMLError as error:
+            return [
+                self._result(
+                    check, "fail", f"Invalid frontmatter in {skill_path}", details=str(error)
+                )
+            ]
+        if not isinstance(metadata, dict):
+            return [self._result(check, "fail", f"Invalid frontmatter object in {skill_path}")]
+        name = metadata.get("name")
+        description = metadata.get("description")
+        if name != skill_dir.name or not isinstance(name, str) or not VALID_NAME.fullmatch(name):
+            return [
+                self._result(
+                    check,
+                    "fail",
+                    f"Skill name must be kebab-case and match directory '{skill_dir.name}'",
+                )
+            ]
+        if not isinstance(description, str) or not description.strip():
+            return [self._result(check, "fail", f"Skill '{name}' needs a description")]
+        return [self._result(check, "pass", f"Package skill '{name}' is valid")]
+
+    def _package_reference(self, package_root: Path, reference: str) -> Path | None:
+        """Resolve a manifest reference only when it stays inside the package root."""
+        if Path(reference).is_absolute():
             return None
-
+        candidate = package_root / reference
         try:
-            return yaml.safe_load(parts[1])
-        except yaml.YAMLError:
+            if package_root.resolve() not in candidate.resolve().parents:
+                return None
+        except OSError:
             return None
+        return candidate
 
-    def _load_config(self, output_dir: Path) -> tuple[dict, list[ValidationResult]]:
-        """Load .codex/config.toml and return config plus validation results."""
-        results: list[ValidationResult] = []
-        config_file = output_dir / ".codex" / "config.toml"
-        legacy_mcp_file = output_dir / ".codex" / "mcp-config.toml"
-
-        if legacy_mcp_file.exists():
-            results.append(
-                ValidationResult(
-                    check_name="codex_legacy_mcp_config",
-                    status="warn",
-                    message="Found legacy .codex/mcp-config.toml",
-                    details="Current Codex reads MCP servers from .codex/config.toml",
-                    fix_hint="Move MCP servers under [mcp_servers.*] in .codex/config.toml",
+    def _validate_hooks(
+        self, package_root: Path, manifest: dict[str, object]
+    ) -> list[ValidationResult]:
+        reference = manifest.get("hooks")
+        if reference is None:
+            return []
+        if not isinstance(reference, str):
+            return [
+                self._result(
+                    "codex_package_hooks_reference",
+                    "fail",
+                    "Manifest hooks must be a relative path",
                 )
-            )
-
-        if not config_file.exists():
-            return {}, results
-
-        try:
-            return tomllib.loads(config_file.read_text()), results
-        except tomllib.TOMLDecodeError as e:
-            results.append(
-                ValidationResult(
-                    check_name="codex_config_parse",
-                    status="fail",
-                    message="Invalid TOML in Codex config",
-                    details=str(e),
-                    fix_hint="Fix TOML syntax errors in .codex/config.toml",
+            ]
+        hooks_path = self._package_reference(package_root, reference)
+        if hooks_path is None:
+            return [
+                self._result(
+                    "codex_package_hooks_reference",
+                    "fail",
+                    "Manifest hooks path must stay inside the package root",
                 )
-            )
-        except Exception as e:
-            results.append(
-                ValidationResult(
-                    check_name="codex_config_error",
-                    status="fail",
-                    message="Failed to validate Codex config",
-                    details=str(e),
-                )
-            )
-
-        return {}, results
-
-    def validate_mcp(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate MCP configuration in .codex/config.toml."""
-        results: list[ValidationResult] = []
-        config, config_results = self._load_config(output_dir)
-        results.extend(config_results)
-
-        if any(r.status == "fail" for r in results):
+            ]
+        data, results = self._load_json(hooks_path, "codex_package_hooks_json")
+        if data is None:
             return results
-
-        if not config:
-            results.append(
-                ValidationResult(
-                    check_name="codex_mcp_config",
-                    status="pass",
-                    message="No Codex config.toml (ok if no MCP servers converted)",
-                )
-            )
-            return results
-
-        try:
-            # Check for mcp_servers section
-            mcp_servers = config.get("mcp_servers", {})
-
-            if not mcp_servers:
-                results.append(
-                    ValidationResult(
-                        check_name="codex_mcp_servers",
-                        status="warn",
-                        message="MCP config exists but has no servers defined",
-                    )
-                )
-                return results
-
-            # Validate each server
-            for server_name, server_config in mcp_servers.items():
-                server_results = self._validate_mcp_server(server_name, server_config)
-                results.extend(server_results)
-
-            # Overall success if no failures
-            if not any(r.status == "fail" for r in results):
-                results.append(
-                    ValidationResult(
-                        check_name="codex_mcp_valid",
-                        status="pass",
-                        message=f"MCP config valid ({len(mcp_servers)} server(s))",
-                    )
-                )
-
-        except Exception as e:
-            results.append(
-                ValidationResult(
-                    check_name="codex_mcp_error",
-                    status="fail",
-                    message="Failed to validate MCP servers",
-                    details=str(e),
-                )
-            )
-
-        return results
-
-    def _validate_mcp_server(self, name: str, config: dict) -> list[ValidationResult]:
-        """Validate a single MCP server configuration."""
-        results: list[ValidationResult] = []
-
-        # Must have either command (stdio) or url (http)
-        has_command = "command" in config
-        has_url = "url" in config
-
-        if not has_command and not has_url:
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_mcp_{name}_type",
-                    status="fail",
-                    message=f"MCP server '{name}' needs 'command' or 'url'",
-                )
-            )
-        elif has_command and has_url:
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_mcp_{name}_type",
-                    status="warn",
-                    message=f"MCP server '{name}' has both command and url",
-                )
-            )
-
-        # Validate args if present
-        if "args" in config and not isinstance(config["args"], list):
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_mcp_{name}_args",
-                    status="fail",
-                    message=f"MCP server '{name}' args must be an array",
-                )
-            )
-
-        # Validate env if present
-        if "env" in config and not isinstance(config["env"], dict):
-            results.append(
-                ValidationResult(
-                    check_name=f"codex_mcp_{name}_env",
-                    status="fail",
-                    message=f"MCP server '{name}' env must be an object",
-                )
-            )
-
-        return results
-
-    def validate_hooks(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate Codex hooks.json and feature flag in config.toml."""
-        results: list[ValidationResult] = []
-        hooks_file = output_dir / ".codex" / "hooks.json"
-
-        if not hooks_file.exists():
-            return results
-
-        config, config_results = self._load_config(output_dir)
-        results.extend(config_results)
-
-        features = config.get("features", {}) if isinstance(config, dict) else {}
-        if features.get("codex_hooks") is not True:
-            results.append(
-                ValidationResult(
-                    check_name="codex_hooks_feature_flag",
-                    status="warn",
-                    message="Codex hooks file exists but features.codex_hooks is not enabled",
-                    fix_hint="Add [features] codex_hooks = true to .codex/config.toml",
-                )
-            )
-
-        try:
-            hooks_data = json.loads(hooks_file.read_text())
-        except json.JSONDecodeError as e:
-            results.append(
-                ValidationResult(
-                    check_name="codex_hooks_parse",
-                    status="fail",
-                    message="Invalid JSON in .codex/hooks.json",
-                    details=str(e),
-                    fix_hint="Fix JSON syntax errors in .codex/hooks.json",
-                )
-            )
-            return results
-
-        hooks = hooks_data.get("hooks")
+        hooks = data.get("hooks")
         if not isinstance(hooks, dict):
-            results.append(
-                ValidationResult(
-                    check_name="codex_hooks_structure",
-                    status="fail",
-                    message=".codex/hooks.json must contain a hooks object",
+            return [
+                self._result(
+                    "codex_package_hooks_structure",
+                    "fail",
+                    "Package hooks file must contain a hooks object",
                 )
-            )
-            return results
-
-        for event_name, groups in hooks.items():
-            if event_name not in VALID_CODEX_HOOK_EVENTS:
+            ]
+        for event, groups in hooks.items():
+            if event not in VALID_CODEX_HOOK_EVENTS or not isinstance(groups, list):
                 results.append(
-                    ValidationResult(
-                        check_name=f"codex_hooks_event_{event_name}",
-                        status="fail",
-                        message=f"Unsupported Codex hook event '{event_name}'",
+                    self._result(
+                        f"codex_package_hook_{event}",
+                        "fail",
+                        f"Invalid Codex hook event or groups: {event}",
                     )
                 )
                 continue
-            if not isinstance(groups, list):
-                results.append(
-                    ValidationResult(
-                        check_name=f"codex_hooks_event_{event_name}_type",
-                        status="fail",
-                        message=f"Codex hook event '{event_name}' must be an array",
-                    )
-                )
-                continue
-            for i, group in enumerate(groups):
-                if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            for group in groups:
+                group_object = _object_dict(group)
+                handlers = group_object.get("hooks") if group_object is not None else None
+                if not isinstance(handlers, list):
                     results.append(
-                        ValidationResult(
-                            check_name=f"codex_hooks_event_{event_name}_{i}",
-                            status="fail",
-                            message=f"Codex hook group {event_name}[{i}] must contain hooks array",
+                        self._result(
+                            f"codex_package_hook_{event}_handlers",
+                            "fail",
+                            f"Hook event {event} needs a hooks array",
                         )
                     )
                     continue
-                for j, hook in enumerate(group["hooks"]):
-                    if not isinstance(hook, dict):
+                for handler in handlers:
+                    handler_object = _object_dict(handler)
+                    command = handler_object.get("command") if handler_object is not None else None
+                    if (
+                        not isinstance(command, str)
+                        or handler_object is None
+                        or handler_object.get("type") != "command"
+                    ):
                         results.append(
-                            ValidationResult(
-                                check_name=f"codex_hooks_event_{event_name}_{i}_{j}",
-                                status="fail",
-                                message=f"Codex hook {event_name}[{i}].hooks[{j}] must be an object",
+                            self._result(
+                                f"codex_package_hook_{event}_command",
+                                "fail",
+                                f"Hook event {event} contains a non-command handler",
                             )
                         )
-                    elif hook.get("type") != "command" or not isinstance(hook.get("command"), str):
+                    elif "CLAUDE_PLUGIN_ROOT" in command:
                         results.append(
-                            ValidationResult(
-                                check_name=f"codex_hooks_event_{event_name}_{i}_{j}_command",
-                                status="fail",
-                                message=f"Codex hook {event_name}[{i}].hooks[{j}] must be a command hook",
+                            self._result(
+                                f"codex_package_hook_{event}_root",
+                                "fail",
+                                "Claude-only CLAUDE_PLUGIN_ROOT leaked into Codex package hooks",
                             )
                         )
-
-        if not any(r.status == "fail" for r in results):
+        if not any(result.status == "fail" for result in results):
             results.append(
-                ValidationResult(
-                    check_name="codex_hooks_valid",
-                    status="pass",
-                    message=f"Codex hooks valid ({len(hooks)} event(s))",
+                self._result(
+                    "codex_package_hooks",
+                    "pass",
+                    f"Package hooks are valid ({len(hooks)} event(s))",
                 )
             )
-
         return results
 
-    def validate_prompts(self, output_dir: Path) -> list[ValidationResult]:
-        """Validate prompts in .codex/prompts/ (deprecated but may exist).
-
-        Args:
-            output_dir: Root output directory containing .codex/
-
-        Returns:
-            List of validation results.
-        """
+    def _validate_mcp(self, manifest: dict[str, object]) -> list[ValidationResult]:
+        servers = manifest.get("mcpServers")
+        if servers is None:
+            return []
+        if not isinstance(servers, dict):
+            return [
+                self._result("codex_package_mcp", "fail", "Manifest mcpServers must be an object")
+            ]
         results: list[ValidationResult] = []
-        prompts_dir = output_dir / ".codex" / "prompts"
+        for name, config in servers.items():
+            config_object = _object_dict(config)
+            valid = config_object is not None and bool(
+                config_object.get("command") or config_object.get("url")
+            )
+            if not valid:
+                results.append(
+                    self._result(
+                        f"codex_package_mcp_{name}",
+                        "fail",
+                        f"MCP server '{name}' needs command or url",
+                    )
+                )
+            elif "CLAUDE_PLUGIN_ROOT" in json.dumps(config):
+                results.append(
+                    self._result(
+                        f"codex_package_mcp_{name}_root",
+                        "fail",
+                        f"MCP server '{name}' contains CLAUDE_PLUGIN_ROOT",
+                    )
+                )
+            else:
+                results.append(
+                    self._result(
+                        f"codex_package_mcp_{name}", "pass", f"Package MCP server '{name}' is valid"
+                    )
+                )
+        return results
 
-        if not prompts_dir.exists():
-            return results  # No prompts is fine
-
-        prompt_files = list(prompts_dir.glob("*.md"))
-        if prompt_files:
+    def _validate_package(self, package_root: Path, expected_name: str) -> list[ValidationResult]:
+        manifest_path = package_root / ".codex-plugin" / "plugin.json"
+        manifest, results = self._load_json(
+            manifest_path, f"codex_package_{expected_name}_manifest"
+        )
+        if manifest is None:
+            return results
+        if manifest.get("name") != expected_name or not VALID_NAME.fullmatch(expected_name):
             results.append(
-                ValidationResult(
-                    check_name="codex_prompts_deprecated",
-                    status="warn",
-                    message=f"Found {len(prompt_files)} prompts (prompts are deprecated in Codex)",
-                    details="Consider converting to skills instead",
+                self._result(
+                    f"codex_package_{expected_name}_name",
+                    "fail",
+                    f"Package manifest name must match '{expected_name}'",
                 )
             )
+        version = manifest.get("version")
+        if not isinstance(version, str) or not version:
+            results.append(
+                self._result(
+                    f"codex_package_{expected_name}_version",
+                    "fail",
+                    "Package manifest needs a Semantic Versioning 2.0.0 version",
+                    fix_hint="Set the source plugin version to a value such as 1.2.3.",
+                )
+            )
+        else:
+            try:
+                SemanticVersion.parse(version, context=f"Codex package {expected_name} version")
+            except ValueError as error:
+                results.append(
+                    self._result(
+                        f"codex_package_{expected_name}_version",
+                        "fail",
+                        str(error),
+                        fix_hint="Set the source plugin version to a valid SemVer value such as 1.2.3.",
+                    )
+                )
+        skills_ref = manifest.get("skills")
+        if skills_ref is not None:
+            if not isinstance(skills_ref, str):
+                results.append(
+                    self._result(
+                        f"codex_package_{expected_name}_skills",
+                        "fail",
+                        "Manifest skills must be a relative path",
+                    )
+                )
+            else:
+                skills_root = self._package_reference(package_root, skills_ref)
+                if skills_root is None:
+                    results.append(
+                        self._result(
+                            f"codex_package_{expected_name}_skills",
+                            "fail",
+                            "Manifest skills path must stay inside the package root",
+                        )
+                    )
+                elif not skills_root.is_dir():
+                    results.append(
+                        self._result(
+                            f"codex_package_{expected_name}_skills",
+                            "fail",
+                            f"Missing skills directory {skills_root}",
+                        )
+                    )
+                else:
+                    for skill_dir in sorted(
+                        path for path in skills_root.iterdir() if path.is_dir()
+                    ):
+                        results.extend(self._validate_skill(skill_dir))
+        results.extend(self._validate_hooks(package_root, manifest))
+        results.extend(self._validate_mcp(manifest))
+        if not any(result.status == "fail" for result in results):
+            results.append(
+                self._result(
+                    f"codex_package_{expected_name}",
+                    "pass",
+                    f"Codex package '{expected_name}' is valid",
+                )
+            )
+        return results
 
+    def validate_packages(self, output_dir: Path) -> list[ValidationResult]:
+        """Validate every generated marketplace and referenced package."""
+        marketplaces_root = output_dir / CODEX_OUTPUT_ROOT / "marketplaces"
+        if not marketplaces_root.is_dir():
+            return [
+                self._result(
+                    "codex_packages_exist",
+                    "warn",
+                    f"No generated Codex package marketplaces found under {marketplaces_root}",
+                )
+            ]
+        results: list[ValidationResult] = []
+        roots = sorted(path for path in marketplaces_root.iterdir() if path.is_dir())
+        for root in roots:
+            marketplace_path = root / ".agents" / "plugins" / "marketplace.json"
+            marketplace, load_results = self._load_json(
+                marketplace_path, f"codex_marketplace_{root.name}_json"
+            )
+            results.extend(load_results)
+            if marketplace is None:
+                continue
+            if marketplace.get("name") != root.name:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_name",
+                        "fail",
+                        f"Marketplace name must match directory '{root.name}'",
+                    )
+                )
+            plugins = marketplace.get("plugins")
+            if (
+                not isinstance(plugins, list)
+                or len(plugins) != 1
+                or not isinstance(plugins[0], dict)
+            ):
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_plugins",
+                        "fail",
+                        "Generated marketplace must contain exactly one plugin entry",
+                    )
+                )
+                continue
+            entry = _object_dict(plugins[0])
+            if entry is None:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_plugins",
+                        "fail",
+                        "Generated marketplace plugin entry must use string keys",
+                    )
+                )
+                continue
+            name = entry.get("name")
+            source = _object_dict(entry.get("source"))
+            path_value = source.get("path") if source is not None else None
+            if (
+                not isinstance(name, str)
+                or source is None
+                or not isinstance(path_value, str)
+                or source.get("source") != "local"
+            ):
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_source",
+                        "fail",
+                        "Marketplace plugin needs a local source path",
+                    )
+                )
+                continue
+            package_root = root / path_value
+            if root.resolve() not in package_root.resolve().parents:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_escape",
+                        "fail",
+                        "Marketplace package path escapes its owned root",
+                    )
+                )
+                continue
+            expected_marketplace_name = f"ai-config-{name}"
+            expected_path = f"./plugins/{name}"
+            if root.name != expected_marketplace_name or path_value != expected_path:
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}_identity",
+                        "fail",
+                        "Marketplace directory, plugin name, and local source path must share "
+                        f"the normalized identity '{name}'",
+                        details=(
+                            f"expected marketplace {expected_marketplace_name} and source "
+                            f"{expected_path}; got {root.name} and {path_value}"
+                        ),
+                    )
+                )
+                continue
+            results.extend(self._validate_package(package_root, name))
+            if not any(result.status == "fail" for result in results):
+                results.append(
+                    self._result(
+                        f"codex_marketplace_{root.name}",
+                        "pass",
+                        f"Codex marketplace '{root.name}' is valid",
+                    )
+                )
         return results
 
     def validate_all(self, output_dir: Path) -> list[ValidationResult]:
-        """Run all Codex validations.
-
-        Args:
-            output_dir: Root output directory containing .codex/
-
-        Returns:
-            List of all validation results.
-        """
-        results: list[ValidationResult] = []
-
-        codex_dir = output_dir / ".codex"
-        legacy_agents_skills_dir = output_dir / ".agents" / "skills"
-        if not codex_dir.exists() and not legacy_agents_skills_dir.exists():
-            results.append(
-                ValidationResult(
-                    check_name="codex_output_exists",
-                    status="warn",
-                    message="No Codex output found",
-                    details=f"Expected .codex/ in {output_dir}; .agents/skills is recognized only as legacy Codex output",
-                )
-            )
-            return results
-
-        results.extend(self.validate_skills(output_dir))
-        results.extend(self.validate_mcp(output_dir))
-        results.extend(self.validate_hooks(output_dir))
-        results.extend(self.validate_prompts(output_dir))
-
-        return results
+        """Run package validation plus conservative stale-output diagnostics."""
+        return self.validate_packages(output_dir) + self.validate_legacy_output(output_dir)

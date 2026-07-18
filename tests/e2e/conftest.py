@@ -288,7 +288,9 @@ def exec_in_container(
     return result.exit_code, result.output.decode("utf-8")
 
 
-def check_tool_installed(container: Container, tool_name: str, version_cmd: str) -> tuple[bool, str]:
+def check_tool_installed(
+    container: Container, tool_name: str, version_cmd: str
+) -> tuple[bool, str]:
     """Check if a tool is installed and get its version.
 
     Args:

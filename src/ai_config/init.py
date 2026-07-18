@@ -200,7 +200,7 @@ class ConversionChoice:
 def _conversion_output_paths(target: str, base_dir: Path, scope: str) -> list[Path]:
     """Display paths that a conversion target writes under a base output directory."""
     if target == "codex":
-        return [base_dir / ".codex"]
+        return [base_dir / ".ai-config" / "codex" / "marketplaces"]
     if target == "pi" and scope == "user":
         return [base_dir / ".pi" / "agent"]
     return [base_dir / f".{target}"]
@@ -710,7 +710,7 @@ def prompt_conversion_targets(
 
     # Sub-steps loop — GO_BACK within these re-prompts conversion, not the caller
     target_choices = [
-        ("codex", "Codex (OpenAI) - .codex/ skills, prompts, and config"),
+        ("codex", "Codex (OpenAI) - installable plugin packages and local marketplaces"),
         ("cursor", "Cursor - .cursor/ directory"),
         ("opencode", "OpenCode - .opencode/ directory"),
         ("pi", "Pi - .pi/ skills, prompts, and extensions"),

@@ -1,15 +1,9 @@
 """Tests for plugin conversion functionality."""
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[import-not-found]
 
 from ai_config.converters.claude_parser import parse_claude_plugin
 from ai_config.converters.convert import convert_plugin, preview_conversion
@@ -22,6 +16,7 @@ from ai_config.converters.emitters import (
 )
 from ai_config.converters.ir import (
     BinaryFile,
+    Command,
     InstallScope,
     LspServer,
     MappingStatus,
@@ -29,7 +24,6 @@ from ai_config.converters.ir import (
     McpTransport,
     PluginIdentity,
     PluginIR,
-    Severity,
     Skill,
     TargetTool,
     TextFile,
@@ -196,294 +190,211 @@ class TestClaudeParser:
 
 
 class TestCodexEmitter:
-    """Tests for Codex emitter."""
+    """Tests for first-class Codex package emission."""
 
     @pytest.fixture
     def ir(self):
-        """Load the test plugin IR."""
         return parse_claude_plugin(FIXTURES_DIR / "complete-plugin")
 
-    def test_emit_skills(self, ir, tmp_path: Path) -> None:
-        """Test emitting skills to Codex format."""
-        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-code-review"
-        legacy_skill_dir.mkdir(parents=True)
-        (legacy_skill_dir / "SKILL.md").write_text(
-            "---\nname: code-review\ndescription: stale\n---\n\nStale"
-        )
-        unrelated_skill_dir = tmp_path / ".agents" / "skills" / "user-managed-skill"
-        unrelated_skill_dir.mkdir(parents=True)
-        (unrelated_skill_dir / "SKILL.md").write_text(
-            "---\nname: user-managed-skill\ndescription: keep\n---\n\nKeep"
-        )
-
-        emitter = CodexEmitter()
-        result = emitter.emit(ir)
-
-        # Check skill files were created
-        skill_files = [f for f in result.files if "skills" in str(f.path)]
-        assert len(skill_files) >= 2
-
-        # Check skill mapping
-        skill_mappings = [m for m in result.mappings if m.component_kind == "skill"]
-        assert all(m.status == MappingStatus.NATIVE for m in skill_mappings)
-
-        # Write and verify structure
+    def test_emits_deterministic_package_and_marketplace(self, ir, tmp_path: Path) -> None:
+        result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)
 
-        # Check SKILL.md was written correctly
-        skill_md = tmp_path / ".codex" / "skills" / "dev-tools-code-review" / "SKILL.md"
-        assert skill_md.exists()
-        content = skill_md.read_text()
+        root = tmp_path / ".ai-config" / "codex" / "marketplaces" / "ai-config-dev-tools"
+        package = root / "plugins" / "dev-tools"
+        manifest = json.loads((package / ".codex-plugin" / "plugin.json").read_text())
+        marketplace = json.loads((root / ".agents" / "plugins" / "marketplace.json").read_text())
 
-        # Should have frontmatter matching the Agent Skills directory name
-        assert content.startswith("---")
-        assert "name: dev-tools-code-review" in content
-        assert "description:" in content
-        assert not legacy_skill_dir.exists()
-        assert unrelated_skill_dir.exists()
+        assert manifest["name"] == "dev-tools"
+        assert manifest["version"] == "1.0.0"
+        assert manifest["skills"] == "./skills/"
+        assert manifest["hooks"] == "./hooks/hooks.json"
+        assert set(manifest["mcpServers"]) == {"database", "github"}
+        assert marketplace["name"] == "ai-config-dev-tools"
+        assert marketplace["plugins"][0]["source"] == {
+            "source": "local",
+            "path": "./plugins/dev-tools",
+        }
 
-        # Claude-specific fields should be stripped
+    def test_invalid_package_semver_is_actionable_without_output(self, tmp_path: Path) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="bad-version", name="bad-version", version="latest")
+        )
+
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path)
+
+        assert result.has_errors()
+        assert any("Semantic Versioning" in diagnostic.message for diagnostic in result.diagnostics)
+        assert result.files == []
+
+    def test_never_emits_legacy_loose_output(self, ir, tmp_path: Path) -> None:
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path)
+        assert not (tmp_path / ".codex").exists()
+        assert not any(".codex/skills" in file.path.as_posix() for file in result.files)
+        assert not any(".codex/prompts" in file.path.as_posix() for file in result.files)
+
+    def test_skills_are_package_local_and_strip_claude_metadata(self, ir, tmp_path: Path) -> None:
+        CodexEmitter().emit(ir).write_to(tmp_path)
+        skill = (
+            tmp_path
+            / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools"
+            / "skills/code-review/SKILL.md"
+        )
+        content = skill.read_text()
+        assert "name: code-review" in content
         assert "allowed-tools:" not in content
         assert "model:" not in content
-        assert "context:" not in content
 
-    def test_emit_commands_as_prompts_default(self, ir, tmp_path: Path) -> None:
-        """Test that commands emit as prompts by default (1:1 with Claude)."""
-        emitter = CodexEmitter()  # Default: commands_as_skills=False
-        result = emitter.emit(ir)
-        result.write_to(tmp_path)
-
-        # Commands should be emitted with FALLBACK status (uses deprecated prompts)
-        cmd_mappings = [m for m in result.mappings if m.component_kind == "command"]
-        assert len(cmd_mappings) == 1
-        assert cmd_mappings[0].status == MappingStatus.FALLBACK
-        assert "prompts" in (cmd_mappings[0].notes or "").lower()
-
-        # Should have info diagnostic about prompts conversion
-        cmd_diags = [d for d in result.diagnostics if "command" in (d.component_ref or "")]
-        assert any("/prompts:" in d.message for d in cmd_diags)
-
-        # Verify prompt file was created in .codex/prompts/
-        prompt_file = tmp_path / ".codex" / "prompts" / "dev-tools-commit.md"
-        assert prompt_file.exists(), "Command should be emitted as prompt file"
-
-        content = prompt_file.read_text()
-        assert "---" in content  # Should have frontmatter
-        assert "Create a git commit" in content  # Should have command content
-
-    def test_emit_commands_as_prompts_user_scope_path(self, ir, tmp_path: Path) -> None:
-        """User scope should still emit prompts under .codex/prompts/."""
-        emitter = CodexEmitter(scope=InstallScope.USER)
-        result = emitter.emit(ir)
-        result.write_to(tmp_path)
-
-        prompt_file = tmp_path / ".codex" / "prompts" / "dev-tools-commit.md"
-        assert prompt_file.exists(), "User-scope prompts should use .codex/prompts/"
-
-    def test_project_scope_prompt_warning_instructions(self, ir) -> None:
-        """Project-scope prompts should warn with instructions."""
-        emitter = CodexEmitter(scope=InstallScope.PROJECT)
-        result = emitter.emit(ir)
-
-        warnings = [d.message for d in result.diagnostics if d.severity.value == "warn"]
-        assert any(
-            "prompts" in msg.lower() and "commands-as-skills" in msg.lower() for msg in warnings
+    def test_skill_and_command_namespace_collision_fails_without_output(
+        self, tmp_path: Path
+    ) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="collision", name="collision", version="1.0.0"),
+            components=[
+                Skill(
+                    name="command-foo",
+                    description="source skill",
+                    files=[
+                        TextFile(
+                            relpath="SKILL.md",
+                            content="---\nname: command-foo\ndescription: source skill\n---\nbody",
+                        )
+                    ],
+                ),
+                Command(name="Foo!", markdown="command body"),
+            ],
         )
 
-    def test_emit_binary_skill_files(self, tmp_path: Path) -> None:
-        """Binary files in skills should be emitted to output."""
-        plugin_dir = tmp_path / "plugin"
-        (plugin_dir / ".claude-plugin").mkdir(parents=True)
-        (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
-            '{"name": "binary-plugin", "skills": "./skills"}'
-        )
-        skill_dir = plugin_dir / "skills" / "bin-skill"
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text("---\nname: bin-skill\ndescription: test\n---\n\nBody")
-
-        binary_path = skill_dir / "asset.bin"
-        binary_bytes = b"\xff\xfe\x00\x80binary"
-        binary_path.write_bytes(binary_bytes)
-
-        ir = parse_claude_plugin(plugin_dir)
-        emitter = CodexEmitter()
-        result = emitter.emit(ir)
+        result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)
 
-        emitted = tmp_path / ".codex" / "skills" / "binary-plugin-bin-skill" / "asset.bin"
-        assert emitted.exists()
-        assert emitted.read_bytes() == binary_bytes
+        assert result.has_errors()
+        assert result.files == []
+        assert result.mappings == []
+        assert any("namespace collision" in item.message for item in result.diagnostics)
+        assert not (tmp_path / ".ai-config").exists()
 
-    def test_emit_commands_as_skills_opt_in(self, ir, tmp_path: Path) -> None:
-        """Test that commands emit as skills with --commands-as-skills flag."""
-        legacy_skill_dir = tmp_path / ".agents" / "skills" / "dev-tools-cmd-commit"
-        legacy_skill_dir.mkdir(parents=True)
-        (legacy_skill_dir / "SKILL.md").write_text(
-            "---\nname: dev-tools-cmd-commit\ndescription: stale\n---\n\nStale"
+    def test_command_identity_is_normalized_before_emission(self, tmp_path: Path) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="commands", name="commands", version="1.0.0"),
+            components=[Command(name="My Command!", markdown="command body")],
         )
 
-        emitter = CodexEmitter(commands_as_skills=True)
-        result = emitter.emit(ir)
+        result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)
 
-        # Commands should be emitted as skills (transform status due to variables)
-        cmd_mappings = [m for m in result.mappings if m.component_kind == "command"]
-        assert len(cmd_mappings) == 1
-        # Commands with variables are transformed
-        assert cmd_mappings[0].status in (MappingStatus.NATIVE, MappingStatus.TRANSFORM)
+        path = next(file.path for file in result.files if file.path.name == "SKILL.md")
+        assert path.parts[-3:] == ("skills", "command-my-command", "SKILL.md")
+        assert "name: command-my-command" in (tmp_path / path).read_text()
+        mapping = next(item for item in result.mappings if item.component_kind == "command")
+        assert mapping.target_path == path
 
-        # Should have info diagnostic about skill conversion
-        cmd_diags = [d for d in result.diagnostics if "command" in (d.component_ref or "")]
-        assert any("skill" in d.message.lower() for d in cmd_diags)
-
-        # Verify skill file was created (not deprecated prompts)
-        skill_dir = tmp_path / ".codex" / "skills" / "dev-tools-cmd-commit"
-        assert skill_dir.exists(), "Command should be emitted as skill directory"
-        skill_file = skill_dir / "SKILL.md"
-        assert skill_file.exists(), "SKILL.md should exist in skill directory"
-
-        content = skill_file.read_text()
-        assert "name:" in content  # Should have frontmatter
-        assert "Create a git commit" in content  # Should have command content
-        assert not legacy_skill_dir.exists()
-
-    def test_emit_hooks_transform(self, ir, tmp_path: Path) -> None:
-        """Test that supported command hooks are converted to Codex hooks."""
-        emitter = CodexEmitter()
-        result = emitter.emit(ir)
+    def test_commands_always_become_package_skills_with_degraded_variables(
+        self, ir, tmp_path: Path
+    ) -> None:
+        result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)
+        command = (
+            tmp_path
+            / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools"
+            / "skills/command-commit/SKILL.md"
+        )
+        assert command.is_file()
+        mapping = next(item for item in result.mappings if item.component_kind == "command")
+        assert mapping.status == MappingStatus.FALLBACK
+        assert "argument substitution" in mapping.lost_features[0]
 
-        hook_mappings = [m for m in result.mappings if m.component_kind == "hook"]
-        assert len(hook_mappings) == 1
-        assert hook_mappings[0].status == MappingStatus.TRANSFORM
+    def test_hooks_are_package_native_and_self_contained(self, ir, tmp_path: Path) -> None:
+        CodexEmitter().emit(ir).write_to(tmp_path)
+        package = tmp_path / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools"
+        hooks = (package / "hooks/hooks.json").read_text()
+        assert "${PLUGIN_ROOT}" in hooks
+        assert "CLAUDE_PLUGIN_ROOT" not in hooks
+        assert (package / "scripts/check-dangerous-commands.sh").is_file()
 
-        hooks_json = tmp_path / ".codex" / "hooks.json"
-        assert hooks_json.exists()
-        hooks_content = hooks_json.read_text()
-        assert "PreToolUse" in hooks_content
-        assert "PostToolUse" in hooks_content
-        assert "check-dangerous-commands.sh" in hooks_content
-        assert "CLAUDE_PLUGIN_ROOT" not in hooks_content
-
-        config_toml = tmp_path / ".codex" / "config.toml"
-        assert config_toml.exists()
-        assert "codex_hooks = true" in config_toml.read_text()
-
-    def test_emit_prompt_hook_warns_unsupported(self, ir) -> None:
-        """Prompt hook handlers should warn because Codex supports command hooks."""
-        emitter = CodexEmitter()
-        result = emitter.emit(ir)
-
-        warnings = [d.message for d in result.diagnostics if d.severity == Severity.WARN]
-        assert any(
-            "prompt" in message and "not supported in Codex" in message for message in warnings
+    def test_mcp_support_files_are_copied_into_package(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        script = source / "scripts" / "server.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('server')\n")
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="mcp-files", name="mcp-files"),
+            source_path=source,
+            components=[
+                McpServer(
+                    name="local",
+                    transport=McpTransport.STDIO,
+                    command="python",
+                    args=["${CLAUDE_PLUGIN_ROOT}/scripts/server.py"],
+                )
+            ],
         )
 
-    def test_emit_mcp_config(self, ir, tmp_path: Path) -> None:
-        """Test MCP config conversion to TOML."""
-        emitter = CodexEmitter()
-        result = emitter.emit(ir)
-        result.write_to(tmp_path)
+        CodexEmitter().emit(ir).write_to(tmp_path / "out")
 
-        mcp_config = tmp_path / ".codex" / "config.toml"
-        assert mcp_config.exists()
-
-        content = mcp_config.read_text()
-        assert "[mcp_servers.dev-tools-database]" in content
-        assert "[mcp_servers.dev-tools-github]" in content
-        assert 'command = "npx"' in content
-
-    def test_project_scope_mcp_hooks_warn_about_runtime_loading(self, ir) -> None:
-        """Project-scope Codex MCP/hooks should warn about active runtime loading."""
-        emitter = CodexEmitter(scope=InstallScope.PROJECT)
-        result = emitter.emit(ir)
-
-        warnings = [d.message for d in result.diagnostics if d.severity == Severity.WARN]
-        assert any(
-            "may not auto-load project .codex/config.toml" in message for message in warnings
+        package = (
+            tmp_path / "out/.ai-config/codex/marketplaces/ai-config-mcp-files/plugins/mcp-files"
         )
+        manifest = json.loads((package / ".codex-plugin/plugin.json").read_text())
+        assert manifest["mcpServers"]["local"]["args"] == ["${PLUGIN_ROOT}/scripts/server.py"]
+        assert (package / "scripts/server.py").read_text() == "print('server')\n"
 
-    def test_codex_config_merge_preserves_existing_settings(self, ir, tmp_path: Path) -> None:
-        """Writing Codex config should merge, not clobber, existing settings."""
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir(parents=True)
-        (codex_dir / "config.toml").write_text(
-            'model = "gpt-5"\n\n[mcp_servers.existing]\ncommand = "echo"\nargs = ["old"]\n'
+    def test_binary_skill_assets_stay_in_package(self, tmp_path: Path) -> None:
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="binary", name="binary"),
+            components=[
+                Skill(
+                    name="asset",
+                    description="asset",
+                    files=[
+                        TextFile(
+                            relpath="SKILL.md",
+                            content="---\nname: asset\ndescription: asset\n---\nbody",
+                        ),
+                        BinaryFile(relpath="asset.bin", content_b64="AQID"),
+                    ],
+                )
+            ],
         )
-
-        emitter = CodexEmitter(scope=InstallScope.USER)
-        result = emitter.emit(ir)
-        result.write_to(tmp_path)
-
-        content = (codex_dir / "config.toml").read_text()
-        assert 'model = "gpt-5"' in content
-        assert "[mcp_servers.existing]" in content
-        assert "[mcp_servers.dev-tools-database]" in content
-
-    def test_codex_config_merge_preserves_mixed_tables(self, ir, tmp_path: Path) -> None:
-        """Merging Codex config should preserve tables with scalar keys and subtables."""
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir(parents=True)
-        (codex_dir / "config.toml").write_text(
-            '[profiles]\ndefault = "work"\n\n[profiles.work]\nmodel = "gpt-4o"\n'
+        CodexEmitter().emit(ir).write_to(tmp_path)
+        asset = (
+            tmp_path
+            / ".ai-config/codex/marketplaces/ai-config-binary/plugins/binary"
+            / "skills/asset/asset.bin"
         )
+        assert asset.read_bytes() == b"\x01\x02\x03"
 
-        emitter = CodexEmitter(scope=InstallScope.USER)
-        result = emitter.emit(ir)
-        result.write_to(tmp_path)
-
-        content = (codex_dir / "config.toml").read_text()
-        assert "[profiles]" in content
-        assert 'default = "work"' in content
-        assert "[profiles.work]" in content
-        assert 'model = "gpt-4o"' in content
-        assert "[mcp_servers.dev-tools-database]" in content
-
-    def test_codex_config_merge_preserves_quoted_table_keys(self, ir, tmp_path: Path) -> None:
-        """Merging Codex config should quote table keys that are not bare TOML keys."""
-        codex_dir = tmp_path / ".codex"
-        codex_dir.mkdir(parents=True)
-        (codex_dir / "config.toml").write_text(
-            '[mcp_servers."github.com"]\ncommand = "echo"\nargs = ["old"]\n'
+    def test_target_native_files_land_inside_package(self, tmp_path: Path) -> None:
+        plugin = tmp_path / "source"
+        native = plugin / "targets" / "codex" / "apps" / "app.json"
+        native.parent.mkdir(parents=True)
+        native.write_text('{"name":"app"}')
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="native", name="native"),
+            source_path=plugin,
         )
+        CodexEmitter().emit(ir).write_to(tmp_path / "out")
+        assert (
+            tmp_path
+            / "out/.ai-config/codex/marketplaces/ai-config-native/plugins/native/apps/app.json"
+        ).is_file()
 
-        emitter = CodexEmitter(scope=InstallScope.USER)
-        result = emitter.emit(ir)
+    def test_reemit_replaces_only_owned_marketplace_root(self, ir, tmp_path: Path) -> None:
+        unrelated = tmp_path / ".codex" / "config.toml"
+        unrelated.parent.mkdir(parents=True)
+        unrelated.write_text('model = "keep"\n')
+        result = CodexEmitter().emit(ir)
         result.write_to(tmp_path)
-
-        content = (codex_dir / "config.toml").read_text()
-        assert '[mcp_servers."github.com"]' in content
-        parsed = tomllib.loads(content)
-        assert "github.com" in parsed["mcp_servers"]
-        assert "github" not in parsed["mcp_servers"]
-        assert "dev-tools-database" in parsed["mcp_servers"]
-
-    def test_codex_hooks_merge_idempotently(self, ir, tmp_path: Path) -> None:
-        """Writing Codex hooks should preserve existing hooks and avoid duplicates."""
-        hooks_dir = tmp_path / ".codex"
-        hooks_dir.mkdir(parents=True)
-        hooks_file = hooks_dir / "hooks.json"
-        hooks_file.write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "UserPromptSubmit": [
-                            {"hooks": [{"type": "command", "command": "echo existing"}]}
-                        ]
-                    }
-                }
-            )
+        stale = (
+            tmp_path
+            / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/stale.txt"
         )
-
-        emitter = CodexEmitter(scope=InstallScope.USER)
-        result = emitter.emit(ir)
+        stale.write_text("stale")
         result.write_to(tmp_path)
-        result.write_to(tmp_path)
-
-        hooks_data = json.loads(hooks_file.read_text())
-        assert "UserPromptSubmit" in hooks_data["hooks"]
-        pre_tool_groups = hooks_data["hooks"]["PreToolUse"]
-        assert len(pre_tool_groups) == 1
+        assert not stale.exists()
+        assert unrelated.read_text() == 'model = "keep"\n'
 
 
 class TestCursorEmitter:
@@ -1035,27 +946,6 @@ class TestEmitterFactory:
         emitter = get_emitter(TargetTool.CODEX, scope=InstallScope.USER)
         assert emitter.scope == InstallScope.USER
 
-    def test_get_emitter_codex_commands_as_skills(self) -> None:
-        """Test Codex emitter respects commands_as_skills parameter."""
-        # Default: prompts
-        emitter_default = get_emitter(TargetTool.CODEX)
-        assert isinstance(emitter_default, CodexEmitter)
-        assert emitter_default.commands_as_skills is False
-
-        # Opt-in: skills
-        emitter_skills = get_emitter(TargetTool.CODEX, commands_as_skills=True)
-        assert isinstance(emitter_skills, CodexEmitter)
-        assert emitter_skills.commands_as_skills is True
-
-    def test_get_emitter_non_codex_ignores_commands_as_skills(self) -> None:
-        """Test that non-Codex emitters ignore commands_as_skills parameter."""
-        # commands_as_skills should be ignored for Cursor and OpenCode
-        cursor_emitter = get_emitter(TargetTool.CURSOR, commands_as_skills=True)
-        assert isinstance(cursor_emitter, CursorEmitter)
-
-        opencode_emitter = get_emitter(TargetTool.OPENCODE, commands_as_skills=True)
-        assert isinstance(opencode_emitter, OpenCodeEmitter)
-
 
 class TestEdgeCases:
     """Test edge cases and sharp edges discovered during implementation."""
@@ -1103,10 +993,10 @@ class TestEdgeCases:
             ],
         )
 
-        # Codex keeps ${VAR}
+        # Codex keeps ${VAR} in package manifest MCP entries
         codex = CodexEmitter()
         codex_result = codex.emit(ir)
-        codex_file = next(f for f in codex_result.files if f.path == Path(".codex") / "config.toml")
+        codex_file = next(f for f in codex_result.files if f.path.name == "plugin.json")
         assert "${API_KEY}" in codex_file.content
 
         # Cursor transforms to ${env:VAR}
@@ -1281,8 +1171,11 @@ class TestDryRun:
         assert output_dir.exists()
 
         # Files should exist
-        skills_dir = output_dir / ".codex" / "skills"
-        assert skills_dir.exists()
+        package_dir = (
+            output_dir
+            / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills"
+        )
+        assert package_dir.exists()
 
 
 class TestPreviewConversion:

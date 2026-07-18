@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from ai_config.validators.marketplace.validators import MarketplaceManifestValidator
+
 # Path to the test-marketplace fixture
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 TEST_MARKETPLACE_DIR = FIXTURES_DIR / "test-marketplace"
@@ -18,10 +20,12 @@ TEST_MARKETPLACE_DIR = FIXTURES_DIR / "test-marketplace"
 class TestMarketplaceFixtureSchema:
     """Validate test-marketplace fixture matches Claude CLI expectations."""
 
-    @pytest.fixture(params=[
-        ".claude-plugin/marketplace.json",
-        "marketplace.json",
-    ])
+    @pytest.fixture(
+        params=[
+            ".claude-plugin/marketplace.json",
+            "marketplace.json",
+        ]
+    )
     def manifest_path(self, request: pytest.FixtureRequest) -> Path:
         """Both marketplace manifest locations."""
         return TEST_MARKETPLACE_DIR / request.param
@@ -81,25 +85,16 @@ class TestMarketplaceFixtureSchema:
         )
 
 
-try:
-    from ai_config.validators.marketplace.validators import MarketplaceManifestValidator
-
-    _HAS_VALIDATORS = True
-except TypeError:
-    # Python 3.9 without PEP 604 support in dataclasses at runtime
-    _HAS_VALIDATORS = False
-
-
-@pytest.mark.skipif(not _HAS_VALIDATORS, reason="Requires Python 3.10+ for str | None syntax")
 class TestMarketplaceValidatorRejectsObjectSource:
     """Ensure the validator catches the old object-format source."""
 
     @pytest.fixture
-    def validator(self) -> MarketplaceManifestValidator:  # type: ignore[name-defined]
-        return MarketplaceManifestValidator()  # type: ignore[name-defined]
+    def validator(self) -> MarketplaceManifestValidator:
+        return MarketplaceManifestValidator()
 
     def test_object_source_fails_validation(
-        self, validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
+        self,
+        validator: MarketplaceManifestValidator,
     ) -> None:
         """Object-format source should be rejected by _validate_plugin_entry."""
         results = validator._validate_plugin_entry(
@@ -113,7 +108,8 @@ class TestMarketplaceValidatorRejectsObjectSource:
         assert "string" in failures[0].message.lower()
 
     def test_string_source_passes_validation(
-        self, validator: MarketplaceManifestValidator,  # type: ignore[name-defined]
+        self,
+        validator: MarketplaceManifestValidator,
     ) -> None:
         """String-format source should pass validation."""
         results = validator._validate_plugin_entry(

@@ -100,6 +100,7 @@ class TestEmitterProtocolDuckTyping:
 
     def test_custom_emitter_satisfies_protocol(self) -> None:
         """A custom class with the right shape satisfies the protocol."""
+
         # Define a minimal protocol inline for testing
         @runtime_checkable
         class Emitter(Protocol):
@@ -307,3 +308,40 @@ class TestEmitResultInterface:
         assert len(written) == 1
         assert (tmp_path / "test.md").exists()
         assert (tmp_path / "test.md").read_text() == "# Test content"
+
+    @pytest.mark.parametrize(
+        "symlink_parent",
+        [
+            Path(".ai-config/codex/marketplaces"),
+            Path(".ai-config/codex/marketplaces/ai-config-demo/plugins"),
+        ],
+    )
+    def test_emit_result_rejects_symlinked_output_ancestor_before_any_mutation(
+        self, tmp_path: Path, symlink_parent: Path
+    ) -> None:
+        output = tmp_path / "output"
+        external = tmp_path / "external"
+        external.mkdir()
+        sentinel = external / "sentinel"
+        sentinel.write_text("outside")
+        linked_path = output / symlink_parent
+        linked_path.parent.mkdir(parents=True)
+        linked_path.symlink_to(external, target_is_directory=True)
+        retained = output / ".ai-config/codex/marketplaces/ai-config-demo/retained"
+        if symlink_parent.name == "plugins":
+            retained.write_text("inside")
+
+        result = EmitResult(target=TargetTool.CODEX)
+        result.add_cleanup_path(".ai-config/codex/marketplaces/ai-config-demo")
+        result.add_file(
+            ".ai-config/codex/marketplaces/ai-config-demo/plugins/demo/plugin.md",
+            "mutated",
+        )
+
+        with pytest.raises(ValueError, match="symlink"):
+            result.write_to(output)
+
+        assert sentinel.read_text() == "outside"
+        assert not (external / "demo/plugin.md").exists()
+        if symlink_parent.name == "plugins":
+            assert retained.read_text() == "inside"

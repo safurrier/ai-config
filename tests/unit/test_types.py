@@ -126,13 +126,11 @@ class TestConversionConfig:
             targets=("codex", "cursor"),
             scope="user",
             output_dir="/tmp/converted",
-            commands_as_skills=True,
         )
         assert config.enabled is True
         assert config.targets == ("codex", "cursor")
         assert config.scope == "user"
         assert config.output_dir == "/tmp/converted"
-        assert config.commands_as_skills is True
 
     def test_empty_targets_raises(self) -> None:
         """Empty targets should raise ValueError."""

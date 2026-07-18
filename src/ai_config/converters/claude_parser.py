@@ -34,6 +34,21 @@ from ai_config.converters.ir import (
 )
 
 
+def normalize_portable_name(value: str, fallback_prefix: str, max_len: int | None = None) -> str:
+    """Normalize one source identity to the converter's portable kebab-case key."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+
+    if max_len is not None and len(slug) > max_len:
+        slug = slug[:max_len].rstrip("-")
+
+    if not slug:
+        digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
+        slug = f"{fallback_prefix}-{digest}"
+
+    return slug
+
+
 class ClaudePluginParser:
     """Parses Claude Code plugins into IR format."""
 
@@ -277,17 +292,7 @@ class ClaudePluginParser:
 
     def _slugify(self, value: str, fallback_prefix: str, max_len: int | None = None) -> str:
         """Normalize names to lowercase kebab-case with safe fallback."""
-        slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower())
-        slug = re.sub(r"-+", "-", slug).strip("-")
-
-        if max_len is not None and len(slug) > max_len:
-            slug = slug[:max_len].rstrip("-")
-
-        if not slug:
-            digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
-            slug = f"{fallback_prefix}-{digest}"
-
-        return slug
+        return normalize_portable_name(value, fallback_prefix, max_len)
 
     def _parse_allowed_tools(self, value: Any) -> list[str] | None:
         """Parse allowed-tools field."""

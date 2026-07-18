@@ -1,51 +1,73 @@
 # Conversion
 
-Convert Claude Code plugins to work with other AI coding tools.
+Convert Claude Code plugins to other AI coding tools.
 
-## Overview
+## Targets
 
-The `convert` command takes a Claude Code plugin directory and produces equivalent configuration for other tools. Supported targets:
-
-| Target | Tool | Output |
-|--------|------|--------|
-| `codex` | OpenAI Codex | `.codex/skills/` plus `.codex/` config, prompts, and hooks |
-| `cursor` | Cursor | `.cursor/` dir with rules + MCP config |
-| `opencode` | OpenCode | `opencode.json` + `.opencode/` skills dir |
-| `pi` | Pi | `.pi/` dir with skills, prompt templates, and extensions |
-
-Each target gets the closest equivalent of your plugin's skills, commands, hooks, MCP servers, and LSP servers — with diagnostics when something can't convert cleanly.
-
-### Codex output is loose-file output
-
-The production `codex` target writes skills and shared Codex config files. It does not create an
-installable `.codex-plugin/plugin.json` package or marketplace entry. The experimental package
-fixture used for the [current compatibility baseline](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md#pluginpackage-contract)
-is test-only and is not registered as a conversion target. Selecting `codex` keeps the existing
-loose-file behavior.
-
-## Quick Start
-
-Convert a plugin to all targets:
-
-```bash
-ai-config convert ./my-plugin
-```
-
-Convert to a specific target:
+| Target | Output |
+|---|---|
+| `codex` | installable Codex packages and local marketplaces under `.ai-config/codex/marketplaces/` |
+| `cursor` | `.cursor/` skills, commands, hooks, and MCP config |
+| `opencode` | `.opencode/` skills plus `opencode.json` / `opencode.lsp.json` |
+| `pi` | `.pi/` project or `.pi/agent/` user skills, prompts, and extensions |
 
 ```bash
 ai-config convert ./my-plugin --target codex
-```
-
-Preview without writing files:
-
-```bash
 ai-config convert ./my-plugin --dry-run
+ai-config convert ./my-plugin --target all --report ./report.json
 ```
 
-## Sync-Driven Conversion
+## Codex packages (breaking in 0.6.0)
 
-Instead of running `convert` manually, you can configure automatic conversion in your config file. Every time `ai-config sync` runs, it converts all synced plugins to the specified targets.
+The `codex` target no longer writes loose `.codex/skills`, prompts, hooks, or MCP tables. It emits
+one self-contained package and local marketplace for each source plugin:
+
+```text
+.ai-config/codex/marketplaces/ai-config-my-plugin/
+├── .agents/plugins/marketplace.json
+└── plugins/my-plugin/
+    ├── .codex-plugin/plugin.json
+    ├── skills/
+    │   ├── my-skill/SKILL.md
+    │   └── command-my-command/SKILL.md
+    └── hooks/hooks.json
+```
+
+The package manifest contains supported MCP server declarations. Referenced hook support scripts
+are copied into the package, and `${CLAUDE_PLUGIN_ROOT}` becomes Codex's `${PLUGIN_ROOT}`.
+Target-native files under `targets/codex/` are copied into the package root.
+
+`ai-config convert` only generates package sources. A configured `ai-config sync` also registers
+each generated local marketplace and installs or refreshes the plugin through `codex plugin`.
+Codex owns its installed cache and enablement in `CODEX_HOME`; ai-config does not imitate that
+layout or rewrite unrelated Codex settings.
+
+### Migration from 0.5.x
+
+1. Remove `commands_as_skills` from conversion config and `--commands-as-skills` from scripts.
+   Commands now always become package skills. Commands with Claude argument variables are reported
+   as degraded.
+2. Run `ai-config sync --dry-run`, then `ai-config sync --force-convert`.
+3. Confirm the generated package with `ai-config doctor --target codex <output-dir>` and
+   `codex plugin list --json`.
+4. Review old `.codex/skills`, `.codex/prompts`, `.codex/hooks.json`, and generated MCP entries.
+   Doctor reports possible stale output, but ai-config does not delete it because it cannot prove
+   whether a loose file is user-authored.
+5. Remove only legacy files you recognize as old ai-config output.
+
+Each generated marketplace name is `ai-config-<normalized-plugin>` and each installed selector is
+`<normalized-plugin>@ai-config-<normalized-plugin>`. The normalized identity from the source
+manifest is used consistently for package paths, both manifests, ownership, Codex CLI selectors,
+and drift checks. Two configured sources that normalize to the same identity fail before files or
+runtime state change.
+
+Source package versions must be valid SemVer 2.0.0 values such as `1.2.3` or `1.2.3-rc.1`.
+Same-version content refreshes are allowed, upgrades are applied, and ownership/runtime downgrades
+fail closed with a remediation message. ai-config records only owned entries in
+`.ai-config/codex/ownership.json`. Removal and update are limited to that state. A collision with an
+unrelated marketplace or plugin fails without mutation.
+
+## Sync-driven conversion
 
 ```yaml
 version: 1
@@ -56,148 +78,75 @@ targets:
         my-plugins:
           source: github
           repo: myorg/my-plugins
-
       plugins:
         - id: my-tool@my-plugins
           scope: user
           enabled: true
-
       conversion:
         enabled: true
-        targets:
-          - codex
-          - cursor
-        scope: project
+        targets: [codex, cursor]
+        scope: user
 ```
 
-With this config, `ai-config sync` installs your Claude plugins and then converts them to Codex and Cursor format.
+`scope` selects the default output root (`~` for user, the current project for project). A custom
+`output_dir` overrides it. Codex package paths remain under that root's `.ai-config/codex/` tree.
 
-## Target-Native Files
-
-Most plugin content should flow through the normal converter. When a target needs hand-written files that cannot be generated cleanly, place them under `targets/<target>/` in the plugin source:
-
-```text
-my-plugin/
-├── .claude-plugin/plugin.json
-├── skills/my-skill/SKILL.md
-└── targets/pi/extensions/my-plugin-hooks.ts
-```
-
-Target-native files are copied into that target's generated output using the target's natural config root. For example, with Pi user scope:
-
-```text
-targets/pi/extensions/my-plugin-hooks.ts
-  -> ~/.pi/agent/extensions/my-plugin-hooks.ts
-```
-
-With Pi project scope, the same source file writes to `.pi/extensions/my-plugin-hooks.ts`.
-
-If a target-native file has the same output path as generated converter output, the target-native file wins over the generated file and the conversion report records the override. Existing target-specific write behavior still applies when writing to disk; for example, Codex `config.toml` and `hooks.json` outputs are merged with existing local config instead of clobbering it. Use target-native files for target-specific glue such as custom Pi TypeScript extensions; prefer generated output for ordinary skills, commands, MCP config, and hooks.
-
-### Conversion Config Fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable/disable conversion |
-| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
-| `scope` | string | `"project"` | `"user"` (home dir) or `"project"` (cwd). Codex Agent Skills are discovered from `.codex/skills`; MCP/hooks may need user-scope output or manual merge into `CODEX_HOME` depending on runtime trust/config loading. |
-| `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
-| `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
-
-## Component Mapping
-
-How each plugin component maps to target tools:
+## Component mapping
 
 | Component | Codex | Cursor | OpenCode | Pi |
-|-----------|-------|--------|----------|----|
-| Skills | `.codex/skills/*/SKILL.md` | `.cursor/skills/*/SKILL.md` | `.opencode/skills/*/SKILL.md` | `.pi/skills/*/SKILL.md` or `.pi/agent/skills/*/SKILL.md` |
-| Commands | Prompts or skills | Commands | Prompts | Prompt templates |
-| Hooks | `.codex/hooks.json` + `features.codex_hooks` for supported command hooks | Hooks config | Unsupported | TypeScript extension emulation |
-| MCP servers | `.codex/config.toml` `[mcp_servers.*]` | `.cursor/mcp.json` | `opencode.json` | Unsupported |
-| LSP servers | Unsupported | Unsupported | `opencode.lsp.json` | Unsupported |
-| Agents | Unsupported | Unsupported | Unsupported | Unsupported |
+|---|---|---|---|---|
+| Skills | package-local native skill | skill | skill | skill |
+| Commands | package skill; degraded with Claude variables | command | command | prompt template |
+| Hooks | supported command hooks in package | hooks config | unsupported | extension emulation |
+| MCP | package manifest `mcpServers` | `.cursor/mcp.json` | `opencode.json` | unsupported |
+| LSP | unsupported | unsupported | `opencode.lsp.json` | unsupported |
+| Agents | unsupported | unsupported | unsupported | unsupported |
 
-**Mapping fidelity levels:**
+Reports classify each component independently as native, transform, emulate, fallback/degraded, or
+unsupported. One target's mapping never changes another target's report.
 
-- **Native** — direct 1:1 equivalent exists
-- **Transform** — config/schema conversion required
-- **Emulate** — wrapped via a fallback mechanism
-- **Fallback** — degraded to prompt or plain text
-- **Unsupported** — no equivalent in the target
+## Target-native files
 
-## Options Reference
+Put hand-written files under `targets/<target>/`. They are copied into the target's natural output
+root and override a generated file at the same path. For Codex, the natural root is the generated
+plugin package—not shared `.codex` config.
 
-```
-ai-config convert PLUGIN_PATH [OPTIONS]
-```
+## Options
 
 | Option | Description |
-|--------|-------------|
-| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `pi`, `all` (default: `all`) |
-| `-o, --output DIR` | Output directory (default: based on `--scope`) |
-| `--scope SCOPE` | `user` or `project` — controls default output path |
-| `--dry-run` | Preview changes without writing files |
-| `--best-effort` | Continue even if some components fail to convert |
-| `--format FORMAT` | Console output: `summary` (default), `markdown`, `json` |
-| `--report PATH` | Write conversion report to a file |
-| `--report-format FORMAT` | Report file format: `json` (default) or `markdown` |
-| `--commands-as-skills` | Convert commands to skills instead of prompts (Codex) |
+|---|---|
+| `-t, --target` | repeatable `codex`, `cursor`, `opencode`, `pi`, or `all` |
+| `-o, --output` | output root |
+| `--scope` | `user` or `project` default output root |
+| `--dry-run` | report package/files without writing or invoking lifecycle commands |
+| `--best-effort` | continue other target conversion after component errors |
+| `--format` | `summary`, `markdown`, or `json` |
+| `--report`, `--report-format` | write JSON or Markdown report |
 
-Multiple targets can be specified:
-
-```bash
-ai-config convert ./my-plugin -t codex -t cursor
-```
-
-## Validating Output
-
-After conversion, use `doctor` to validate the output:
+## Validation and cache
 
 ```bash
 ai-config doctor --target codex ./output-dir
 ai-config doctor --target all ./output-dir
-```
-
-This checks that the converted files have valid structure, required fields, and correct naming conventions for each target tool.
-
-## Conversion Cache
-
-Sync-driven conversion uses content hashing to skip re-conversion when plugin sources haven't changed.
-
-`--force` does a full rebuild (clears plugin cache + re-converts everything):
-
-```bash
-ai-config sync --force
-```
-
-`--force-convert` re-converts without clearing the plugin cache (useful after adding a new target or updating the converter):
-
-```bash
 ai-config sync --force-convert
 ```
 
-## Examples
+Sync hashes plugin source, conversion settings, and owned generated marketplace bytes. A cache hit
+is accepted only while the package and marketplace still exist without symlinks and match the saved
+fingerprint, so normal sync repairs deleted or tampered output. Dry-run and JSON output distinguish
+planned, completed, and failed actions. `status --config ... --json` exits non-zero when lifecycle
+planning finds a non-no-op action or an inspection error.
 
-### Convert a local plugin to Codex
+Configured sources are tracked separately as desired, temporarily unavailable, or disabled. A
+temporarily unavailable source retains prior ownership; a disabled/removed source is cleaned up.
+Removing or disabling the Codex target also reconciles prior owned roots, including a prior custom
+`output_dir` recorded in the conversion cache.
 
-```bash
-ai-config convert ./my-plugin --target codex --scope project
-```
-
-Creates `.codex/skills/` for Codex Agent Skills and `.codex/config.toml` / `.codex/hooks.json` when MCP servers or supported hooks are present. The project-scope `.codex/` files are validated fragments; for active Codex MCP/hook behavior, merge them into the active `CODEX_HOME` or run with an explicit `CODEX_HOME` that points at the generated config.
-
-### Convert to all targets with a report
-
-```bash
-ai-config convert ./my-plugin --report ./report.json
-```
-
-Converts to all targets and writes a JSON report with component mappings and diagnostics.
-
-### Dry run with detailed output
-
-```bash
-ai-config convert ./my-plugin --dry-run --format markdown
-```
-
-Shows what would be created in Markdown format without writing any files.
+Every Codex subprocess has a finite timeout. On POSIX, each command starts in a separate process
+group; after a bounded SIGTERM grace period, timeout cleanup inspects and kills any remaining group
+even when the direct child exited first, then performs a bounded reap of the direct child. Non-POSIX
+platforms receive direct-child timeout cleanup only; ai-config 0.6.0 does not claim descendant
+cleanup there. The adapter accepts only the
+validated Codex 0.144.x JSON contract: malformed, partial, duplicate, inconsistent, or unknown
+version responses fail closed. Lifecycle failures retain ownership for retry, sanitize child output,
+name the exact stage and command, include remediation, and report completed and failed actions.

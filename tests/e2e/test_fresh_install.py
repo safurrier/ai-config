@@ -87,9 +87,7 @@ class TestFreshInstall:
             "claude plugin marketplace list --json",
         )
         assert exit_code == 0, f"claude plugin marketplace list failed: {output}"
-        assert "test-marketplace" in output, (
-            f"test-marketplace not in marketplace list: {output}"
-        )
+        assert "test-marketplace" in output, f"test-marketplace not in marketplace list: {output}"
 
         # Verify plugin is installed
         exit_code, output = exec_in_container(

@@ -77,9 +77,7 @@ class TestWatchConfigCollection:
 class TestWatchLoop:
     """Tests for the watch loop with real file operations."""
 
-    def test_detects_config_modification(
-        self, config_with_local_plugin: tuple[Path, Path]
-    ) -> None:
+    def test_detects_config_modification(self, config_with_local_plugin: tuple[Path, Path]) -> None:
         """Watch loop detects config file modifications."""
         config_path, plugin_dir = config_with_local_plugin
 
@@ -209,9 +207,7 @@ class TestWatchLoop:
 class TestWatchCLI:
     """Tests for watch CLI command."""
 
-    def test_cli_displays_watched_paths(
-        self, config_with_local_plugin: tuple[Path, Path]
-    ) -> None:
+    def test_cli_displays_watched_paths(self, config_with_local_plugin: tuple[Path, Path]) -> None:
         """CLI displays which paths are being watched."""
         from click.testing import CliRunner
 
@@ -222,9 +218,7 @@ class TestWatchCLI:
 
         # Mock run_watch_loop to avoid blocking
         with patch("ai_config.watch.run_watch_loop"):
-            result = runner.invoke(
-                main, ["watch", "-c", str(config_path)], catch_exceptions=False
-            )
+            result = runner.invoke(main, ["watch", "-c", str(config_path)], catch_exceptions=False)
 
             # Should display paths even if loop is mocked
             assert "Watching:" in result.output

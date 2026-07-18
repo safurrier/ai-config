@@ -111,7 +111,6 @@ conversion:
     - pi
   scope: project
   output_dir: ./converted    # optional
-  commands_as_skills: false   # optional
 ```
 
 **Fields:**
@@ -122,9 +121,12 @@ conversion:
 | `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
 | `scope` | string | `"project"` | `"user"` (writes to home dir) or `"project"` (writes to cwd) |
 | `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
-| `commands_as_skills` | bool | `false` | Convert commands to skills instead of prompts (Codex-specific) |
 
 When `output_dir` is not set, output goes to the home directory (`~`) for `user` scope or the current directory for `project` scope.
+
+For Codex conversion, the source plugin's `.claude-plugin/plugin.json` identity is normalized once
+and used for every generated path and runtime selector. Source `version` values must use SemVer
+2.0.0. Configured sources that normalize to the same Codex identity fail before mutation.
 
 See [Conversion](conversion.md) for a full guide on what gets converted and how.
 
@@ -177,7 +179,6 @@ targets:
           - opencode
           - pi
         scope: project
-        commands_as_skills: false
 ```
 
 ## Environment Variables

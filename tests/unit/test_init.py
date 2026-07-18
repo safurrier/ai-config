@@ -853,11 +853,13 @@ class TestGoBack:
 
     def test_go_back_from_overwrite_returns_to_config_location(self) -> None:
         """Escape at overwrite → re-prompts config location."""
-        p = ScriptedPrompter([
-            ".ai-config/config.yaml (this project)",  # config location
-            GO_BACK,  # overwrite confirm → go back
-            GO_BACK,  # config location again → cancel
-        ])
+        p = ScriptedPrompter(
+            [
+                ".ai-config/config.yaml (this project)",  # config location
+                GO_BACK,  # overwrite confirm → go back
+                GO_BACK,  # config location again → cancel
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("pathlib.Path.exists", return_value=True),
@@ -869,11 +871,13 @@ class TestGoBack:
 
     def test_go_back_from_marketplace_no_marketplaces_returns_to_config(self) -> None:
         """Escape at marketplace source (empty) goes back to config location."""
-        p = ScriptedPrompter([
-            "~/.ai-config/config.yaml (global)",  # config location (non-existent path)
-            GO_BACK,  # marketplace source → go back to step 0
-            GO_BACK,  # config location → cancel
-        ])
+        p = ScriptedPrompter(
+            [
+                "~/.ai-config/config.yaml (global)",  # config location (non-existent path)
+                GO_BACK,  # marketplace source → go back to step 0
+                GO_BACK,  # config location → cancel
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), prompter=p)
         assert result is None
@@ -881,12 +885,14 @@ class TestGoBack:
     def test_go_back_from_repo_entry_returns_to_marketplace_source(self, tmp_path: Path) -> None:
         """Escape at repo entry → re-prompts marketplace source, then skip finishes."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",  # marketplace source
-            GO_BACK,  # repo entry → back to source
-            "Skip (no more marketplaces)",  # skip
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",  # marketplace source
+                GO_BACK,  # repo entry → back to source
+                "Skip (no more marketplaces)",  # skip
+                True,  # confirm write
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), output_path=output, prompter=p)
         assert result is not None
@@ -895,13 +901,15 @@ class TestGoBack:
     def test_go_back_from_plugin_selection_removes_marketplace(self, tmp_path: Path) -> None:
         """Escape at plugin checkbox removes marketplace and goes back to source."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",  # marketplace source
-            "owner/repo",  # repo text
-            GO_BACK,  # plugin checkbox → go back (removes marketplace)
-            "Skip (no more marketplaces)",  # skip
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",  # marketplace source
+                "owner/repo",  # repo text
+                GO_BACK,  # plugin checkbox → go back (removes marketplace)
+                "Skip (no more marketplaces)",  # skip
+                True,  # confirm write
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -919,17 +927,19 @@ class TestGoBack:
     def test_go_back_from_scope_returns_to_plugin_selection(self, tmp_path: Path) -> None:
         """Escape at scope selection → re-shows plugin checkbox."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",  # marketplace source
-            "owner/repo",  # repo text
-            ["p1"],  # plugin checkbox (1st)
-            GO_BACK,  # scope select → back to plugins
-            ["p1"],  # plugin checkbox (2nd — re-shown)
-            "user - Available in all projects (~/.claude/plugins/)",  # scope
-            False,  # add another? no
-            False,  # conversion? no
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",  # marketplace source
+                "owner/repo",  # repo text
+                ["p1"],  # plugin checkbox (1st)
+                GO_BACK,  # scope select → back to plugins
+                ["p1"],  # plugin checkbox (2nd — re-shown)
+                "user - Available in all projects (~/.claude/plugins/)",  # scope
+                False,  # add another? no
+                False,  # conversion? no
+                True,  # confirm write
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -949,15 +959,17 @@ class TestGoBack:
     def test_go_back_from_add_another_removes_marketplace_and_plugins(self, tmp_path: Path) -> None:
         """Escape at 'add another?' undoes the marketplace and its plugins."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",  # marketplace source
-            "owner/repo",  # repo text
-            ["p1"],  # plugin checkbox
-            "user - Available in all projects (~/.claude/plugins/)",  # scope
-            GO_BACK,  # add another? → undo marketplace+plugins
-            "Skip (no more marketplaces)",  # now skip
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",  # marketplace source
+                "owner/repo",  # repo text
+                ["p1"],  # plugin checkbox
+                "user - Available in all projects (~/.claude/plugins/)",  # scope
+                GO_BACK,  # add another? → undo marketplace+plugins
+                "Skip (no more marketplaces)",  # now skip
+                True,  # confirm write
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -975,16 +987,18 @@ class TestGoBack:
     def test_go_back_from_conversion_re_prompts_conversion(self, tmp_path: Path) -> None:
         """Escape at conversion → re-prompts conversion (preserves marketplaces)."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",
-            "owner/repo",
-            ["p1"],
-            "user - Available in all projects (~/.claude/plugins/)",
-            False,  # add another? no
-            GO_BACK,  # conversion prompt → re-prompt conversion
-            False,  # conversion? no (second time)
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",
+                "owner/repo",
+                ["p1"],
+                "user - Available in all projects (~/.claude/plugins/)",
+                False,  # add another? no
+                GO_BACK,  # conversion prompt → re-prompt conversion
+                False,  # conversion? no (second time)
+                True,  # confirm write
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -1002,17 +1016,19 @@ class TestGoBack:
     def test_go_back_from_confirm_write_returns_to_conversion(self, tmp_path: Path) -> None:
         """Escape at confirm-write goes back to conversion step."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",
-            "owner/repo",
-            ["p1"],
-            "user - Available in all projects (~/.claude/plugins/)",
-            False,  # add another? no
-            False,  # conversion? no
-            GO_BACK,  # confirm write → back to conversion
-            False,  # conversion? no (second time)
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",
+                "owner/repo",
+                ["p1"],
+                "user - Available in all projects (~/.claude/plugins/)",
+                False,  # add another? no
+                False,  # conversion? no
+                GO_BACK,  # confirm write → back to conversion
+                False,  # conversion? no (second time)
+                True,  # confirm write
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -1031,12 +1047,14 @@ class TestGoBack:
     ) -> None:
         """Escape at confirm-write (no plugins) goes back to marketplace loop."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "Skip (no more marketplaces)",  # first pass
-            GO_BACK,  # confirm write → back to marketplace
-            "Skip (no more marketplaces)",  # second pass
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                "Skip (no more marketplaces)",  # first pass
+                GO_BACK,  # confirm write → back to marketplace
+                "Skip (no more marketplaces)",  # second pass
+                True,  # confirm write
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), output_path=output, prompter=p)
         assert result is not None
@@ -1045,10 +1063,12 @@ class TestGoBack:
     def test_ctrl_c_still_cancels(self, tmp_path: Path) -> None:
         """None return (Ctrl+C) cancels the wizard at any point."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",
-            None,  # Ctrl+C at repo entry
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",
+                None,  # Ctrl+C at repo entry
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), output_path=output, prompter=p)
         assert result is None
@@ -1056,20 +1076,22 @@ class TestGoBack:
     def test_go_back_from_sync_returns_to_confirm(self, tmp_path: Path) -> None:
         """Escape at run-sync → re-prompts confirm-write."""
         output = tmp_path / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "GitHub repository",
-            "owner/repo",
-            ["p1"],
-            "user - Available in all projects (~/.claude/plugins/)",
-            False,  # add another? no
-            True,  # conversion? yes
-            ["codex"],  # target checkbox
-            False,  # custom dir? no
-            True,  # confirm write
-            GO_BACK,  # run sync? → back to confirm write
-            True,  # confirm write (again)
-            True,  # run sync? yes
-        ])
+        p = ScriptedPrompter(
+            [
+                "GitHub repository",
+                "owner/repo",
+                ["p1"],
+                "user - Available in all projects (~/.claude/plugins/)",
+                False,  # add another? no
+                True,  # conversion? yes
+                ["codex"],  # target checkbox
+                False,  # custom dir? no
+                True,  # confirm write
+                GO_BACK,  # run sync? → back to confirm write
+                True,  # confirm write (again)
+                True,  # run sync? yes
+            ]
+        )
         with (
             patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")),
             patch("ai_config.init.parse_github_repo", return_value="owner/repo"),
@@ -1093,10 +1115,12 @@ class TestPromptPathWithSearch:
         """Environment variables in manually entered path are expanded."""
         monkeypatch.setenv("DOTS_REPO", str(tmp_path / "dots"))
         console = Console(quiet=True)
-        p = ScriptedPrompter([
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            "$DOTS_REPO/plugins",  # manual path text
-        ])
+        p = ScriptedPrompter(
+            [
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                "$DOTS_REPO/plugins",  # manual path text
+            ]
+        )
         result = prompt_path_with_search(console, p)
         assert isinstance(result, _ResolvedPath)
         assert "$" not in str(result.resolved)
@@ -1107,10 +1131,12 @@ class TestPromptPathWithSearch:
     def test_expands_tilde_in_manual_path(self) -> None:
         """Tilde in manually entered path is expanded."""
         console = Console(quiet=True)
-        p = ScriptedPrompter([
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            "~/my-plugins",  # manual path text
-        ])
+        p = ScriptedPrompter(
+            [
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                "~/my-plugins",  # manual path text
+            ]
+        )
         result = prompt_path_with_search(console, p)
         assert isinstance(result, _ResolvedPath)
         assert "~" not in str(result.resolved)
@@ -1142,17 +1168,19 @@ class TestMarketplaceAutoDiscovery:
         mp_dir = tmp_path / "config" / "plugins"
         self._make_marketplace(mp_dir, "my-plugins", ["p1"])
 
-        p = ScriptedPrompter([
-            ".ai-config/config.yaml (this project)",  # config location
-            "Local directory",  # marketplace source
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            str(tmp_path),  # enter repo root path
-            ["p1"],  # plugin checkbox
-            "user - Available in all projects (~/.claude/plugins/)",  # scope
-            False,  # add another marketplace? no
-            False,  # conversion? no
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                ".ai-config/config.yaml (this project)",  # config location
+                "Local directory",  # marketplace source
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                str(tmp_path),  # enter repo root path
+                ["p1"],  # plugin checkbox
+                "user - Available in all projects (~/.claude/plugins/)",  # scope
+                False,  # add another marketplace? no
+                False,  # conversion? no
+                True,  # confirm write
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), prompter=p)
         assert result is not None
@@ -1174,16 +1202,18 @@ class TestMarketplaceAutoDiscovery:
 
         # Use a tmp output path to avoid overwrite prompt for existing config
         output_path = tmp_path / "output" / ".ai-config" / "config.yaml"
-        p = ScriptedPrompter([
-            "Local directory",
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            "$MY_REPO",  # env var as path
-            ["p1"],
-            "user - Available in all projects (~/.claude/plugins/)",
-            False,
-            False,
-            True,
-        ])
+        p = ScriptedPrompter(
+            [
+                "Local directory",
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                "$MY_REPO",  # env var as path
+                ["p1"],
+                "user - Available in all projects (~/.claude/plugins/)",
+                False,
+                False,
+                True,
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), output_path=output_path, prompter=p)
         assert result is not None
@@ -1197,18 +1227,20 @@ class TestMarketplaceAutoDiscovery:
         self._make_marketplace(mp1_dir, "first-mp", ["p1"])
         self._make_marketplace(mp2_dir, "second-mp", ["p2"])
 
-        p = ScriptedPrompter([
-            ".ai-config/config.yaml (this project)",  # config location
-            "Local directory",  # marketplace source
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            str(tmp_path),  # enter repo root path
-            str(mp1_dir),  # select first marketplace from auto-discovery
-            ["p1"],  # plugin checkbox
-            "user - Available in all projects (~/.claude/plugins/)",  # scope
-            False,  # add another marketplace? no
-            False,  # conversion? no
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                ".ai-config/config.yaml (this project)",  # config location
+                "Local directory",  # marketplace source
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                str(tmp_path),  # enter repo root path
+                str(mp1_dir),  # select first marketplace from auto-discovery
+                ["p1"],  # plugin checkbox
+                "user - Available in all projects (~/.claude/plugins/)",  # scope
+                False,  # add another marketplace? no
+                False,  # conversion? no
+                True,  # confirm write
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), prompter=p)
         assert result is not None
@@ -1219,17 +1251,19 @@ class TestMarketplaceAutoDiscovery:
         """When user provides exact marketplace path, no search is needed."""
         self._make_marketplace(tmp_path, "direct-mp", ["p1"])
 
-        p = ScriptedPrompter([
-            ".ai-config/config.yaml (this project)",  # config location
-            "Local directory",  # marketplace source
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            str(tmp_path),  # this IS the marketplace dir
-            ["p1"],  # plugin checkbox
-            "user - Available in all projects (~/.claude/plugins/)",  # scope
-            False,  # add another marketplace? no
-            False,  # conversion? no
-            True,  # confirm write
-        ])
+        p = ScriptedPrompter(
+            [
+                ".ai-config/config.yaml (this project)",  # config location
+                "Local directory",  # marketplace source
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                str(tmp_path),  # this IS the marketplace dir
+                ["p1"],  # plugin checkbox
+                "user - Available in all projects (~/.claude/plugins/)",  # scope
+                False,  # add another marketplace? no
+                False,  # conversion? no
+                True,  # confirm write
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), prompter=p)
         assert result is not None
@@ -1240,15 +1274,17 @@ class TestMarketplaceAutoDiscovery:
         """When no marketplaces found in subdirs, proceeds with original path."""
         (tmp_path / "some-dir").mkdir()  # no marketplace.json anywhere
 
-        p = ScriptedPrompter([
-            ".ai-config/config.yaml (this project)",  # config location
-            "Local directory",  # marketplace source
-            "Enter a different path (local path, env var like $MY_REPO, etc.)",
-            str(tmp_path),  # repo root with no marketplaces
-            "empty-mp",  # marketplace name (prompted because no manifest found)
-            False,  # add another marketplace? no (no plugins found, but still asked)
-            True,  # confirm write (no conversion prompt — skipped since no plugins)
-        ])
+        p = ScriptedPrompter(
+            [
+                ".ai-config/config.yaml (this project)",  # config location
+                "Local directory",  # marketplace source
+                "Enter a different path (local path, env var like $MY_REPO, etc.)",
+                str(tmp_path),  # repo root with no marketplaces
+                "empty-mp",  # marketplace name (prompted because no manifest found)
+                False,  # add another marketplace? no (no plugins found, but still asked)
+                True,  # confirm write (no conversion prompt — skipped since no plugins)
+            ]
+        )
         with patch("ai_config.init.check_claude_cli", return_value=(True, "1.0.0")):
             result = run_init_wizard(self._console(), prompter=p)
         assert result is not None

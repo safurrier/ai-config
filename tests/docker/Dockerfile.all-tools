@@ -41,8 +41,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # 1. Claude Code - npm package (well-established)
 RUN npm install -g @anthropic-ai/claude-code
 
-# 2. OpenAI Codex - npm package
-RUN npm install -g @openai/codex || echo "Codex install failed - may not be published yet"
+# 2. OpenAI Codex - pinned package contract for reproducible plugin lifecycle E2E.
+# The separate latest-Codex workflow lane resolves the registry tag at execution time.
+ARG CODEX_VERSION=0.144.5
+RUN npm install -g "@openai/codex@${CODEX_VERSION}"
 
 # 3. OpenCode - npm package (opencode-ai)
 # Per opencode.ai docs: npm install -g opencode-ai

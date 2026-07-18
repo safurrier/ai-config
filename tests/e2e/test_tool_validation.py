@@ -147,123 +147,50 @@ class TestClaudeToolValidation:
 
 @pytest.mark.slow
 class TestCodexToolValidation:
-    """Validate Codex CLI recognizes converted plugins.
+    """Validate pinned Codex discovers generated packages through its real CLI."""
 
-    Codex introspection commands discovered:
-    - codex --version: Check installation
-    - codex mcp list: List configured MCP servers
-    - codex features list: List feature flags
-    - Config: ~/.codex/config.toml (TOML format)
-    - Skills: ~/.codex/skills/ directory
-    """
+    def test_codex_pinned_version(self, all_tools_container: Container) -> None:
+        exit_code, output = exec_in_container(all_tools_container, "codex --version")
+        assert exit_code == 0, f"Codex CLI not available: {output}"
+        assert "0.144.5" in output
 
-    def test_codex_version_check(self, all_tools_container: Container) -> None:
-        """Test Codex CLI is installed and accessible."""
+    def test_generated_package_full_lifecycle(self, all_tools_container: Container) -> None:
+        """The pinned all-tools lane proves install, discovery, update, and removal."""
         exit_code, output = exec_in_container(
             all_tools_container,
-            "codex --version",
+            "codex_bin=$(command -v codex) && "
+            "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
+            "uv run python tests/probes/probe_codex_plugin_package.py "
+            '--codex "$codex_bin" --expected-version 0.144.5',
         )
-        # If Codex is installed, version should return 0
-        if exit_code != 0:
-            pytest.skip(f"Codex CLI not available: {output}")
+        assert exit_code == 0, f"Codex package lifecycle probe failed: {output}"
+        assert '"result": "passed"' in output
+        assert "unrelated-state-preservation" in output
 
-        assert "codex" in output.lower() or exit_code == 0
-
-    def test_codex_skills_directory_recognized(self, all_tools_container: Container) -> None:
-        """Test Codex recognizes skills in .codex/skills/ after conversion."""
-        # Convert a test plugin to Codex format
+    def test_public_sync_full_lifecycle(self, all_tools_container: Container) -> None:
+        """The public command owns register/install/update/repair/remove convergence."""
         exit_code, output = exec_in_container(
             all_tools_container,
-            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-            "-t codex -o /tmp/codex-test",
+            "codex_bin=$(command -v codex) && "
+            "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
+            "uv run python tests/probes/probe_ai_config_sync_codex.py "
+            '--codex "$codex_bin"',
         )
-        assert exit_code == 0, f"Conversion failed: {output}"
+        assert exit_code == 0, f"Public ai-config sync lifecycle probe failed: {output}"
+        assert '"result": "passed"' in output
+        assert "status-drift-reporting" in output
+        assert "owned-removal" in output
 
-        # Verify skills directory was created
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "ls /tmp/codex-test/.codex/skills/",
-        )
-        assert exit_code == 0, f"Skills directory not created: {output}"
-        assert "dev-tools" in output  # Plugin ID should be in skill name
-
-        # Verify real Codex prompt construction discovers the converted Agent Skill.
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "codex -C /tmp/codex-test debug prompt-input 'test' | grep -q 'dev-tools-code-review'",
-        )
-        assert exit_code == 0, f"Codex did not discover converted skill: {output}"
-
-    def test_codex_mcp_config_valid_toml(self, all_tools_container: Container) -> None:
-        """Test Codex MCP config is valid TOML."""
-        # Convert plugin with MCP servers
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-            "-t codex -o /tmp/codex-mcp-test",
-        )
-        assert exit_code == 0, f"Conversion failed: {output}"
-
-        # Check if MCP config exists
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "cat /tmp/codex-mcp-test/.codex/config.toml 2>/dev/null || echo 'NO_MCP'",
-        )
-        if "NO_MCP" in output:
-            pytest.skip("Test plugin has no MCP servers")
-
-        # Validate TOML syntax with Python
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "python3 -c \"import tomllib; tomllib.load(open('/tmp/codex-mcp-test/.codex/config.toml', 'rb'))\"",
-        )
-        assert exit_code == 0, f"Invalid TOML: {output}"
-
-    def test_codex_mcp_list_command(self, all_tools_container: Container) -> None:
-        """Test codex mcp list recognizes converted MCP config.
-
-        Uses: codex mcp list
-        Expected: Should show configured servers or 'No MCP servers'
-        """
-        # Check if codex is available
-        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
-        if exit_code != 0:
-            pytest.skip("Codex CLI not available")
-
-        # Convert plugin with MCP servers to an isolated Codex home.
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "rm -rf /tmp/codex-home && mkdir -p /tmp/codex-home && "
-            "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-            "-t codex -o /tmp/codex-home",
-        )
-        assert exit_code == 0, f"Conversion failed: {output}"
-
-        # Run codex mcp list against the generated config.toml.
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "CODEX_HOME=/tmp/codex-home/.codex codex mcp list",
-        )
-        assert exit_code == 0, f"Unexpected error: {output}"
-        assert "dev-tools-database" in output or "dev-tools-github" in output
-
-    def test_codex_features_list_command(self, all_tools_container: Container) -> None:
-        """Test codex features list works after conversion.
-
-        Uses: codex features list
-        Expected: Should list feature flags and their states
-        """
-        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
-        if exit_code != 0:
-            pytest.skip("Codex CLI not available")
-
-        exit_code, output = exec_in_container(
-            all_tools_container,
-            "codex features list",
-        )
+    def test_codex_features_match_package_contract(self, all_tools_container: Container) -> None:
+        exit_code, output = exec_in_container(all_tools_container, "codex features list")
         assert exit_code == 0, f"Features list failed: {output}"
-        # Should contain some feature flags
-        assert "stable" in output or "beta" in output or "experimental" in output
+        for feature in ("hooks", "plugin_sharing", "plugins", "remote_plugin"):
+            row = next(
+                (line for line in output.splitlines() if line.split()[:1] == [feature]),
+                None,
+            )
+            assert row is not None, f"Codex feature {feature!r} missing from output:\n{output}"
+            assert "stable" in row and row.rstrip().endswith("true")
 
 
 @pytest.mark.slow
@@ -728,7 +655,7 @@ class TestCrossToolValidation:
         assert exit_code == 0, f"Conversion failed: {output}"
 
         # Verify all target directories exist
-        for target_dir in [".codex", ".cursor", ".opencode"]:
+        for target_dir in [".ai-config/codex", ".cursor", ".opencode"]:
             exit_code, _ = exec_in_container(
                 all_tools_container,
                 f"test -d /tmp/all-targets/{target_dir}",
@@ -971,119 +898,6 @@ class TestInteractiveClaudeSkillDiscovery:
 
         finally:
             cleanup_tmux_session(claude_container, session_name)
-
-
-@pytest.mark.slow
-class TestInteractiveCodexSkillDiscovery:
-    """Test Codex CLI discovers converted skills via interactive session.
-
-    Codex doesn't have a /skills command but we can verify:
-    1. Skills directory is read on startup
-    2. No errors when skills are present
-    """
-
-    def test_codex_starts_with_converted_skills_no_errors(
-        self, all_tools_container: Container
-    ) -> None:
-        """Test Codex starts without errors when converted skills are present.
-
-        This test:
-        1. Converts a test plugin to Codex format
-        2. Copies to Codex user directory
-        3. Starts Codex in tmux (briefly)
-        4. Verifies no startup errors related to skills
-        """
-        # Check if codex is available
-        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
-        if exit_code != 0:
-            pytest.skip("Codex CLI not available")
-
-        session_name = f"codex-skills-test-{int(time.time())}"
-
-        try:
-            # Convert plugin to Codex format
-            # Output to /home/testuser so .codex/skills/ gets created at the right location
-            exit_code, output = exec_in_container(
-                all_tools_container,
-                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-                "-t codex -o /home/testuser",
-            )
-            assert exit_code == 0, f"Conversion failed: {output}"
-
-            # Verify skills directory exists (emitter creates .codex/skills/ in output dir)
-            exit_code, output = exec_in_container(
-                all_tools_container,
-                "ls /home/testuser/.codex/skills/",
-            )
-            assert exit_code == 0, f"Skills directory not created: {output}"
-
-            # Use Codex's debug prompt-input command to prove skill discovery without API auth.
-            exec_in_container_tmux(
-                all_tools_container,
-                session_name,
-                "codex -C /home/testuser debug prompt-input 'test' | grep dev-tools-code-review",
-            )
-
-            time.sleep(3)
-            output = capture_tmux_pane(all_tools_container, session_name)
-
-            assert "dev-tools-code-review" in output, (
-                f"Expected Codex skill discovery, got: {output}"
-            )
-
-        finally:
-            cleanup_tmux_session(all_tools_container, session_name)
-
-    def test_codex_skill_files_accessible_in_tmux(self, all_tools_container: Container) -> None:
-        """Verify converted skill files are accessible via shell in tmux.
-
-        This follows the dots repo pattern of verifying files exist at expected paths.
-        Expected skill names from complete-plugin: dev-tools-code-review, dev-tools-test-writer
-        """
-        # Check if codex is available
-        exit_code, _ = exec_in_container(all_tools_container, "codex --version")
-        if exit_code != 0:
-            pytest.skip("Codex CLI not available")
-
-        session_name = f"codex-files-test-{int(time.time())}"
-
-        try:
-            # Convert plugin to Codex format
-            exit_code, output = exec_in_container(
-                all_tools_container,
-                "uv run ai-config convert tests/fixtures/sample-plugins/complete-plugin "
-                "-t codex -o /home/testuser",
-            )
-            assert exit_code == 0, f"Conversion failed: {output}"
-
-            # Check skills directory exists and list contents in tmux
-            exec_in_container_tmux(
-                all_tools_container,
-                session_name,
-                "ls -la /home/testuser/.codex/skills/",
-            )
-
-            time.sleep(2)
-            output = capture_tmux_pane(all_tools_container, session_name)
-
-            # Verify skill directories were created with plugin ID prefix
-            assert "dev-tools" in output, f"Expected dev-tools skills, got: {output}"
-
-            # Check a specific skill file exists
-            exec_in_container(
-                all_tools_container,
-                f"tmux send-keys -t {session_name} 'cat /home/testuser/.codex/skills/dev-tools-code-review/SKILL.md | head -5' Enter",
-            )
-            time.sleep(2)
-            output = capture_tmux_pane(all_tools_container, session_name)
-
-            # Verify skill content is readable
-            assert "SKILL.md" in output or "code" in output.lower() or "#" in output, (
-                f"Expected skill content, got: {output}"
-            )
-
-        finally:
-            cleanup_tmux_session(all_tools_container, session_name)
 
 
 @pytest.mark.slow
