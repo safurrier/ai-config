@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from ai_config.converters.claude_parser import normalize_portable_name
+from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import (
     BinaryFile,
     Command,
@@ -455,8 +456,6 @@ class CodexEmitter:
 
     def emit(self, ir: PluginIR) -> EmitResult:
         """Emit IR using Codex's installable plugin package contract."""
-        from ai_config.converters.codex_package import codex_package_spec
-
         result = EmitResult(target=self.target)
         try:
             spec = codex_package_spec(ir.identity.plugin_id, ir.identity.version, Path("."))
