@@ -158,9 +158,10 @@ class TestCodexToolValidation:
         """The pinned all-tools lane proves install, discovery, update, and removal."""
         exit_code, output = exec_in_container(
             all_tools_container,
+            "codex_bin=$(command -v codex) && "
             "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
             "uv run python tests/probes/probe_codex_plugin_package.py "
-            "--codex /usr/local/bin/codex --expected-version 0.144.5",
+            '--codex "$codex_bin" --expected-version 0.144.5',
         )
         assert exit_code == 0, f"Codex package lifecycle probe failed: {output}"
         assert '"result": "passed"' in output
@@ -170,9 +171,10 @@ class TestCodexToolValidation:
         """The public command owns register/install/update/repair/remove convergence."""
         exit_code, output = exec_in_container(
             all_tools_container,
+            "codex_bin=$(command -v codex) && "
             "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
             "uv run python tests/probes/probe_ai_config_sync_codex.py "
-            "--codex /usr/local/bin/codex",
+            '--codex "$codex_bin"',
         )
         assert exit_code == 0, f"Public ai-config sync lifecycle probe failed: {output}"
         assert '"result": "passed"' in output

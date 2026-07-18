@@ -45,6 +45,9 @@ platform_evidence=$(install_package \
   "$work/codex-platform.tgz")
 codex="$work/install/node_modules/@openai/codex/bin/codex.js"
 chmod +x "$codex"
+mkdir -p "$work/bin"
+ln -s "$codex" "$work/bin/codex"
+export PATH="$work/bin:$PATH"
 
 printf 'resolved_package=@openai/codex@%s\n' "$version"
 printf 'main_registry_tarball=%s\n' "$main_evidence"
