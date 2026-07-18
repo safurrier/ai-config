@@ -320,6 +320,45 @@ def test_temporarily_unavailable_source_retains_owned_state(tmp_path: Path) -> N
     assert spec.marketplace_path.is_dir()
 
 
+def test_incomplete_marketplace_removal_confirmation_retains_generated_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    responses = iter(
+        [
+            {
+                "marketplaces": [
+                    {
+                        "name": spec.marketplace_name,
+                        "root": str(spec.marketplace_path),
+                        "marketplaceSource": {
+                            "sourceType": "local",
+                            "source": str(spec.marketplace_path),
+                        },
+                    }
+                ]
+            },
+            {"installed": [], "available": []},
+            {"marketplaceName": spec.marketplace_name},
+        ]
+    )
+    monkeypatch.setattr(cli, "run_json", lambda *_args, **_kwargs: next(responses))
+
+    with pytest.raises(CodexLifecycleExecutionError) as caught:
+        sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=cli)
+
+    assert caught.value.failed_action is not None
+    assert caught.value.failed_action.action == "remove_codex_marketplace"
+    ownership = json.loads((tmp_path / CODEX_OWNERSHIP_FILE).read_text())
+    assert set(ownership["packages"]) == {spec.plugin_id}
+    assert (spec.marketplace_path / ".agents/plugins/marketplace.json").is_file(), (
+        "generated marketplace must remain retryable"
+    )
+
+
 def test_partial_cleanup_failure_reports_progress_and_retains_ownership(tmp_path: Path) -> None:
     spec = _package(tmp_path)
     _establish_ownership(spec, tmp_path)
@@ -351,6 +390,45 @@ def test_partial_cleanup_failure_reports_progress_and_retains_ownership(tmp_path
         "remove_codex_package",
     ]
     assert not spec.marketplace_path.exists()
+    assert not (tmp_path / CODEX_OWNERSHIP_FILE).exists()
+
+
+def test_symlinked_marketplace_ancestor_cannot_redirect_lifecycle_cleanup(
+    tmp_path: Path,
+) -> None:
+    spec = _package(tmp_path)
+    _establish_ownership(spec, tmp_path)
+    owned_path = spec.marketplace_path
+    marketplaces = owned_path.parent
+    external = tmp_path / "external"
+    external.mkdir()
+    external_package = external / spec.marketplace_name
+    owned_path.rename(external_package)
+    marketplaces.rmdir()
+    marketplaces.symlink_to(external, target_is_directory=True)
+    sentinel = external_package / "sentinel"
+    sentinel.write_text("outside")
+    cli = FakeCodexCLI(
+        marketplaces=[CodexMarketplace(spec.marketplace_name, external_package.resolve())]
+    )
+
+    with pytest.raises(ValueError, match="symlink"):
+        sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=cli)
+
+    assert cli.calls == []
+    assert sentinel.read_text() == "outside"
+    assert (tmp_path / CODEX_OWNERSHIP_FILE).is_file()
+
+    marketplaces.unlink()
+    marketplaces.mkdir()
+    external_package.rename(owned_path)
+    retry = FakeCodexCLI(marketplaces=[_marketplace(spec)])
+    actions = sync_codex_packages([], output_dir=tmp_path, refreshed_plugin_ids=set(), cli=retry)
+
+    assert [action.action for action in actions] == [
+        "remove_codex_marketplace",
+        "remove_codex_package",
+    ]
     assert not (tmp_path / CODEX_OWNERSHIP_FILE).exists()
 
 
@@ -662,6 +740,54 @@ def test_cli_json_rejects_malformed_and_duplicate_keys(tmp_path: Path) -> None:
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         with pytest.raises(CodexCommandError, match="unambiguous JSON"):
             CodexCLI(str(executable)).list_marketplaces()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"marketplaceName": "market"},
+        {"marketplaceName": "market", "installedRoot": "/still/installed"},
+        {"marketplaceName": "other", "installedRoot": None},
+        {"marketplaceName": "market", "installedRoot": None, "alreadyAdded": False},
+    ],
+)
+def test_cli_marketplace_removal_requires_exact_confirmation(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, object]
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: payload)
+
+    with pytest.raises(CodexCommandError, match="did not confirm removal"):
+        cli.remove_marketplace("market")
+
+
+def test_cli_marketplace_removal_accepts_exact_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda *args, **kwargs: {"marketplaceName": "market", "installedRoot": None},
+    )
+
+    cli.remove_marketplace("market")
+
+
+def test_cli_marketplace_removal_rejects_duplicate_confirmation_key(tmp_path: Path) -> None:
+    executable = tmp_path / "codex-duplicate-removal"
+    executable.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo \'codex-cli 0.144.5\'; exit 0; fi\n'
+        "printf '%s' "
+        '\'{"marketplaceName":"market","installedRoot":null,"installedRoot":null}\'\n'
+    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+    with pytest.raises(CodexCommandError, match="duplicate JSON key"):
+        CodexCLI(str(executable)).remove_marketplace("market")
 
 
 def test_cli_mutation_schema_rejects_semantically_wrong_success(

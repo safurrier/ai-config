@@ -28,11 +28,14 @@ def test_semver_precedence_matches_spec(lower: str, higher: str) -> None:
     assert right > left
 
 
-def test_build_metadata_does_not_affect_precedence_or_equality() -> None:
+def test_build_metadata_does_not_affect_precedence_equality_or_hashing() -> None:
     plain = SemanticVersion.parse("1.2.3")
     first = SemanticVersion.parse("1.2.3+build.1")
     second = SemanticVersion.parse("1.2.3+build.2")
 
     assert plain == first == second
+    assert hash(plain) == hash(first) == hash(second)
+    assert len({plain, first, second}) == 1
+    assert {plain: "plain", first: "first", second: "second"} == {plain: "second"}
     assert not plain < first
     assert not first < plain

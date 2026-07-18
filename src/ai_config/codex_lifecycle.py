@@ -16,7 +16,12 @@ from ai_config.adapters.codex import (
     CodexMarketplace,
     CodexPluginInstall,
 )
-from ai_config.converters.codex_package import CODEX_OWNERSHIP_FILE, CodexPackageSpec
+from ai_config.converters.codex_package import (
+    CODEX_OUTPUT_ROOT,
+    CODEX_OWNERSHIP_FILE,
+    CodexPackageSpec,
+)
+from ai_config.output_safety import validated_output_path
 from ai_config.semver import SemanticVersion
 from ai_config.types import CodexLifecycleActionName
 
@@ -90,8 +95,27 @@ class CodexLifecycleClient(Protocol):
     def remove_plugin(self, plugin_id: str) -> None: ...
 
 
+def _marketplace_relative_path(marketplace_name: str) -> Path:
+    return CODEX_OUTPUT_ROOT / "marketplaces" / marketplace_name
+
+
+def _validate_codex_output_layout(
+    output_dir: Path, specs: list[CodexPackageSpec] | None = None
+) -> None:
+    validated_output_path(output_dir, CODEX_OWNERSHIP_FILE)
+    validated_output_path(output_dir, CODEX_OUTPUT_ROOT / "marketplaces")
+    for spec in specs or []:
+        marketplace_path = validated_output_path(output_dir, spec.marketplace_relative_path)
+        validated_output_path(output_dir, spec.package_relative_path)
+        if spec.marketplace_path != marketplace_path:
+            raise ValueError(
+                f"Codex package path for '{spec.plugin_id}' does not match configured output root"
+            )
+
+
 def _load_ownership(output_dir: Path) -> dict[str, _OwnershipEntry]:
-    path = output_dir / CODEX_OWNERSHIP_FILE
+    _validate_codex_output_layout(output_dir)
+    path = validated_output_path(output_dir, CODEX_OWNERSHIP_FILE)
     if not path.exists():
         return {}
     try:
@@ -139,16 +163,18 @@ def _load_ownership(output_dir: Path) -> dict[str, _OwnershipEntry]:
                 "refusing ambiguous lifecycle state."
             )
         SemanticVersion.parse(version, context=f"owned Codex package {plugin_id} version")
-        resolved_marketplace_path = Path(marketplace_path).resolve()
-        owned_root = (output_dir / ".ai-config" / "codex" / "marketplaces").resolve()
-        if resolved_marketplace_path.parent != owned_root:
+        expected_marketplace_path = validated_output_path(
+            output_dir, _marketplace_relative_path(marketplace_name)
+        )
+        recorded_marketplace_path = Path(os.path.abspath(Path(marketplace_path).expanduser()))
+        if recorded_marketplace_path != expected_marketplace_path:
             raise ValueError(
-                f"Owned Codex marketplace path for '{plugin_id}' is outside {owned_root}; "
-                "refusing filesystem cleanup."
+                f"Owned Codex marketplace path for '{plugin_id}' is outside "
+                f"{expected_marketplace_path.parent}; refusing filesystem cleanup."
             )
         parsed[plugin_id] = _OwnershipEntry(
             marketplace_name=marketplace_name,
-            marketplace_path=resolved_marketplace_path,
+            marketplace_path=expected_marketplace_path,
             version=version,
         )
     return parsed
@@ -159,7 +185,9 @@ def _write_ownership(
     specs: list[CodexPackageSpec],
     retained: dict[str, _OwnershipEntry] | None = None,
 ) -> None:
-    path = output_dir / CODEX_OWNERSHIP_FILE
+    path = validated_output_path(output_dir, CODEX_OWNERSHIP_FILE)
+    temporary_relative = CODEX_OWNERSHIP_FILE.with_suffix(".tmp")
+    temporary = validated_output_path(output_dir, temporary_relative)
     path.parent.mkdir(parents=True, exist_ok=True)
     packages = {
         plugin_id: {
@@ -180,13 +208,16 @@ def _write_ownership(
         }
     )
     if not packages:
-        path.unlink(missing_ok=True)
+        validated_output_path(output_dir, CODEX_OWNERSHIP_FILE).unlink(missing_ok=True)
         return
-    temporary = path.with_suffix(".tmp")
+    temporary = validated_output_path(output_dir, temporary_relative)
     temporary.write_text(
         json.dumps({"version": _OWNERSHIP_VERSION, "packages": packages}, indent=2) + "\n"
     )
-    os.replace(temporary, path)
+    os.replace(
+        validated_output_path(output_dir, temporary_relative),
+        validated_output_path(output_dir, CODEX_OWNERSHIP_FILE),
+    )
 
 
 def _index_specs(specs: list[CodexPackageSpec]) -> dict[str, CodexPackageSpec]:
@@ -445,6 +476,7 @@ def sync_codex_packages(
 ) -> list[CodexLifecycleAction]:
     """Converge generated Codex packages without touching unrelated Codex state."""
     desired = _index_specs(specs)
+    _validate_codex_output_layout(output_dir, specs)
     previous = _load_ownership(output_dir)
     codex: CodexLifecycleClient = cli or CodexCLI()
     marketplaces = _index_marketplaces(codex.list_marketplaces())
@@ -483,15 +515,23 @@ def sync_codex_packages(
                 codex.remove_marketplace(action.target)
             elif action.action == "remove_codex_package":
                 entry = previous[action.target]
-                if entry.marketplace_path.is_dir() and not entry.marketplace_path.is_symlink():
-                    shutil.rmtree(entry.marketplace_path)
-                elif entry.marketplace_path.exists() or entry.marketplace_path.is_symlink():
-                    entry.marketplace_path.unlink()
+                marketplace_path = validated_output_path(
+                    output_dir, _marketplace_relative_path(entry.marketplace_name)
+                )
+                if marketplace_path != entry.marketplace_path:
+                    raise ValueError(
+                        f"Owned Codex marketplace path for '{action.target}' changed during cleanup"
+                    )
+                if marketplace_path.is_dir():
+                    shutil.rmtree(marketplace_path)
+                elif marketplace_path.exists():
+                    marketplace_path.unlink()
             elif action.action == "register_codex_marketplace":
                 spec = next(
                     item for item in desired.values() if item.marketplace_name == action.target
                 )
-                codex.add_marketplace(str(spec.marketplace_path), spec.marketplace_name)
+                marketplace_path = validated_output_path(output_dir, spec.marketplace_relative_path)
+                codex.add_marketplace(str(marketplace_path), spec.marketplace_name)
             elif action.action in {"update_codex_plugin", "reinstall_codex_plugin"}:
                 spec = desired[action.target]
                 codex.remove_plugin(action.target)
@@ -522,7 +562,7 @@ def sync_codex_packages(
     )
     try:
         _write_ownership(output_dir, specs, retained_entries)
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise CodexLifecycleExecutionError(
             planned_actions=(*actions, ownership_action),
             completed_actions=tuple(completed),

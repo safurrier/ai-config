@@ -43,7 +43,7 @@ class CodexPackageSpec:
 
     @property
     def marketplace_path(self) -> Path:
-        return (self.output_dir / self.marketplace_relative_path).resolve()
+        return self.output_dir.expanduser().resolve() / self.marketplace_relative_path
 
     @property
     def package_relative_path(self) -> Path:

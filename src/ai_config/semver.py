@@ -69,17 +69,13 @@ class SemanticVersion:
             return left < right
         return len(self.prerelease) < len(other.prerelease)
 
+    def _precedence_key(self) -> tuple[int, int, int, tuple[str, ...]]:
+        return (self.major, self.minor, self.patch, self.prerelease)
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, SemanticVersion):
             return False
-        return (
-            self.major,
-            self.minor,
-            self.patch,
-            self.prerelease,
-        ) == (
-            other.major,
-            other.minor,
-            other.patch,
-            other.prerelease,
-        )
+        return self._precedence_key() == other._precedence_key()
+
+    def __hash__(self) -> int:
+        return hash(self._precedence_key())

@@ -436,7 +436,11 @@ class CodexCLI:
         args = ["plugin", "marketplace", "remove", name, "--json"]
         remediation = "Inspect the named ai-config marketplace with Codex, then retry sync."
         payload = self.run_json("remove-marketplace", args, remediation=remediation)
-        if payload.get("marketplaceName") != name or payload.get("installedRoot") is not None:
+        if (
+            set(payload) != {"marketplaceName", "installedRoot"}
+            or payload["marketplaceName"] != name
+            or payload["installedRoot"] is not None
+        ):
             raise self._schema_error(
                 "remove-marketplace",
                 args,

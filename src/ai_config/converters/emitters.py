@@ -34,6 +34,7 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
+from ai_config.output_safety import validated_output_path
 
 _ENV_VAR_PATTERN = re.compile(
     r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
@@ -149,30 +150,30 @@ class EmitResult:
 
         Returns list of file paths that were/would be written.
         """
-        written = []
+        cleanup_targets = [
+            validated_output_path(output_dir, cleanup_path) for cleanup_path in self.cleanup_paths
+        ]
+        file_targets = [validated_output_path(output_dir, emitted.path) for emitted in self.files]
+        written: list[Path] = []
         if not dry_run:
-            for cleanup_path in self.cleanup_paths:
-                full_cleanup_path = output_dir / cleanup_path
-                if full_cleanup_path.is_dir() and not full_cleanup_path.is_symlink():
+            for cleanup_path, full_cleanup_path in zip(
+                self.cleanup_paths, cleanup_targets, strict=True
+            ):
+                full_cleanup_path = validated_output_path(output_dir, cleanup_path)
+                if full_cleanup_path.is_dir():
                     shutil.rmtree(full_cleanup_path)
-                elif full_cleanup_path.exists() or full_cleanup_path.is_symlink():
+                elif full_cleanup_path.exists():
                     full_cleanup_path.unlink()
 
-        for f in self.files:
-            full_path = output_dir / f.path
+        for emitted, full_path in zip(self.files, file_targets, strict=True):
             if not dry_run:
-                # Remove broken symlinks in the parent chain so mkdir can proceed
-                for parent in reversed(full_path.parent.parents):
-                    if parent.is_symlink() and not parent.exists():
-                        parent.unlink()
-                if full_path.parent.is_symlink() and not full_path.parent.exists():
-                    full_path.parent.unlink()
+                full_path = validated_output_path(output_dir, emitted.path)
                 full_path.parent.mkdir(parents=True, exist_ok=True)
-                if f.binary:
-                    full_path.write_bytes(f.content)  # type: ignore[arg-type]
+                if emitted.binary:
+                    full_path.write_bytes(emitted.content)
                 else:
-                    full_path.write_text(f.content)  # type: ignore[arg-type]
-                if f.executable:
+                    full_path.write_text(emitted.content)
+                if emitted.executable:
                     full_path.chmod(full_path.stat().st_mode | 0o111)
             written.append(full_path)
         return written
