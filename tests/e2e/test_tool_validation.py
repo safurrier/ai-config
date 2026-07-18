@@ -185,7 +185,11 @@ class TestCodexToolValidation:
         exit_code, output = exec_in_container(all_tools_container, "codex features list")
         assert exit_code == 0, f"Features list failed: {output}"
         for feature in ("hooks", "plugin_sharing", "plugins", "remote_plugin"):
-            row = next(line for line in output.splitlines() if line.split()[:1] == [feature])
+            row = next(
+                (line for line in output.splitlines() if line.split()[:1] == [feature]),
+                None,
+            )
+            assert row is not None, f"Codex feature {feature!r} missing from output:\n{output}"
             assert "stable" in row and row.rstrip().endswith("true")
 
 
