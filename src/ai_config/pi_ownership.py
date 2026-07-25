@@ -129,7 +129,9 @@ def load_pi_ownership(root: Path) -> dict[Path, PiOwnedFile]:
     version = payload.get("version")
     if version not in {1, 2, _VERSION} or payload.get("root") != str(root):
         raise ValueError(f"Invalid Pi ownership state at {path}; refusing ambiguous cleanup")
-    return _decode_entries(payload.get("files"), path, root, allow_v1=version in {1, 2})
+    # Version 1 predates executable-mode ownership. Later schemas must carry it
+    # explicitly so malformed state never makes cleanup decisions for us.
+    return _decode_entries(payload.get("files"), path, root, allow_v1=version == 1)
 
 
 def _entry_payload(entries: dict[Path, PiOwnedFile]) -> list[dict[str, object]]:
@@ -407,6 +409,25 @@ def plan_pi_reconciliation(
     return actions, next_state
 
 
+def _prune_empty_owned_ancestors(root: Path, relative: Path) -> None:
+    """Remove empty generated parents without crossing Pi's managed root boundary."""
+    # User output lives below .pi/agent; project output lives directly below .pi.
+    boundary = root / ".pi" / "agent" if relative.parts[:2] == (".pi", "agent") else root / ".pi"
+    directory = validated_output_path(root, relative).parent
+    while directory != boundary:
+        if directory.is_symlink():
+            raise ValueError(f"Refusing symlinked Pi output directory: {directory}")
+        try:
+            directory.rmdir()
+        except FileNotFoundError:
+            directory = directory.parent
+        except OSError:
+            # A user file (or another owned file) remains; never remove its directory.
+            break
+        else:
+            directory = directory.parent
+
+
 def _apply_actions(root: Path, actions: list[PiAction], desired: dict[Path, PiDesiredFile]) -> None:
     for action in actions:
         path = validated_output_path(root, action.path)
@@ -430,6 +451,7 @@ def _apply_actions(root: Path, actions: list[PiAction], desired: dict[Path, PiDe
         elif action.action == "remove_pi_output":
             # State validation before this call proves this is the exact old owned file.
             path.unlink(missing_ok=True)
+            _prune_empty_owned_ancestors(root, action.path)
 
 
 def _recover_pending(

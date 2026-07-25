@@ -871,7 +871,11 @@ def _sync_conversions(
             )
         except (OSError, ValueError) as error:
             return actions, failed_actions, [str(error)]
-    retained_pi_roots = {str(output_dir.resolve())} if pi_enabled else set()
+    # Keep a root in the cache only while it still has owned output. An enabled
+    # Pi target with no configured (or no emitting) plugins has converged too.
+    retained_pi_roots = (
+        {str(output_dir.resolve())} if pi_enabled and _pi_root_has_ownership(output_dir) else set()
+    )
     if tracked_pi_output_dirs != sorted(retained_pi_roots):
         tracked_pi_output_dirs[:] = sorted(retained_pi_roots)
         cache_dirty = True

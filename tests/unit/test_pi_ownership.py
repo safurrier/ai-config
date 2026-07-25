@@ -171,6 +171,66 @@ def test_pending_and_ledger_entries_validate_root_and_temp_collisions_are_preser
     assert reserved.read_text() == "user"
 
 
+@pytest.mark.parametrize("version", [2, 3])
+def test_newer_ledger_versions_require_explicit_executable_mode(
+    tmp_path: Path, version: int
+) -> None:
+    state = tmp_path / ".ai-config/pi-ownership.json"
+    state.parent.mkdir()
+    state.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "root": str(tmp_path.resolve()),
+                "files": [
+                    {"source_plugin": "demo@local", "path": ".pi/a", "digest": digest_content("a")}
+                ],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Incomplete Pi ownership entry"):
+        load_pi_ownership(tmp_path)
+
+
+def test_v1_ledger_defaults_missing_executable_mode(tmp_path: Path) -> None:
+    state = tmp_path / ".ai-config/pi-ownership.json"
+    state.parent.mkdir()
+    state.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "root": str(tmp_path.resolve()),
+                "files": [
+                    {"source_plugin": "demo@local", "path": ".pi/a", "digest": digest_content("a")}
+                ],
+            }
+        )
+    )
+    assert not load_pi_ownership(tmp_path)[Path(".pi/a")].executable
+
+
+@pytest.mark.parametrize("base", [Path(".pi"), Path(".pi/agent")])
+def test_removing_owned_files_prunes_empty_parents_but_keeps_pi_boundary_and_user_content(
+    tmp_path: Path, base: Path
+) -> None:
+    owned = [
+        desired((base / "skills/plugin-old/resources/reference.md").as_posix()),
+        desired((base / "prompts/plugin-old.md").as_posix()),
+        desired((base / "extensions/plugin-old/hook.ts").as_posix()),
+    ]
+    apply_pi_reconciliation(tmp_path, owned)
+    user_file = tmp_path / base / "extensions/plugin-old/manual.txt"
+    user_file.write_text("keep")
+    apply_pi_reconciliation(tmp_path, [])
+
+    assert not (tmp_path / base / "skills/plugin-old").exists()
+    assert not (tmp_path / base / "prompts").exists()
+    assert not (tmp_path / base / "extensions/plugin-old/hook.ts").exists()
+    assert user_file.read_text() == "keep"
+    assert (tmp_path / base / "extensions/plugin-old").is_dir()
+    assert (tmp_path / base).is_dir()
+
+
 def test_executable_mode_is_reconciled(tmp_path: Path) -> None:
     executable = PiDesiredFile("demo@local", Path(".pi/run"), b"echo ok", executable=True)
     apply_pi_reconciliation(tmp_path, [executable])
