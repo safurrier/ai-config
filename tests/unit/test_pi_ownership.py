@@ -358,6 +358,11 @@ def test_old_ledger_schema_refuses_cleanup_without_mutation(
     assert json.loads(state.read_text())["version"] == version
 
 
+def test_empty_first_reconciliation_does_not_reserve_a_domain(tmp_path: Path) -> None:
+    apply_pi_reconciliation(tmp_path, [], ownership_domain="sync")
+    assert not (tmp_path / ".ai-config/pi-ownership.json").exists()
+
+
 def test_final_removal_deletes_state_and_allows_new_domain(tmp_path: Path) -> None:
     apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
     apply_pi_reconciliation(tmp_path, [], ownership_domain="sync")

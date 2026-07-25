@@ -243,10 +243,9 @@ def _atomic_write(path: Path, payload: dict[str, object]) -> None:
 
 def _write_state(root: Path, domain: PiOwnershipDomain, entries: dict[Path, PiOwnedFile]) -> None:
     path = _state_path(root)
-    # A first conversion with no emitted files still records its selected domain.
-    # Only an existing ledger reconciled down to no files releases the root.
-    if not entries and path.exists():
-        path.unlink()
+    # No owned files means there is no ownership domain to reserve or track.
+    if not entries:
+        path.unlink(missing_ok=True)
         return
     _atomic_write(
         path,
