@@ -981,6 +981,14 @@ def convert(
     else:
         target_list = [TargetTool(t) for t in targets]
 
+    # Standalone Pi writes cannot safely establish the multi-plugin ownership ledger.
+    # Pi output is therefore managed only through `ai-config sync`.
+    if TargetTool.PI in target_list and not dry_run:
+        raise click.UsageError(
+            "Standalone Pi conversion is disabled: use ai-config sync with a Pi conversion target "
+            "so generated files are recorded in the ownership ledger."
+        )
+
     # Use scope-based output resolution if no output specified
     if output_dir is None:
         output_dir = Path.home() if scope == "user" else Path.cwd()

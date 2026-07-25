@@ -34,6 +34,8 @@ from ai_config.types import (
     MarketplaceConfig,
     PluginConfig,
     PluginSource,
+    SyncAction,
+    SyncResult,
     TargetConfig,
 )
 
@@ -90,11 +92,7 @@ def mock_installed_marketplaces() -> list[InstalledMarketplace]:
 
 
 def test_noop_pi_output_is_not_a_verification_discrepancy() -> None:
-    from ai_config.types import SyncAction, SyncResult
-
-    result = SyncResult(
-        actions_taken=[SyncAction("noop_pi_output", ".pi/skill", reason="matches")]
-    )
+    result = SyncResult(actions_taken=[SyncAction("noop_pi_output", ".pi/skill", reason="matches")])
     assert sync_discrepancies({"claude": result}) == []
 
 

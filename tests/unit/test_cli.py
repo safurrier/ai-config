@@ -413,6 +413,14 @@ class TestConvertCommand:
         call_args = mock_convert.call_args.kwargs
         assert call_args["output_dir"] == Path(tmp_path / "home")
 
+    def test_convert_rejects_unmanaged_pi_output(
+        self, runner: CliRunner, minimal_plugin: Path
+    ) -> None:
+        result = runner.invoke(main, ["convert", str(minimal_plugin), "--target", "pi"])
+
+        assert result.exit_code == 2
+        assert "Standalone Pi conversion is disabled" in result.output
+
     def test_convert_writes_report_file(
         self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
     ) -> None:

@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
+import ai_config.pi_ownership as ownership
 from ai_config.pi_ownership import (
     PiDesiredFile,
     apply_pi_reconciliation,
@@ -74,8 +76,6 @@ def test_checkpoint_failure_recovers_on_normal_retry(
     before: str | None,
     after: str | None,
 ) -> None:
-    import ai_config.pi_ownership as ownership
-
     if before is not None:
         apply_pi_reconciliation(tmp_path, [desired(".pi/a", before)])
     target = [] if after is None else [desired(".pi/a", after)]
@@ -95,6 +95,80 @@ def test_checkpoint_failure_recovers_on_normal_retry(
     else:
         assert owned[Path(".pi/a")].digest == digest_content(after)
         assert (tmp_path / ".pi/a").read_text() == after
+
+
+def test_pending_recovery_preserves_post_crash_user_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apply_pi_reconciliation(tmp_path, [desired(".pi/update", "old"), desired(".pi/remove", "old")])
+    original_write_state = ownership._write_state
+    monkeypatch.setattr(
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("checkpoint"))
+    )
+    with pytest.raises(OSError, match="checkpoint"):
+        apply_pi_reconciliation(
+            tmp_path, [desired(".pi/create", "new"), desired(".pi/update", "new")]
+        )
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    (tmp_path / ".pi/create").write_text("user create")
+    (tmp_path / ".pi/update").write_text("user update")
+    (tmp_path / ".pi/remove").write_text("user remove")
+    with pytest.raises(ValueError, match="diverged"):
+        apply_pi_reconciliation(
+            tmp_path, [desired(".pi/create", "new"), desired(".pi/update", "new")]
+        )
+    with pytest.raises(ValueError, match="diverged"):
+        apply_pi_reconciliation(
+            tmp_path, [desired(".pi/create", "new"), desired(".pi/update", "new")], dry_run=True
+        )
+    assert (tmp_path / ".pi/create").read_text() == "user create"
+    assert (tmp_path / ".pi/update").read_text() == "user update"
+    assert (tmp_path / ".pi/remove").read_text() == "user remove"
+
+
+def test_pending_recovery_rejects_changed_desired_and_unavailable_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_write_state = ownership._write_state
+    monkeypatch.setattr(
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("checkpoint"))
+    )
+    with pytest.raises(OSError):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a", "one")])
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    with pytest.raises(ValueError, match="does not match"):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a", "changed")])
+    with pytest.raises(ValueError, match="does not match"):
+        apply_pi_reconciliation(tmp_path, [], retained_sources={"demo@local"})
+
+
+def test_pending_and_ledger_entries_validate_root_and_temp_collisions_are_preserved(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / ".ai-config/pi-ownership.json"
+    state.parent.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".pi").symlink_to(outside)
+    digest = digest_content("one")
+    state.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "root": str(tmp_path.resolve()),
+                "files": [
+                    {"source_plugin": "x", "path": ".pi/a", "digest": digest, "executable": False}
+                ],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        load_pi_ownership(tmp_path)
+    (tmp_path / ".pi").unlink()
+    reserved = tmp_path / ".ai-config/pi-ownership.json.tmp"
+    reserved.write_text("user")
+    apply_pi_reconciliation(tmp_path, [desired(".pi/a")])
+    assert reserved.read_text() == "user"
 
 
 def test_executable_mode_is_reconciled(tmp_path: Path) -> None:
