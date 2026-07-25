@@ -78,6 +78,7 @@ class CodexMarketplace:
 
     name: str
     root: Path
+    source_type: str | None
 
 
 @dataclass(frozen=True)
@@ -428,7 +429,13 @@ class CodexCLI:
                 detail = f"marketplaces[{index}].marketplaceSource and local root disagree"
                 raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
             seen.add(name)
-            results.append(CodexMarketplace(name=name, root=Path(root).resolve()))
+            results.append(
+                CodexMarketplace(
+                    name=name,
+                    root=Path(root).resolve(),
+                    source_type=marketplace_source[0] if marketplace_source is not None else None,
+                )
+            )
         return results
 
     def add_marketplace(self, path: str, expected_name: str) -> CodexMarketplace:
@@ -461,7 +468,7 @@ class CodexCLI:
                 f"installedRoot does not match requested path {expected_root}",
                 remediation,
             )
-        return CodexMarketplace(name=name, root=expected_root)
+        return CodexMarketplace(name=name, root=expected_root, source_type="local")
 
     def remove_marketplace(self, name: str) -> None:
         self._ensure_supported_version()

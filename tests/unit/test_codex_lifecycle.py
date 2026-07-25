@@ -68,7 +68,7 @@ class FakeCodexCLI:
 
     def add_marketplace(self, path: str, expected_name: str) -> CodexMarketplace:
         self.calls.append(("add_marketplace", path, expected_name))
-        return CodexMarketplace(expected_name, Path(path).resolve())
+        return CodexMarketplace(expected_name, Path(path).resolve(), source_type="local")
 
     def remove_marketplace(self, name: str) -> None:
         self.calls.append(("remove_marketplace", name))
@@ -121,7 +121,7 @@ def _package(
 
 
 def _marketplace(spec) -> CodexMarketplace:
-    return CodexMarketplace(spec.marketplace_name, spec.marketplace_path)
+    return CodexMarketplace(spec.marketplace_name, spec.marketplace_path, source_type="local")
 
 
 def _installed(spec, *, enabled: bool = True, version: str | None = None) -> CodexInstalledPlugin:
@@ -409,7 +409,13 @@ def test_symlinked_marketplace_ancestor_cannot_redirect_lifecycle_cleanup(
     sentinel = external_package / "sentinel"
     sentinel.write_text("outside")
     cli = FakeCodexCLI(
-        marketplaces=[CodexMarketplace(spec.marketplace_name, external_package.resolve())]
+        marketplaces=[
+            CodexMarketplace(
+                spec.marketplace_name,
+                external_package.resolve(),
+                source_type="local",
+            )
+        ]
     )
 
     with pytest.raises(ValueError, match="symlink"):
@@ -477,7 +483,10 @@ def test_removal_touches_only_owned_state(tmp_path: Path) -> None:
     unrelated.write_text('model = "keep"\n')
     user_root = Path("/user/market").resolve()
     cli = FakeCodexCLI(
-        marketplaces=[_marketplace(spec), CodexMarketplace("user-market", user_root)],
+        marketplaces=[
+            _marketplace(spec),
+            CodexMarketplace("user-market", user_root, source_type="local"),
+        ],
         plugins=[
             _installed(spec),
             CodexInstalledPlugin(
@@ -534,6 +543,36 @@ def test_sourceless_plugin_collision_fails_before_mutation(tmp_path: Path) -> No
     assert cli.calls == []
 
 
+@pytest.mark.parametrize("owned", [False, True])
+def test_sourceless_marketplace_collision_fails_before_mutation(
+    tmp_path: Path, owned: bool
+) -> None:
+    spec = _package(tmp_path)
+    desired = [spec]
+    if owned:
+        _establish_ownership(spec, tmp_path)
+        desired = []
+    cli = FakeCodexCLI(
+        marketplaces=[
+            CodexMarketplace(
+                name=spec.marketplace_name,
+                root=spec.marketplace_path,
+                source_type=None,
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="marketplace (name collision|ownership changed)"):
+        sync_codex_packages(
+            desired,
+            output_dir=tmp_path,
+            refreshed_plugin_ids={spec.plugin_id} if desired else set(),
+            cli=cli,
+        )
+
+    assert cli.calls == []
+
+
 def test_validated_output_migration_plans_replacement_state(tmp_path: Path) -> None:
     old_root = tmp_path / "old"
     new_root = tmp_path / "new"
@@ -570,7 +609,9 @@ def test_validated_output_migration_plans_replacement_state(tmp_path: Path) -> N
 @pytest.mark.parametrize("root", [Path("/unrelated"), Path("/unknown")])
 def test_marketplace_name_collision_fails_closed(tmp_path: Path, root: Path) -> None:
     spec = _package(tmp_path)
-    cli = FakeCodexCLI(marketplaces=[CodexMarketplace(spec.marketplace_name, root)])
+    cli = FakeCodexCLI(
+        marketplaces=[CodexMarketplace(spec.marketplace_name, root, source_type="local")]
+    )
     with pytest.raises(ValueError, match="will not modify"):
         sync_codex_packages(
             [spec], output_dir=tmp_path, refreshed_plugin_ids={spec.plugin_id}, cli=cli
@@ -744,6 +785,7 @@ def test_cli_accepts_absent_marketplace_source_metadata(
     assert marketplace == CodexMarketplace(
         name="openai-curated",
         root=Path("/cache/openai-curated"),
+        source_type=None,
     )
     assert installed.source_path == Path("/cache/openai-curated/plugins/installed")
     assert installed.marketplace_root is None
@@ -991,7 +1033,7 @@ def test_cli_supported_versions_accept_observed_contract(tmp_path: Path, version
     executable = tmp_path / f"codex-version-{version}"
     executable.write_text(
         "#!/bin/sh\n"
-        f"if [ \"$1\" = \"--version\" ]; then echo 'codex-cli {version}'; exit 0; fi\n"
+        f'if [ "$1" = "--version" ]; then echo \'codex-cli {version}\'; exit 0; fi\n'
         "printf '%s' '{\"marketplaces\":[]}'\n"
     )
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
