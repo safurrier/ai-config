@@ -487,7 +487,7 @@ def test_removal_touches_only_owned_state(tmp_path: Path) -> None:
                 version="1.0.0",
                 enabled=False,
                 source_path=user_root / "plugins/user",
-                marketplace_root=user_root,
+                marketplace_root=None,
             ),
         ],
     )
@@ -504,6 +504,34 @@ def test_removal_touches_only_owned_state(tmp_path: Path) -> None:
         ("remove_marketplace", spec.marketplace_name),
     ]
     assert unrelated.read_text() == 'model = "keep"\n'
+
+
+def test_sourceless_plugin_collision_fails_before_mutation(tmp_path: Path) -> None:
+    spec = _package(tmp_path)
+    installed = _installed(spec)
+    sourceless_collision = CodexInstalledPlugin(
+        plugin_id=installed.plugin_id,
+        name=installed.name,
+        marketplace_name=installed.marketplace_name,
+        version=installed.version,
+        enabled=installed.enabled,
+        source_path=installed.source_path,
+        marketplace_root=None,
+    )
+    cli = FakeCodexCLI(
+        marketplaces=[_marketplace(spec)],
+        plugins=[sourceless_collision],
+    )
+
+    with pytest.raises(ValueError, match="identity collision"):
+        sync_codex_packages(
+            [spec],
+            output_dir=tmp_path,
+            refreshed_plugin_ids={spec.plugin_id},
+            cli=cli,
+        )
+
+    assert cli.calls == []
 
 
 def test_validated_output_migration_plans_replacement_state(tmp_path: Path) -> None:
@@ -657,6 +685,126 @@ def test_cli_available_rows_require_complete_typed_identity(
             cli.list_plugins()
 
 
+def test_cli_accepts_absent_marketplace_source_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    responses = iter(
+        [
+            {
+                "marketplaces": [
+                    {
+                        "name": "openai-curated",
+                        "root": "/cache/openai-curated",
+                    }
+                ]
+            },
+            {
+                "installed": [
+                    {
+                        "pluginId": "installed@openai-curated",
+                        "name": "installed",
+                        "marketplaceName": "openai-curated",
+                        "version": "1.0.0",
+                        "installed": True,
+                        "enabled": True,
+                        "source": {
+                            "source": "local",
+                            "path": "/cache/openai-curated/plugins/installed",
+                        },
+                        "installPolicy": "AVAILABLE",
+                        "authPolicy": "ON_INSTALL",
+                    }
+                ],
+                "available": [
+                    {
+                        "pluginId": "available@openai-curated",
+                        "name": "available",
+                        "marketplaceName": "openai-curated",
+                        "version": "2.0.0",
+                        "installed": False,
+                        "enabled": False,
+                        "source": {
+                            "source": "local",
+                            "path": "/cache/openai-curated/plugins/available",
+                        },
+                        "installPolicy": "AVAILABLE",
+                        "authPolicy": "ON_INSTALL",
+                    }
+                ],
+            },
+        ]
+    )
+    monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: next(responses))
+
+    marketplace = cli.list_marketplaces()[0]
+    installed = cli.list_plugins()[0]
+
+    assert marketplace == CodexMarketplace(
+        name="openai-curated",
+        root=Path("/cache/openai-curated"),
+    )
+    assert installed.source_path == Path("/cache/openai-curated/plugins/installed")
+    assert installed.marketplace_root is None
+
+
+@pytest.mark.parametrize(
+    "marketplace_source",
+    [
+        None,
+        [],
+        "local",
+        {},
+        {"sourceType": "unknown", "source": "/market"},
+        {"sourceType": "local", "source": ""},
+        {"sourceType": "local", "source": "/other-market"},
+    ],
+)
+@pytest.mark.parametrize("row_kind", ["marketplace", "available", "installed"])
+def test_cli_rejects_present_malformed_marketplace_source(
+    monkeypatch: pytest.MonkeyPatch,
+    marketplace_source: object,
+    row_kind: str,
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
+    plugin_row = {
+        "pluginId": "demo@market",
+        "name": "demo",
+        "marketplaceName": "market",
+        "version": "1.0.0",
+        "installed": row_kind == "installed",
+        "enabled": row_kind == "installed",
+        "source": {"source": "local", "path": "/market/plugins/demo"},
+        "marketplaceSource": marketplace_source,
+        "installPolicy": "AVAILABLE",
+        "authPolicy": "ON_INSTALL",
+    }
+    if row_kind == "marketplace":
+        payload = {
+            "marketplaces": [
+                {
+                    "name": "market",
+                    "root": "/market",
+                    "marketplaceSource": marketplace_source,
+                }
+            ]
+        }
+        monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: payload)
+        operation = cli.list_marketplaces
+    else:
+        payload = {
+            "installed": [plugin_row] if row_kind == "installed" else [],
+            "available": [plugin_row] if row_kind == "available" else [],
+        }
+        monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: payload)
+        operation = cli.list_plugins
+
+    with pytest.raises(CodexCommandError, match="marketplaceSource"):
+        operation()
+
+
 def test_cli_preserves_typed_nonlocal_unrelated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -725,7 +873,7 @@ def test_cli_marketplace_list_schema_rejects_wrong_shape(
     monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.144.5")
     monkeypatch.setattr(cli, "run_json", lambda *args, **kwargs: payload)
 
-    with pytest.raises(CodexCommandError, match="invalid Codex 0.144.x JSON response"):
+    with pytest.raises(CodexCommandError, match="invalid supported Codex JSON response"):
         cli.list_marketplaces()
 
 
@@ -838,9 +986,22 @@ def test_cli_mutation_schema_rejects_semantically_wrong_success(
         cli.remove_plugin("demo@market")
 
 
+@pytest.mark.parametrize("version", ["0.144.5", "0.145.0"])
+def test_cli_supported_versions_accept_observed_contract(tmp_path: Path, version: str) -> None:
+    executable = tmp_path / f"codex-version-{version}"
+    executable.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = \"--version\" ]; then echo 'codex-cli {version}'; exit 0; fi\n"
+        "printf '%s' '{\"marketplaces\":[]}'\n"
+    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+    assert CodexCLI(str(executable)).list_marketplaces() == []
+
+
 def test_cli_unknown_version_fails_closed(tmp_path: Path) -> None:
     executable = tmp_path / "codex-version"
-    executable.write_text("#!/bin/sh\necho 'codex-cli 0.145.0'\n")
+    executable.write_text("#!/bin/sh\necho 'codex-cli 0.146.0'\n")
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
 
     with pytest.raises(CodexCommandError, match="unsupported Codex CLI response contract"):
