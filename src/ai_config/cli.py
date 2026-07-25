@@ -345,7 +345,7 @@ def status(
                 }
                 for drift_result in (drift_results or {}).values()
                 for action in drift_result.actions_taken
-                if action.action != "noop_codex_plugin"
+                if action.action not in {"noop_codex_plugin", "noop_pi_output"}
             ],
             "errors": result.errors
             + [
@@ -403,7 +403,7 @@ def status(
             action
             for drift_result in drift_results.values()
             for action in drift_result.actions_taken
-            if action.action != "noop_codex_plugin"
+            if action.action not in {"noop_codex_plugin", "noop_pi_output"}
         ]
         if planned_actions:
             table = Table(show_header=True, header_style="bold", box=None)

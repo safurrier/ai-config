@@ -618,6 +618,7 @@ def _sync_conversions(
     removal_reasons: dict[str, str] = {}
     candidates: list[_ConversionCandidate] = []
     codex_sources: dict[str, str] = {}
+    unavailable_pi_sources: set[str] = set()
     has_blocking_errors = False
 
     if conversion_active:
@@ -634,6 +635,8 @@ def _sync_conversions(
             if plugin_path is None:
                 if codex_enabled:
                     retained_codex_ids.add(configured_codex_id)
+                if pi_enabled:
+                    unavailable_pi_sources.add(plugin_config.id)
                 install_path = (
                     installed.install_path
                     if installed is not None and installed.install_path
@@ -641,7 +644,7 @@ def _sync_conversions(
                 )
                 errors.append(
                     f"Conversion source for {plugin_config.id} is temporarily unavailable "
-                    f"(installPath={install_path}); prior owned Codex state was retained"
+                    f"(installPath={install_path}); prior owned conversion state was retained"
                 )
                 continue
 
@@ -709,11 +712,42 @@ def _sync_conversions(
             return [], [], errors
 
     # Pi is reconciled as one owned output set, rather than plugin-by-plugin writes.
+    # Its parser/emitter diagnostics must be fatal before any lifecycle plan can mutate output.
     pi_desired: list[PiDesiredFile] = []
+    pi_diagnostic_errors = False
     if pi_enabled:
         for candidate in candidates:
-            ir = parse_claude_plugin(candidate.plugin_path)
-            emitted = PiEmitter(scope).emit(ir)
+            try:
+                ir = parse_claude_plugin(candidate.plugin_path)
+                parse_errors = [
+                    diagnostic.message
+                    for diagnostic in ir.diagnostics
+                    if diagnostic.severity.value == "error"
+                ]
+                if parse_errors:
+                    pi_diagnostic_errors = True
+                    errors.extend(
+                        f"Pi conversion failed for {candidate.config_id}: {message}"
+                        for message in parse_errors
+                    )
+                    continue
+                emitted = PiEmitter(scope).emit(ir)
+                emit_errors = [
+                    diagnostic.message
+                    for diagnostic in emitted.diagnostics
+                    if diagnostic.severity.value == "error"
+                ]
+                if emit_errors:
+                    pi_diagnostic_errors = True
+                    errors.extend(
+                        f"Pi conversion failed for {candidate.config_id}: {message}"
+                        for message in emit_errors
+                    )
+                    continue
+            except (OSError, ValueError) as error:
+                pi_diagnostic_errors = True
+                errors.append(f"Pi conversion failed for {candidate.config_id}: {error}")
+                continue
             for file in emitted.files:
                 content = (
                     file.content.encode("utf-8") if isinstance(file.content, str) else file.content
@@ -721,6 +755,8 @@ def _sync_conversions(
                 pi_desired.append(
                     PiDesiredFile(candidate.config_id, file.path, content, file.executable)
                 )
+        if pi_diagnostic_errors:
+            return [], [], errors
 
     candidates_to_convert: list[tuple[_ConversionCandidate, str | None]] = []
     for candidate in candidates:
@@ -770,12 +806,14 @@ def _sync_conversions(
     preflight_actions: list[SyncAction] = []
     target_removed_reason = "Codex conversion target is disabled or removed"
     try:
-        pi_plan_roots = [(output_dir, pi_desired)] if pi_enabled else []
-        pi_plan_roots.extend((root, []) for root in retiring_pi_output_dirs)
-        for pi_root, desired in pi_plan_roots:
+        pi_plan_roots = [(output_dir, pi_desired, unavailable_pi_sources)] if pi_enabled else []
+        pi_plan_roots.extend((root, [], set()) for root in retiring_pi_output_dirs)
+        for pi_root, desired, retained_sources in pi_plan_roots:
             preflight_actions.extend(
                 SyncAction(action=action.action, target=str(action.path), reason=action.reason)
-                for action in apply_pi_reconciliation(pi_root, desired, dry_run=True)
+                for action in apply_pi_reconciliation(
+                    pi_root, desired, dry_run=True, retained_sources=retained_sources
+                )
             )
         for retiring_root in retiring_output_dirs:
             planned = sync_codex_packages(
@@ -820,11 +858,13 @@ def _sync_conversions(
         return preflight_actions, [], []
 
     # Do not checkpoint ownership until each root's entire filesystem plan succeeds.
-    for pi_root, desired in ([(output_dir, pi_desired)] if pi_enabled else []) + [
-        (root, []) for root in retiring_pi_output_dirs
-    ]:
+    for pi_root, desired, retained_sources in (
+        [(output_dir, pi_desired, unavailable_pi_sources)] if pi_enabled else []
+    ) + [(root, [], set()) for root in retiring_pi_output_dirs]:
         try:
-            completed_pi = apply_pi_reconciliation(pi_root, desired)
+            completed_pi = apply_pi_reconciliation(
+                pi_root, desired, retained_sources=retained_sources
+            )
             actions.extend(
                 SyncAction(action=item.action, target=str(item.path), reason=item.reason)
                 for item in completed_pi
@@ -1083,7 +1123,7 @@ def sync_discrepancies(results: dict[str, SyncResult]) -> list[str]:
         discrepancies.extend(
             f"{target_type}: {action.action} required for {action.target}: {action.reason}"
             for action in result.actions_taken
-            if action.action != "noop_codex_plugin"
+            if action.action not in {"noop_codex_plugin", "noop_pi_output"}
         )
     return discrepancies
 

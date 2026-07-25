@@ -21,10 +21,12 @@ from ai_config.operations import (
     _load_conversion_cache,
     get_status,
     sync_config,
+    sync_discrepancies,
     sync_target,
     update_plugins,
     verify_sync,
 )
+from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -85,6 +87,83 @@ def mock_installed_marketplaces() -> list[InstalledMarketplace]:
             install_location="/path/to/marketplace",
         ),
     ]
+
+
+def test_noop_pi_output_is_not_a_verification_discrepancy() -> None:
+    from ai_config.types import SyncAction, SyncResult
+
+    result = SyncResult(
+        actions_taken=[SyncAction("noop_pi_output", ".pi/skill", reason="matches")]
+    )
+    assert sync_discrepancies({"claude": result}) == []
+
+
+def test_pi_parse_error_preserves_owned_output_before_any_reconciliation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "home"
+    apply_pi_reconciliation(
+        output, [PiDesiredFile("plugin1@my-marketplace", Path(".pi/old"), b"old")]
+    )
+    broken_source = tmp_path / "broken"
+    broken_source.mkdir()
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="user"),
+        ),
+    )
+    monkeypatch.setattr(Path, "home", lambda: output)
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            return_value=(
+                [InstalledPlugin("plugin1@my-marketplace", "1", "user", True, str(broken_source))],
+                [],
+            ),
+        ),
+        patch(
+            "ai_config.operations._load_conversion_cache",
+            return_value={"version": 7, "entries": {}},
+        ),
+    ):
+        result = sync_target(target)
+    assert not result.success
+    assert any("Pi conversion failed" in error for error in result.errors)
+    assert (output / ".pi/old").read_bytes() == b"old"
+
+
+def test_pi_unavailable_source_dry_run_preserves_same_output_as_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "home"
+    owned_path = output / ".pi/old"
+    apply_pi_reconciliation(
+        output, [PiDesiredFile("plugin1@my-marketplace", Path(".pi/old"), b"old")]
+    )
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="user"),
+        ),
+    )
+    monkeypatch.setattr(Path, "home", lambda: output)
+    installed = [InstalledPlugin("plugin1@my-marketplace", "1", "user", True, None)]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch(
+            "ai_config.operations._load_conversion_cache",
+            return_value={"version": 7, "entries": {}, "pi_output_dirs": [str(output)]},
+        ),
+    ):
+        dry_run = sync_target(target, dry_run=True)
+        actual = sync_target(target)
+    assert any(action.action == "preserve_pi_output" for action in dry_run.actions_taken), dry_run
+    assert any("temporarily unavailable" in error for error in dry_run.errors)
+    assert actual.errors == dry_run.errors
+    assert owned_path.read_bytes() == b"old"
 
 
 class TestConversionCache:
@@ -535,6 +614,8 @@ class TestSyncTarget:
         """Conversion falls back to local marketplace source when Claude cache path is stale."""
         plugin_dir = tmp_path / "marketplace" / "plugin1"
         plugin_dir.mkdir(parents=True)
+        (plugin_dir / ".claude-plugin").mkdir()
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text('{"name":"plugin1"}')
         conversion = ConversionConfig(
             enabled=True,
             targets=("pi",),
@@ -604,6 +685,8 @@ class TestSyncTarget:
         marketplace_dir = tmp_path / "marketplace"
         plugin_dir = marketplace_dir / "plugins" / "plugin-source"
         plugin_dir.mkdir(parents=True)
+        (plugin_dir / ".claude-plugin").mkdir()
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text('{"name":"plugin1"}')
         (marketplace_dir / ".claude-plugin").mkdir()
         (marketplace_dir / ".claude-plugin" / "marketplace.json").write_text(
             '{"name":"my-marketplace","plugins":[{"name":"plugin1","source":"./plugins/plugin-source"}]}'

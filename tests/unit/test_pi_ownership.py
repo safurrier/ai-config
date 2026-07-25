@@ -53,16 +53,54 @@ def test_rejects_traversal_and_symlink(tmp_path: Path) -> None:
         plan_pi_reconciliation(tmp_path, [desired(".pi/a")])
 
 
-def test_checkpoint_is_atomic_on_state_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rejects_dangling_final_symlinks_for_desired_and_obsolete(tmp_path: Path) -> None:
+    path = tmp_path / ".pi/a"
+    path.parent.mkdir()
+    path.symlink_to(tmp_path / "missing")
+    with pytest.raises(ValueError, match="symlink"):
+        plan_pi_reconciliation(tmp_path, [desired(".pi/a")])
+    path.unlink()
     apply_pi_reconciliation(tmp_path, [desired(".pi/a")])
+    path.unlink()
+    path.symlink_to(tmp_path / "missing")
+    with pytest.raises(ValueError, match="symlink"):
+        plan_pi_reconciliation(tmp_path, [])
+
+
+@pytest.mark.parametrize("before, after", [(None, "one"), ("one", "two"), ("one", None)])
+def test_checkpoint_failure_recovers_on_normal_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    before: str | None,
+    after: str | None,
+) -> None:
     import ai_config.pi_ownership as ownership
 
+    if before is not None:
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a", before)])
+    target = [] if after is None else [desired(".pi/a", after)]
+    original_write_state = ownership._write_state
     monkeypatch.setattr(
         ownership, "_write_state", lambda root, entries: (_ for _ in ()).throw(OSError("nope"))
     )
     with pytest.raises(OSError, match="nope"):
-        apply_pi_reconciliation(tmp_path, [desired(".pi/a", "two")])
-    # The old checkpoint remains, so a later run detects rather than falsely claiming convergence.
-    assert load_pi_ownership(tmp_path)[Path(".pi/a")].digest == digest_content("one")
+        apply_pi_reconciliation(tmp_path, target)
+    assert (tmp_path / ".ai-config/pi-ownership.pending.json").exists()
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    assert apply_pi_reconciliation(tmp_path, target)
+    owned = load_pi_ownership(tmp_path)
+    if after is None:
+        assert Path(".pi/a") not in owned
+        assert not (tmp_path / ".pi/a").exists()
+    else:
+        assert owned[Path(".pi/a")].digest == digest_content(after)
+        assert (tmp_path / ".pi/a").read_text() == after
+
+
+def test_executable_mode_is_reconciled(tmp_path: Path) -> None:
+    executable = PiDesiredFile("demo@local", Path(".pi/run"), b"echo ok", executable=True)
+    apply_pi_reconciliation(tmp_path, [executable])
+    assert (tmp_path / ".pi/run").stat().st_mode & 0o111
+    (tmp_path / ".pi/run").chmod(0o644)
+    assert apply_pi_reconciliation(tmp_path, [executable])[0].action == "update_pi_output"
+    assert (tmp_path / ".pi/run").stat().st_mode & 0o111
