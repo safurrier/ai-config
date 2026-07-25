@@ -12,6 +12,22 @@ from ai_config.converters.claude_parser import parse_claude_plugin
 from ai_config.converters.emitters import EmitResult, get_emitter
 from ai_config.converters.ir import InstallScope, PluginIR, Severity, TargetTool
 from ai_config.converters.report import ConversionReport
+from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation, load_pi_ownership
+
+
+def _standalone_pi_retained_sources(
+    root: Path, source_plugin: str, desired: list[PiDesiredFile]
+) -> set[str]:
+    """Keep other standalone projections while preventing ownership takeover."""
+    previous = load_pi_ownership(root)
+    for item in desired:
+        owner = previous.get(item.relative_path)
+        if owner is not None and owner.source_plugin != item.source_plugin:
+            raise ValueError(
+                f"Pi output collision at {root / item.relative_path}; it is owned by "
+                f"'{owner.source_plugin}', not '{item.source_plugin}'"
+            )
+    return {entry.source_plugin for entry in previous.values()} - {source_plugin}
 
 
 def convert_plugin(
@@ -126,8 +142,34 @@ def _convert_to_target(
             lost_features=lost_features,
         )
 
-    # Write files (or preview in dry-run)
-    if output_dir:
+    # Pi output is always reconciled through its ownership ledger. This lets a
+    # standalone conversion remove only this plugin's stale files while retaining
+    # projections from other plugins at the same root.
+    if output_dir and target == TargetTool.PI:
+        desired = [
+            PiDesiredFile(
+                ir.identity.plugin_id,
+                file.path,
+                file.content.encode("utf-8") if isinstance(file.content, str) else file.content,
+                file.executable,
+            )
+            for file in result.files
+        ]
+        retained_sources = _standalone_pi_retained_sources(
+            output_dir, ir.identity.plugin_id, desired
+        )
+        actions = apply_pi_reconciliation(
+            output_dir, desired, dry_run=dry_run, retained_sources=retained_sources
+        )
+        desired_sizes = {item.relative_path: len(item.content) for item in desired}
+        for item in actions:
+            report.add_file(
+                path=output_dir / item.path,
+                action=item.action.removesuffix("_pi_output"),
+                size_bytes=desired_sizes.get(item.path, 0),
+                reason=item.reason,
+            )
+    elif output_dir:
         for f in result.files:
             full_path = output_dir / f.path
             if isinstance(f.content, bytes):
@@ -181,9 +223,23 @@ def convert_plugin_simple(
     emitter = get_emitter(target)
     result = emitter.emit(ir)
 
-    # Write if output specified
+    # Pi writes must establish ownership, even through this convenience API.
     if output_dir:
-        result.write_to(Path(output_dir))
+        if target == TargetTool.PI:
+            root = Path(output_dir)
+            desired = [
+                PiDesiredFile(
+                    ir.identity.plugin_id,
+                    file.path,
+                    file.content.encode("utf-8") if isinstance(file.content, str) else file.content,
+                    file.executable,
+                )
+                for file in result.files
+            ]
+            retained_sources = _standalone_pi_retained_sources(root, ir.identity.plugin_id, desired)
+            apply_pi_reconciliation(root, desired, retained_sources=retained_sources)
+        else:
+            result.write_to(Path(output_dir))
 
     return result
 

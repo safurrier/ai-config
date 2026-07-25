@@ -477,13 +477,43 @@ class TestConvertCommand:
         call_args = mock_convert.call_args.kwargs
         assert call_args["output_dir"] == Path(tmp_path / "home")
 
-    def test_convert_rejects_unmanaged_pi_output(
-        self, runner: CliRunner, minimal_plugin: Path
+    def test_convert_pi_records_standalone_ownership(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
     ) -> None:
-        result = runner.invoke(main, ["convert", str(minimal_plugin), "--target", "pi"])
+        output = tmp_path / "output"
+        result = runner.invoke(
+            main, ["convert", str(minimal_plugin), "--target", "pi", "--output", str(output)]
+        )
 
-        assert result.exit_code == 2
-        assert "Standalone Pi conversion is disabled" in result.output
+        assert result.exit_code == 0, result.output
+        assert (output / ".ai-config/pi-ownership.json").is_file()
+        assert "Standalone Pi conversion is disabled" not in result.output
+
+    def test_convert_pi_dry_run_reports_ownership_actions(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        skill = minimal_plugin / "skills" / "thing" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: thing\ndescription: thing\n---\nthing\n")
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(minimal_plugin),
+                "--target",
+                "pi",
+                "--output",
+                str(output),
+                "--dry-run",
+                "--format",
+                "json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert '"action": "create"' in result.output
+        assert not output.exists()
 
     def test_convert_writes_report_file(
         self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path

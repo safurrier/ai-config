@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ai_config.converters.claude_parser import parse_claude_plugin
-from ai_config.converters.convert import convert_plugin, preview_conversion
+from ai_config.converters.convert import convert_plugin, convert_plugin_simple, preview_conversion
 from ai_config.converters.emitters import (
     CodexEmitter,
     CursorEmitter,
@@ -28,6 +28,7 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
+from ai_config.pi_ownership import load_pi_ownership
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
 
@@ -1176,6 +1177,120 @@ class TestDryRun:
             / ".ai-config/codex/marketplaces/ai-config-dev-tools/plugins/dev-tools/skills"
         )
         assert package_dir.exists()
+
+
+class TestStandalonePiOwnership:
+    """Standalone Pi conversion uses the same ownership boundary as sync."""
+
+    @staticmethod
+    def _plugin(root: Path, plugin_id: str, skill: str) -> Path:
+        plugin = root / plugin_id
+        (plugin / ".claude-plugin").mkdir(parents=True)
+        (plugin / ".claude-plugin/plugin.json").write_text(
+            json.dumps({"name": plugin_id, "version": "1.0.0", "skills": "./skills"})
+        )
+        skill_file = plugin / "skills" / skill / "SKILL.md"
+        skill_file.parent.mkdir(parents=True)
+        skill_file.write_text(f"---\nname: {skill}\ndescription: {skill}\n---\n{skill}\n")
+        return plugin
+
+    @pytest.mark.parametrize(
+        ("scope", "relative"),
+        [
+            (InstallScope.PROJECT, Path(".pi/skills/alpha-plugin-alpha/SKILL.md")),
+            (InstallScope.USER, Path(".pi/agent/skills/alpha-plugin-alpha/SKILL.md")),
+        ],
+    )
+    def test_standalone_pi_records_project_and_user_output(
+        self, tmp_path: Path, scope: InstallScope, relative: Path
+    ) -> None:
+        output = tmp_path / "output"
+        plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
+
+        report = convert_plugin(plugin, [TargetTool.PI], output, scope)[TargetTool.PI]
+
+        assert (output / relative).is_file()
+        assert load_pi_ownership(output)[relative].source_plugin == "alpha-plugin"
+        assert [file.action for file in report.files_written] == ["create"]
+
+    def test_standalone_pi_reconciles_only_its_prior_output(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        alpha = self._plugin(tmp_path, "alpha-plugin", "alpha")
+        beta = self._plugin(tmp_path, "beta-plugin", "beta")
+        convert_plugin(alpha, [TargetTool.PI], output)
+        convert_plugin(beta, [TargetTool.PI], output)
+        old = output / ".pi/skills/alpha-plugin-alpha/SKILL.md"
+        renamed = alpha / "skills/gamma"
+        (alpha / "skills/alpha").rename(renamed)
+        (renamed / "SKILL.md").write_text("---\nname: gamma\ndescription: gamma\n---\ngamma\n")
+
+        report = convert_plugin(alpha, [TargetTool.PI], output)[TargetTool.PI]
+
+        assert not old.exists()
+        assert (output / ".pi/skills/alpha-plugin-gamma/SKILL.md").is_file()
+        assert (output / ".pi/skills/beta-plugin-beta/SKILL.md").is_file()
+        assert {entry.source_plugin for entry in load_pi_ownership(output).values()} == {
+            "alpha-plugin",
+            "beta-plugin",
+        }
+        assert {file.action for file in report.files_written} == {"create", "remove", "preserve"}
+
+    def test_standalone_pi_preserves_local_changes_and_rejects_collisions(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
+        convert_plugin(plugin, [TargetTool.PI], output)
+        owned = output / ".pi/skills/alpha-plugin-alpha/SKILL.md"
+        owned.write_text("local")
+        (plugin / "skills/alpha").rename(plugin / "skills/renamed")
+        preserved = convert_plugin(plugin, [TargetTool.PI], output)[TargetTool.PI]
+        assert owned.read_text() == "local"
+        assert "preserve" in {file.action for file in preserved.files_written}
+
+        collision_output = tmp_path / "collision"
+        collision = collision_output / ".pi/skills/collision-plugin-alpha/SKILL.md"
+        collision.parent.mkdir(parents=True)
+        collision.write_text("local")
+        with pytest.raises(ValueError, match="Unowned Pi output collision"):
+            convert_plugin(
+                self._plugin(tmp_path, "collision-plugin", "alpha"),
+                [TargetTool.PI],
+                collision_output,
+            )
+
+    def test_standalone_pi_dry_run_and_all_target_conversion(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
+
+        dry_run = convert_plugin(plugin, [TargetTool.PI], output, dry_run=True)[TargetTool.PI]
+        assert [file.action for file in dry_run.files_written] == ["create"]
+        assert not output.exists()
+
+        reports = convert_plugin(
+            plugin,
+            [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
+            output,
+        )
+        assert set(reports) == {
+            TargetTool.CODEX,
+            TargetTool.CURSOR,
+            TargetTool.OPENCODE,
+            TargetTool.PI,
+        }
+        assert (output / ".pi/skills/alpha-plugin-alpha/SKILL.md").is_file()
+        assert load_pi_ownership(output)
+
+    def test_convert_plugin_simple_records_pi_ownership(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
+
+        convert_plugin_simple(plugin, TargetTool.PI, output)
+
+        assert (
+            load_pi_ownership(output)[Path(".pi/skills/alpha-plugin-alpha/SKILL.md")].source_plugin
+            == "alpha-plugin"
+        )
 
 
 class TestPreviewConversion:
