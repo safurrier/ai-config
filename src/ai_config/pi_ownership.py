@@ -15,7 +15,7 @@ from ai_config.output_safety import validated_output_path
 
 _PI_STATE = Path(".ai-config") / "pi-ownership.json"
 _PI_PENDING = Path(".ai-config") / "pi-ownership.pending.json"
-_VERSION = 3
+_VERSION = 4
 PiOwnershipDomain = Literal["standalone", "sync"]
 _STANDALONE_SOURCE = re.compile(r"standalone:([^:\s]+):([0-9a-f]{64})$")
 
@@ -51,6 +51,12 @@ class PiAction:
     ]
     path: Path
     reason: str
+
+
+@dataclass(frozen=True)
+class _OwnershipState:
+    domain: PiOwnershipDomain
+    entries: dict[Path, PiOwnedFile]
 
 
 @dataclass(frozen=True)
@@ -91,26 +97,25 @@ def pi_ownership_domain(source_plugin: str) -> PiOwnershipDomain:
 
 
 def _validate_ownership_domain(
-    entries: dict[Path, PiOwnedFile],
+    state: _OwnershipState | None,
     desired: dict[Path, PiDesiredFile],
     requested_domain: PiOwnershipDomain | None,
-) -> None:
-    existing_domains = {pi_ownership_domain(entry.source_plugin) for entry in entries.values()}
+) -> PiOwnershipDomain | None:
     desired_domains = {pi_ownership_domain(item.source_plugin) for item in desired.values()}
-    if len(existing_domains) > 1 or len(desired_domains) > 1:
+    if len(desired_domains) > 1:
         raise ValueError(
             "Mixed Pi ownership domains are invalid; refusing ambiguous reconciliation"
         )
-    expected = requested_domain or next(iter(desired_domains), None)
-    if expected is not None and existing_domains and existing_domains != {expected}:
-        existing = next(iter(existing_domains))
+    expected = requested_domain or (state.domain if state else next(iter(desired_domains), None))
+    if state is not None and expected is not None and state.domain != expected:
         raise ValueError(
-            f"Pi output ownership domain conflict: this root is {existing}-managed, not "
+            f"Pi output ownership domain conflict: this root is {state.domain}-managed, not "
             f"{expected}-managed. Use a separate root or remove/reconcile the standalone "
             "projection deliberately before retrying."
         )
     if requested_domain is not None and desired_domains and desired_domains != {requested_domain}:
         raise ValueError("Pi desired output ownership domain does not match reconciliation mode")
+    return expected
 
 
 def _safe_relative(path: Path) -> Path:
@@ -173,18 +178,41 @@ def _load_json(path: Path, label: str) -> dict[str, object] | None:
     return payload
 
 
-def load_pi_ownership(root: Path) -> dict[Path, PiOwnedFile]:
-    root = root.expanduser().resolve()
+def _unsupported_schema(path: Path, label: str) -> ValueError:
+    return ValueError(
+        f"Unsupported Pi {label} schema at {path}; automatic cleanup is refused and "
+        "historical output remains outside ownership (see issue #22). Rerun only after "
+        "deliberate cleanup."
+    )
+
+
+def _decode_domain(raw: object, path: Path, label: str) -> PiOwnershipDomain:
+    if raw not in {"sync", "standalone"}:
+        raise ValueError(f"Invalid Pi {label} domain at {path}; refusing ambiguous cleanup")
+    return cast(PiOwnershipDomain, raw)
+
+
+def _load_state(root: Path) -> _OwnershipState | None:
     path = _state_path(root)
     payload = _load_json(path, "ownership state")
     if payload is None:
-        return {}
-    version = payload.get("version")
-    if version not in {1, 2, _VERSION} or payload.get("root") != str(root):
+        return None
+    if payload.get("version") != _VERSION:
+        raise _unsupported_schema(path, "ownership state")
+    if payload.get("root") != str(root):
         raise ValueError(f"Invalid Pi ownership state at {path}; refusing ambiguous cleanup")
-    # Version 1 predates executable-mode ownership. Later schemas must carry it
-    # explicitly so malformed state never makes cleanup decisions for us.
-    return _decode_entries(payload.get("files"), path, root, allow_v1=version == 1)
+    domain = _decode_domain(payload.get("domain"), path, "ownership state")
+    entries = _decode_entries(payload.get("files"), path, root)
+    if any(pi_ownership_domain(entry.source_plugin) != domain for entry in entries.values()):
+        raise ValueError(f"Pi ownership state domain does not match entry identity at {path}")
+    return _OwnershipState(domain, entries)
+
+
+def load_pi_ownership(root: Path) -> dict[Path, PiOwnedFile]:
+    """Return the public ownership-entry view after strict schema validation."""
+    root = root.expanduser().resolve()
+    state = _load_state(root)
+    return {} if state is None else state.entries
 
 
 def _entry_payload(entries: dict[Path, PiOwnedFile]) -> list[dict[str, object]]:
@@ -213,10 +241,21 @@ def _atomic_write(path: Path, payload: dict[str, object]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _write_state(root: Path, entries: dict[Path, PiOwnedFile]) -> None:
+def _write_state(root: Path, domain: PiOwnershipDomain, entries: dict[Path, PiOwnedFile]) -> None:
+    path = _state_path(root)
+    # A first conversion with no emitted files still records its selected domain.
+    # Only an existing ledger reconciled down to no files releases the root.
+    if not entries and path.exists():
+        path.unlink()
+        return
     _atomic_write(
-        _state_path(root),
-        {"version": _VERSION, "root": str(root), "files": _entry_payload(entries)},
+        path,
+        {
+            "version": _VERSION,
+            "root": str(root),
+            "domain": domain,
+            "files": _entry_payload(entries),
+        },
     )
 
 
@@ -272,10 +311,10 @@ def _normalize_desired(root: Path, desired: list[PiDesiredFile]) -> dict[Path, P
 
 def _write_pending(
     root: Path,
+    domain: PiOwnershipDomain,
     actions: list[PiAction],
     next_state: dict[Path, PiOwnedFile],
     desired: dict[Path, PiDesiredFile],
-    previous: dict[Path, PiOwnedFile],
 ) -> None:
     records = []
     for action in actions:
@@ -305,6 +344,7 @@ def _write_pending(
         {
             "version": _VERSION,
             "root": str(root),
+            "domain": domain,
             "files": _entry_payload(next_state),
             "desired": _entry_payload(
                 {
@@ -321,6 +361,7 @@ def _load_pending(
     root: Path,
 ) -> (
     tuple[
+        PiOwnershipDomain,
         list[PiAction],
         dict[Path, PiOwnedFile],
         dict[Path, PiOwnedFile],
@@ -332,10 +373,20 @@ def _load_pending(
     payload = _load_json(path, "ownership pending transaction")
     if payload is None:
         return None
-    if payload.get("version") != _VERSION or payload.get("root") != str(root):
+    if payload.get("version") != _VERSION:
+        raise _unsupported_schema(path, "ownership pending transaction")
+    if payload.get("root") != str(root):
         raise ValueError(f"Invalid Pi ownership pending transaction at {path}")
+    domain = _decode_domain(payload.get("domain"), path, "ownership pending transaction")
     entries = _decode_entries(payload.get("files"), path, root)
     wanted = _decode_entries(payload.get("desired"), path, root)
+    if any(
+        pi_ownership_domain(entry.source_plugin) != domain
+        for entry in (*entries.values(), *wanted.values())
+    ):
+        raise ValueError(
+            f"Pi ownership pending transaction domain does not match entry identity at {path}"
+        )
     raw_actions = payload.get("actions")
     valid = {
         "create_pi_output",
@@ -391,7 +442,7 @@ def _load_pending(
         action.action == "remove_pi_output" for action in actions if action.path in wanted
     ):
         raise ValueError(f"Invalid Pi ownership pending transaction at {path}")
-    return actions, entries, wanted, states
+    return domain, actions, entries, wanted, states
 
 
 def _is_executable(path: Path) -> bool:
@@ -406,9 +457,10 @@ def plan_pi_reconciliation(
     ownership_domain: PiOwnershipDomain | None = None,
 ) -> tuple[list[PiAction], dict[Path, PiOwnedFile]]:
     root = root.expanduser().resolve()
-    previous = load_pi_ownership(root)
+    state = _load_state(root)
+    previous = {} if state is None else state.entries
     desired_by_path = _normalize_desired(root, desired)
-    _validate_ownership_domain(previous, desired_by_path, ownership_domain)
+    _validate_ownership_domain(state, desired_by_path, ownership_domain)
     retained_sources = retained_sources or set()
     actions: list[PiAction] = []
     next_state: dict[Path, PiOwnedFile] = {}
@@ -518,12 +570,19 @@ def _apply_actions(root: Path, actions: list[PiAction], desired: dict[Path, PiDe
 
 
 def _recover_pending(
-    root: Path, desired: dict[Path, PiDesiredFile], retained_sources: set[str]
+    root: Path,
+    desired: dict[Path, PiDesiredFile],
+    retained_sources: set[str],
+    expected_domain: PiOwnershipDomain | None,
 ) -> list[PiAction] | None:
     pending = _load_pending(root)
     if pending is None:
         return None
-    actions, next_state, wanted, states = pending
+    domain, actions, next_state, wanted, states = pending
+    if expected_domain != domain:
+        raise ValueError(
+            "Pending Pi ownership transaction domain does not match reconciliation mode"
+        )
     if set(desired) != set(wanted) or any(
         (d.source_plugin, d.digest, d.executable) != (w.source_plugin, w.digest, w.executable)
         for p, d in desired.items()
@@ -556,7 +615,7 @@ def _recover_pending(
         if _disk_state(root, a.path) == states[a.path][0] and states[a.path][0] != states[a.path][1]
     ]
     _apply_actions(root, apply_now, desired)
-    _write_state(root, next_state)
+    _write_state(root, domain, next_state)
     _pending_path(root).unlink()
     return actions
 
@@ -571,16 +630,16 @@ def apply_pi_reconciliation(
 ) -> list[PiAction]:
     root = root.expanduser().resolve()
     desired_by_path = _normalize_desired(root, desired)
-    previous = load_pi_ownership(root)
-    _validate_ownership_domain(previous, desired_by_path, ownership_domain)
+    state = _load_state(root)
+    domain = _validate_ownership_domain(state, desired_by_path, ownership_domain)
     retained_sources = retained_sources or set()
     pending = _load_pending(root)
     if pending is not None:
         # Recovery validation is deliberately identical for preview and apply.
         if dry_run:
-            _recover_pending_plan(root, desired_by_path, retained_sources, pending)
-            return pending[0]
-        recovered = _recover_pending(root, desired_by_path, retained_sources)
+            _recover_pending_plan(root, desired_by_path, retained_sources, domain, pending)
+            return pending[1]
+        recovered = _recover_pending(root, desired_by_path, retained_sources, domain)
         if recovered is not None:
             return recovered
     actions, next_state = plan_pi_reconciliation(
@@ -591,9 +650,11 @@ def apply_pi_reconciliation(
     )
     if dry_run:
         return actions
-    _write_pending(root, actions, next_state, desired_by_path, previous)
+    if domain is None:
+        return actions
+    _write_pending(root, domain, actions, next_state, desired_by_path)
     _apply_actions(root, actions, desired_by_path)
-    _write_state(root, next_state)
+    _write_state(root, domain, next_state)
     _pending_path(root).unlink()
     return actions
 
@@ -602,14 +663,20 @@ def _recover_pending_plan(
     root: Path,
     desired: dict[Path, PiDesiredFile],
     retained_sources: set[str],
+    expected_domain: PiOwnershipDomain | None,
     pending: tuple[
+        PiOwnershipDomain,
         list[PiAction],
         dict[Path, PiOwnedFile],
         dict[Path, PiOwnedFile],
         dict[Path, tuple[_DiskState, _DiskState]],
     ],
 ) -> None:
-    actions, _next, wanted, states = pending
+    domain, actions, _next, wanted, states = pending
+    if expected_domain != domain:
+        raise ValueError(
+            "Pending Pi ownership transaction domain does not match reconciliation mode"
+        )
     if set(desired) != set(wanted) or any(
         (d.source_plugin, d.digest, d.executable)
         != (wanted[p].source_plugin, wanted[p].digest, wanted[p].executable)

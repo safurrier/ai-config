@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -30,6 +31,23 @@ def test_create_update_remove_and_noop_are_owned(tmp_path: Path) -> None:
         "update_pi_output"
     ]
     assert [a.action for a in apply_pi_reconciliation(tmp_path, [])] == ["remove_pi_output"]
+
+
+def test_current_state_persists_explicit_domain(tmp_path: Path) -> None:
+    apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    state = json.loads((tmp_path / ".ai-config/pi-ownership.json").read_text())
+    assert state["version"] == 4
+    assert state["domain"] == "sync"
+
+
+def test_tampered_state_domain_is_rejected(tmp_path: Path) -> None:
+    apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    state_path = tmp_path / ".ai-config/pi-ownership.json"
+    state = json.loads(state_path.read_text())
+    state["domain"] = "standalone"
+    state_path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="domain does not match entry identity"):
+        apply_pi_reconciliation(tmp_path, [], ownership_domain="standalone")
 
 
 def test_non_overlapping_ownership_domains_reject_in_both_directions(tmp_path: Path) -> None:
@@ -82,8 +100,9 @@ def test_invalid_ledger_source_identity_is_rejected(tmp_path: Path) -> None:
     state.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "root": str(tmp_path.resolve()),
+                "domain": "sync",
                 "files": [
                     {
                         "source_plugin": "standalone:bad",
@@ -171,7 +190,7 @@ def test_checkpoint_failure_recovers_on_normal_retry(
     target = [] if after is None else [desired(".pi/a", after)]
     original_write_state = ownership._write_state
     monkeypatch.setattr(
-        ownership, "_write_state", lambda root, entries: (_ for _ in ()).throw(OSError("nope"))
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("nope"))
     )
     with pytest.raises(OSError, match="nope"):
         apply_pi_reconciliation(tmp_path, target)
@@ -185,6 +204,44 @@ def test_checkpoint_failure_recovers_on_normal_retry(
     else:
         assert owned[Path(".pi/a")].digest == digest_content(after)
         assert (tmp_path / ".pi/a").read_text() == after
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_old_pending_schema_refuses_recovery_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int
+) -> None:
+    original_write_state = ownership._write_state
+    monkeypatch.setattr(
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("checkpoint"))
+    )
+    with pytest.raises(OSError, match="checkpoint"):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    pending_path = tmp_path / ".ai-config/pi-ownership.pending.json"
+    pending = json.loads(pending_path.read_text())
+    pending["version"] = version
+    pending_path.write_text(json.dumps(pending))
+    with pytest.raises(ValueError, match="automatic cleanup is refused.*issue #22"):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    assert (tmp_path / ".pi/a").read_text() == "one"
+
+
+def test_pending_domain_mismatch_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_write_state = ownership._write_state
+    monkeypatch.setattr(
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("checkpoint"))
+    )
+    with pytest.raises(OSError, match="checkpoint"):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    pending_path = tmp_path / ".ai-config/pi-ownership.pending.json"
+    pending = json.loads(pending_path.read_text())
+    pending["domain"] = "standalone"
+    pending_path.write_text(json.dumps(pending))
+    with pytest.raises(ValueError, match="domain does not match entry identity"):
+        apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
 
 
 def test_pending_recovery_preserves_post_crash_user_edits(
@@ -244,8 +301,9 @@ def test_pending_and_ledger_entries_validate_root_and_temp_collisions_are_preser
     state.write_text(
         json.dumps(
             {
-                "version": 3,
+                "version": 4,
                 "root": str(tmp_path.resolve()),
+                "domain": "sync",
                 "files": [
                     {
                         "source_plugin": "demo@local",
@@ -266,11 +324,18 @@ def test_pending_and_ledger_entries_validate_root_and_temp_collisions_are_preser
     assert reserved.read_text() == "user"
 
 
-@pytest.mark.parametrize("version", [2, 3])
-def test_newer_ledger_versions_require_explicit_executable_mode(
-    tmp_path: Path, version: int
+@pytest.mark.parametrize("version", [1, 2, 3])
+@pytest.mark.parametrize(
+    ("domain", "owner"),
+    [("sync", "demo@local"), ("standalone", "standalone:demo:" + "a" * 64)],
+)
+def test_old_ledger_schema_refuses_cleanup_without_mutation(
+    tmp_path: Path, version: int, domain: Literal["sync", "standalone"], owner: str
 ) -> None:
     state = tmp_path / ".ai-config/pi-ownership.json"
+    output = tmp_path / ".pi/a"
+    output.parent.mkdir(parents=True)
+    output.write_text("historical")
     state.parent.mkdir()
     state.write_text(
         json.dumps(
@@ -278,30 +343,48 @@ def test_newer_ledger_versions_require_explicit_executable_mode(
                 "version": version,
                 "root": str(tmp_path.resolve()),
                 "files": [
-                    {"source_plugin": "demo@local", "path": ".pi/a", "digest": digest_content("a")}
+                    {
+                        "source_plugin": owner,
+                        "path": ".pi/a",
+                        "digest": digest_content("historical"),
+                    }
                 ],
             }
         )
     )
-    with pytest.raises(ValueError, match="Incomplete Pi ownership entry"):
-        load_pi_ownership(tmp_path)
+    with pytest.raises(ValueError, match="automatic cleanup is refused.*issue #22"):
+        apply_pi_reconciliation(tmp_path, [], ownership_domain=domain)
+    assert output.read_text() == "historical"
+    assert json.loads(state.read_text())["version"] == version
 
 
-def test_v1_ledger_defaults_missing_executable_mode(tmp_path: Path) -> None:
-    state = tmp_path / ".ai-config/pi-ownership.json"
-    state.parent.mkdir()
-    state.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "root": str(tmp_path.resolve()),
-                "files": [
-                    {"source_plugin": "demo@local", "path": ".pi/a", "digest": digest_content("a")}
-                ],
-            }
-        )
+def test_final_removal_deletes_state_and_allows_new_domain(tmp_path: Path) -> None:
+    apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    apply_pi_reconciliation(tmp_path, [], ownership_domain="sync")
+    assert not (tmp_path / ".ai-config/pi-ownership.json").exists()
+    standalone_owner = standalone_pi_source_identity(tmp_path / "plugin", "demo")
+    apply_pi_reconciliation(
+        tmp_path,
+        [desired(".pi/standalone", owner=standalone_owner)],
+        ownership_domain="standalone",
     )
-    assert not load_pi_ownership(tmp_path)[Path(".pi/a")].executable
+
+
+def test_final_removal_checkpoint_failure_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
+    original_write_state = ownership._write_state
+    monkeypatch.setattr(
+        ownership, "_write_state", lambda *_: (_ for _ in ()).throw(OSError("checkpoint"))
+    )
+    with pytest.raises(OSError, match="checkpoint"):
+        apply_pi_reconciliation(tmp_path, [], ownership_domain="sync")
+    assert (tmp_path / ".ai-config/pi-ownership.pending.json").exists()
+    monkeypatch.setattr(ownership, "_write_state", original_write_state)
+    apply_pi_reconciliation(tmp_path, [], ownership_domain="sync")
+    assert not (tmp_path / ".ai-config/pi-ownership.json").exists()
+    assert not (tmp_path / ".ai-config/pi-ownership.pending.json").exists()
 
 
 @pytest.mark.parametrize("base", [Path(".pi"), Path(".pi/agent")])
