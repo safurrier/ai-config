@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pi sync now records ai-config-owned generated files with source identity and content digests, reconciles disabled/removed Pi output safely, and reports create/update/remove/no-op/local-modification actions without adopting historical unowned output.
+
 ## [0.6.1] - 2026-07-24
 
 ### Fixed

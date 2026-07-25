@@ -21,6 +21,8 @@ from ai_config.codex_lifecycle import (
 from ai_config.converters import InstallScope, TargetTool, convert_plugin
 from ai_config.converters.claude_parser import normalize_portable_name, parse_claude_plugin
 from ai_config.converters.codex_package import CodexPackageSpec, codex_package_spec
+from ai_config.converters.emitters import PiEmitter
+from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation, load_pi_ownership
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -34,7 +36,7 @@ from ai_config.types import (
     TargetConfig,
 )
 
-_CONVERSION_CACHE_VERSION = 6
+_CONVERSION_CACHE_VERSION = 7
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,13 @@ def _load_conversion_cache() -> dict:
     ):
         raise ValueError(
             f"Invalid conversion cache Codex output roots at {cache_path}; clear it and retry"
+        )
+    pi_dirs = raw.get("pi_output_dirs", [])
+    if not isinstance(pi_dirs, list) or any(
+        not isinstance(item, str) or not item for item in pi_dirs
+    ):
+        raise ValueError(
+            f"Invalid conversion cache Pi output roots at {cache_path}; clear the cache and retry"
         )
     return raw
 
@@ -467,6 +476,15 @@ def _owned_codex_output_dirs(
     return owned_roots
 
 
+def _pi_root_has_ownership(root: Path) -> bool:
+    """Return whether a root has a readable ai-config Pi ledger."""
+    try:
+        return bool(load_pi_ownership(root))
+    except ValueError:
+        # The reconciliation call surfaces malformed state as a hard error.
+        return True
+
+
 def _sync_lifecycle_actions(actions: Iterable[CodexLifecycleAction]) -> list[SyncAction]:
     return [
         SyncAction(action=action.action, target=action.target, reason=action.reason)
@@ -528,6 +546,12 @@ def _sync_conversions(
     ):
         return [], [], ["Invalid cached Codex output roots; clear the cache and retry"]
     cache["codex_output_dirs"] = tracked_output_dirs
+    tracked_pi_output_dirs = cache.get("pi_output_dirs", [])
+    if not isinstance(tracked_pi_output_dirs, list) or any(
+        not isinstance(tracked, str) or not tracked for tracked in tracked_pi_output_dirs
+    ):
+        return [], [], ["Invalid cached Pi output roots; clear the cache and retry"]
+    cache["pi_output_dirs"] = tracked_pi_output_dirs
     cache_dirty = False
 
     conversion = config.conversion
@@ -545,7 +569,12 @@ def _sync_conversions(
         scope = InstallScope.PROJECT
         signature = ""
     codex_enabled = TargetTool.CODEX in targets
+    pi_enabled = TargetTool.PI in targets
     resolved_output_dir = str(output_dir.resolve())
+    if pi_enabled and resolved_output_dir not in tracked_pi_output_dirs:
+        tracked_pi_output_dirs.append(resolved_output_dir)
+        tracked_pi_output_dirs.sort()
+        cache_dirty = True
     if codex_enabled and resolved_output_dir not in tracked_output_dirs:
         tracked_output_dirs.append(resolved_output_dir)
         tracked_output_dirs.sort()
@@ -567,6 +596,14 @@ def _sync_conversions(
         root
         for root in prior_output_dirs
         if not codex_enabled or root.resolve() != output_dir.resolve()
+    ]
+    prior_pi_output_dirs = [
+        Path(item).expanduser().resolve()
+        for item in tracked_pi_output_dirs
+        if _pi_root_has_ownership(Path(item).expanduser().resolve())
+    ]
+    retiring_pi_output_dirs = [
+        root for root in prior_pi_output_dirs if not pi_enabled or root != output_dir.resolve()
     ]
 
     installed_by_id: dict[str, claude.InstalledPlugin] = {}
@@ -671,6 +708,20 @@ def _sync_conversions(
             errors.append(str(error))
             return [], [], errors
 
+    # Pi is reconciled as one owned output set, rather than plugin-by-plugin writes.
+    pi_desired: list[PiDesiredFile] = []
+    if pi_enabled:
+        for candidate in candidates:
+            ir = parse_claude_plugin(candidate.plugin_path)
+            emitted = PiEmitter(scope).emit(ir)
+            for file in emitted.files:
+                content = (
+                    file.content.encode("utf-8") if isinstance(file.content, str) else file.content
+                )
+                pi_desired.append(
+                    PiDesiredFile(candidate.config_id, file.path, content, file.executable)
+                )
+
     candidates_to_convert: list[tuple[_ConversionCandidate, str | None]] = []
     for candidate in candidates:
         plugin_hash = _compute_plugin_hash(candidate.plugin_path)
@@ -690,12 +741,15 @@ def _sync_conversions(
         if not cache_valid:
             candidates_to_convert.append((candidate, plugin_hash))
 
+    # Pi has its own ownership-aware write path; other targets retain existing behavior.
+    non_pi_targets = [target for target in targets if target != TargetTool.PI]
+
     # Validate every emitter result in memory before lifecycle cleanup or generated writes.
     for candidate, _plugin_hash in candidates_to_convert:
         try:
             reports = convert_plugin(
                 plugin_path=candidate.plugin_path,
-                targets=targets,
+                targets=non_pi_targets,
                 output_dir=output_dir,
                 scope=scope,
                 dry_run=True,
@@ -716,6 +770,13 @@ def _sync_conversions(
     preflight_actions: list[SyncAction] = []
     target_removed_reason = "Codex conversion target is disabled or removed"
     try:
+        pi_plan_roots = [(output_dir, pi_desired)] if pi_enabled else []
+        pi_plan_roots.extend((root, []) for root in retiring_pi_output_dirs)
+        for pi_root, desired in pi_plan_roots:
+            preflight_actions.extend(
+                SyncAction(action=action.action, target=str(action.path), reason=action.reason)
+                for action in apply_pi_reconciliation(pi_root, desired, dry_run=True)
+            )
         for retiring_root in retiring_output_dirs:
             planned = sync_codex_packages(
                 [],
@@ -758,6 +819,23 @@ def _sync_conversions(
     if dry_run:
         return preflight_actions, [], []
 
+    # Do not checkpoint ownership until each root's entire filesystem plan succeeds.
+    for pi_root, desired in ([(output_dir, pi_desired)] if pi_enabled else []) + [
+        (root, []) for root in retiring_pi_output_dirs
+    ]:
+        try:
+            completed_pi = apply_pi_reconciliation(pi_root, desired)
+            actions.extend(
+                SyncAction(action=item.action, target=str(item.path), reason=item.reason)
+                for item in completed_pi
+            )
+        except (OSError, ValueError) as error:
+            return actions, failed_actions, [str(error)]
+    retained_pi_roots = {str(output_dir.resolve())} if pi_enabled else set()
+    if tracked_pi_output_dirs != sorted(retained_pi_roots):
+        tracked_pi_output_dirs[:] = sorted(retained_pi_roots)
+        cache_dirty = True
+
     for retiring_root in retiring_output_dirs:
         completed, failed, lifecycle_errors = _apply_codex_lifecycle(
             [],
@@ -781,7 +859,7 @@ def _sync_conversions(
         try:
             reports = convert_plugin(
                 plugin_path=candidate.plugin_path,
-                targets=targets,
+                targets=non_pi_targets,
                 output_dir=output_dir,
                 scope=scope,
                 dry_run=False,
