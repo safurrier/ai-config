@@ -28,7 +28,7 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
-from ai_config.pi_ownership import load_pi_ownership
+from ai_config.pi_ownership import load_pi_ownership, standalone_pi_source_identity
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
 
@@ -1183,8 +1183,8 @@ class TestStandalonePiOwnership:
     """Standalone Pi conversion uses the same ownership boundary as sync."""
 
     @staticmethod
-    def _plugin(root: Path, plugin_id: str, skill: str) -> Path:
-        plugin = root / plugin_id
+    def _plugin(root: Path, plugin_id: str, skill: str, *, directory: str | None = None) -> Path:
+        plugin = root / (directory or plugin_id)
         (plugin / ".claude-plugin").mkdir(parents=True)
         (plugin / ".claude-plugin/plugin.json").write_text(
             json.dumps({"name": plugin_id, "version": "1.0.0", "skills": "./skills"})
@@ -1210,7 +1210,9 @@ class TestStandalonePiOwnership:
         report = convert_plugin(plugin, [TargetTool.PI], output, scope)[TargetTool.PI]
 
         assert (output / relative).is_file()
-        assert load_pi_ownership(output)[relative].source_plugin == "alpha-plugin"
+        assert load_pi_ownership(output)[relative].source_plugin == standalone_pi_source_identity(
+            plugin, "alpha-plugin"
+        )
         assert [file.action for file in report.files_written] == ["create"]
 
     def test_standalone_pi_reconciles_only_its_prior_output(self, tmp_path: Path) -> None:
@@ -1230,8 +1232,8 @@ class TestStandalonePiOwnership:
         assert (output / ".pi/skills/alpha-plugin-gamma/SKILL.md").is_file()
         assert (output / ".pi/skills/beta-plugin-beta/SKILL.md").is_file()
         assert {entry.source_plugin for entry in load_pi_ownership(output).values()} == {
-            "alpha-plugin",
-            "beta-plugin",
+            standalone_pi_source_identity(alpha, "alpha-plugin"),
+            standalone_pi_source_identity(beta, "beta-plugin"),
         }
         assert {file.action for file in report.files_written} == {"create", "remove", "preserve"}
 
@@ -1281,16 +1283,55 @@ class TestStandalonePiOwnership:
         assert (output / ".pi/skills/alpha-plugin-alpha/SKILL.md").is_file()
         assert load_pi_ownership(output)
 
-    def test_convert_plugin_simple_records_pi_ownership(self, tmp_path: Path) -> None:
+    def test_standalone_sources_with_shared_manifest_id_cannot_take_over_output(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        first = self._plugin(tmp_path, "shared-plugin", "alpha", directory="first")
+        second = self._plugin(tmp_path, "shared-plugin", "alpha", directory="second")
+        relative = Path(".pi/skills/shared-plugin-alpha/SKILL.md")
+        convert_plugin(first, [TargetTool.PI], output)
+        first_content = (output / relative).read_text()
+
+        for content in ("alpha\n", "changed\n"):
+            (second / "skills/alpha/SKILL.md").write_text(
+                f"---\nname: alpha\ndescription: alpha\n---\n{content}"
+            )
+            with pytest.raises(ValueError, match="Pi output ownership collision") as error:
+                convert_plugin(second, [TargetTool.PI], output)
+            assert "standalone:shared-plugin:" in str(error.value)
+            assert (output / relative).read_text() == first_content
+
+    def test_standalone_sources_with_shared_manifest_id_retain_renamed_output(
+        self, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        first = self._plugin(tmp_path, "shared-plugin", "alpha", directory="first")
+        second = self._plugin(tmp_path, "shared-plugin", "beta", directory="second")
+        convert_plugin(first, [TargetTool.PI], output)
+        convert_plugin(second, [TargetTool.PI], output)
+
+        assert (output / ".pi/skills/shared-plugin-alpha/SKILL.md").is_file()
+        assert (output / ".pi/skills/shared-plugin-beta/SKILL.md").is_file()
+
+    def test_same_standalone_source_rerun_is_convergent(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
+        convert_plugin(plugin, [TargetTool.PI], output)
+
+        report = convert_plugin(plugin, [TargetTool.PI], output)[TargetTool.PI]
+
+        assert [file.action for file in report.files_written] == ["noop"]
+
+    def test_convert_plugin_simple_matches_standalone_owner_identity(self, tmp_path: Path) -> None:
         output = tmp_path / "output"
         plugin = self._plugin(tmp_path, "alpha-plugin", "alpha")
 
         convert_plugin_simple(plugin, TargetTool.PI, output)
 
-        assert (
-            load_pi_ownership(output)[Path(".pi/skills/alpha-plugin-alpha/SKILL.md")].source_plugin
-            == "alpha-plugin"
-        )
+        assert load_pi_ownership(output)[
+            Path(".pi/skills/alpha-plugin-alpha/SKILL.md")
+        ].source_plugin == standalone_pi_source_identity(plugin, "alpha-plugin")
 
 
 class TestPreviewConversion:

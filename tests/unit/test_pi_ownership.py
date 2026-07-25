@@ -10,11 +10,12 @@ from ai_config.pi_ownership import (
     digest_content,
     load_pi_ownership,
     plan_pi_reconciliation,
+    standalone_pi_source_identity,
 )
 
 
-def desired(path: str, content: str = "one") -> PiDesiredFile:
-    return PiDesiredFile("demo@local", Path(path), content.encode())
+def desired(path: str, content: str = "one", owner: str = "demo@local") -> PiDesiredFile:
+    return PiDesiredFile(owner, Path(path), content.encode())
 
 
 def test_create_update_remove_and_noop_are_owned(tmp_path: Path) -> None:
@@ -29,6 +30,29 @@ def test_create_update_remove_and_noop_are_owned(tmp_path: Path) -> None:
         "update_pi_output"
     ]
     assert [a.action for a in apply_pi_reconciliation(tmp_path, [])] == ["remove_pi_output"]
+
+
+def test_ledger_owner_collision_rejects_standalone_and_sync_in_both_directions(
+    tmp_path: Path,
+) -> None:
+    standalone_owner = standalone_pi_source_identity(tmp_path / "standalone", "shared-plugin")
+    sync_owner = "shared-plugin@marketplace"
+    apply_pi_reconciliation(
+        tmp_path,
+        [
+            desired(".pi/standalone-first", owner=standalone_owner),
+            desired(".pi/sync-first", owner=sync_owner),
+        ],
+    )
+
+    for path, existing, requested in (
+        (".pi/standalone-first", standalone_owner, sync_owner),
+        (".pi/sync-first", sync_owner, standalone_owner),
+    ):
+        with pytest.raises(ValueError, match="existing owner.*requested owner") as error:
+            apply_pi_reconciliation(tmp_path, [desired(path, owner=requested)])
+        assert existing in str(error.value)
+        assert requested in str(error.value)
 
 
 def test_unowned_collision_and_local_change_are_preserved(tmp_path: Path) -> None:
@@ -157,7 +181,12 @@ def test_pending_and_ledger_entries_validate_root_and_temp_collisions_are_preser
                 "version": 3,
                 "root": str(tmp_path.resolve()),
                 "files": [
-                    {"source_plugin": "x", "path": ".pi/a", "digest": digest, "executable": False}
+                    {
+                        "source_plugin": "demo@local",
+                        "path": ".pi/a",
+                        "digest": digest,
+                        "executable": False,
+                    }
                 ],
             }
         )

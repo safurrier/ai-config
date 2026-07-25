@@ -61,6 +61,13 @@ def digest_content(content: bytes | str) -> str:
     return hashlib.sha256(content.encode() if isinstance(content, str) else content).hexdigest()
 
 
+def standalone_pi_source_identity(plugin_path: Path, plugin_id: str) -> str:
+    """Return a path-stable ledger owner for one standalone plugin source."""
+    resolved_path = plugin_path.expanduser().resolve()
+    path_digest = hashlib.sha256(str(resolved_path).encode()).hexdigest()
+    return f"standalone:{plugin_id}:{path_digest}"
+
+
 def _safe_relative(path: Path) -> Path:
     # Path normalizes harmless ``.`` components; reject lexical traversal before it can escape.
     if path.is_absolute() or ".." in path.parts or not path.parts:
@@ -357,6 +364,11 @@ def plan_pi_reconciliation(
     for relative, item in sorted(desired_by_path.items(), key=lambda p: p[0].as_posix()):
         path = validated_output_path(root, relative)
         old = previous.get(relative)
+        if old is not None and old.source_plugin != item.source_plugin:
+            raise ValueError(
+                f"Pi output ownership collision at {path}; existing owner "
+                f"'{old.source_plugin}' conflicts with requested owner '{item.source_plugin}'"
+            )
         current = _disk_state(root, relative)
         if old is None and current.exists:
             raise ValueError(
