@@ -66,7 +66,14 @@ def convert_plugin(
             reports[target] = report
         return reports
 
-    # Convert to each target
+    # Validate Pi ownership before any target can mutate the shared output root.
+    # Dry runs already use the reconciliation planner as their sole non-mutating
+    # operation, so only mutating conversions need this separate preflight.
+    pi_result: EmitResult | None = None
+    if output_dir is not None and not dry_run and TargetTool.PI in targets:
+        pi_result = _preflight_pi_reconciliation(ir, plugin_path, output_dir, scope)
+
+    # Preserve the caller's requested report order after the Pi preflight succeeds.
     reports = {}
     for target in targets:
         report = _convert_to_target(
@@ -77,10 +84,46 @@ def convert_plugin(
             scope=scope,
             dry_run=dry_run,
             best_effort=best_effort,
+            emit_result=pi_result if target == TargetTool.PI else None,
         )
         reports[target] = report
 
     return reports
+
+
+def _pi_reconciliation_inputs(
+    ir: PluginIR, source_path: Path, result: EmitResult
+) -> tuple[str, list[PiDesiredFile]]:
+    """Build the ownership inputs shared by Pi preflight and application."""
+    source_plugin = standalone_pi_source_identity(source_path, ir.identity.plugin_id)
+    desired = [
+        PiDesiredFile(
+            source_plugin,
+            file.path,
+            file.content.encode("utf-8") if isinstance(file.content, str) else file.content,
+            file.executable,
+        )
+        for file in result.files
+    ]
+    return source_plugin, desired
+
+
+def _preflight_pi_reconciliation(
+    ir: PluginIR, source_path: Path, output_dir: Path, scope: InstallScope
+) -> EmitResult:
+    """Plan Pi reconciliation without changing disk before other targets write."""
+    result = get_emitter(TargetTool.PI, scope).emit(ir)
+    if any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics):
+        raise ValueError("Pi conversion preflight has blocking emitter diagnostics")
+    source_plugin, desired = _pi_reconciliation_inputs(ir, source_path, result)
+    apply_pi_reconciliation(
+        output_dir,
+        desired,
+        dry_run=True,
+        retained_sources=_standalone_pi_retained_sources(output_dir, source_plugin),
+        ownership_domain="standalone",
+    )
+    return result
 
 
 def _convert_to_target(
@@ -91,6 +134,7 @@ def _convert_to_target(
     scope: InstallScope,
     dry_run: bool,
     best_effort: bool,
+    emit_result: EmitResult | None = None,
 ) -> ConversionReport:
     """Convert IR to a single target format."""
     report = ConversionReport(
@@ -108,8 +152,7 @@ def _convert_to_target(
 
     # Get emitter and emit
     try:
-        emitter = get_emitter(target, scope)
-        result = emitter.emit(ir)
+        result = emit_result or get_emitter(target, scope).emit(ir)
     except Exception as e:
         if best_effort:
             from ai_config.converters.ir import Diagnostic
@@ -144,16 +187,7 @@ def _convert_to_target(
     # standalone conversion remove only this plugin's stale files while retaining
     # projections from other plugins at the same root.
     if output_dir and target == TargetTool.PI:
-        source_plugin = standalone_pi_source_identity(source_path, ir.identity.plugin_id)
-        desired = [
-            PiDesiredFile(
-                source_plugin,
-                file.path,
-                file.content.encode("utf-8") if isinstance(file.content, str) else file.content,
-                file.executable,
-            )
-            for file in result.files
-        ]
+        source_plugin, desired = _pi_reconciliation_inputs(ir, source_path, result)
         retained_sources = _standalone_pi_retained_sources(output_dir, source_plugin)
         actions = apply_pi_reconciliation(
             output_dir,

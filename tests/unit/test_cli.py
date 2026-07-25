@@ -481,6 +481,9 @@ class TestConvertCommand:
         self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
     ) -> None:
         output = tmp_path / "output"
+        skill = minimal_plugin / "skills" / "thing" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: thing\ndescription: thing\n---\nthing\n")
         result = runner.invoke(
             main, ["convert", str(minimal_plugin), "--target", "pi", "--output", str(output)]
         )
@@ -488,6 +491,26 @@ class TestConvertCommand:
         assert result.exit_code == 0, result.output
         assert (output / ".ai-config/pi-ownership.json").is_file()
         assert "Standalone Pi conversion is disabled" not in result.output
+
+    def test_convert_all_preflights_pi_before_other_target_writes(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        ledger = output / ".ai-config/pi-ownership.json"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text('{"version": 1, "files": []}')
+
+        with pytest.raises(ValueError, match="Unsupported Pi ownership state schema"):
+            runner.invoke(
+                main,
+                ["convert", str(minimal_plugin), "-t", "all", "--output", str(output)],
+                catch_exceptions=False,
+            )
+
+        assert not (output / ".ai-config/codex").exists()
+        assert not (output / ".cursor").exists()
+        assert not (output / ".opencode").exists()
+        assert not (output / "opencode.json").exists()
 
     def test_convert_pi_dry_run_reports_ownership_actions(
         self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path

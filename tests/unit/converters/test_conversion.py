@@ -28,7 +28,12 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
-from ai_config.pi_ownership import load_pi_ownership, standalone_pi_source_identity
+from ai_config.pi_ownership import (
+    PiDesiredFile,
+    apply_pi_reconciliation,
+    load_pi_ownership,
+    standalone_pi_source_identity,
+)
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "sample-plugins"
 
@@ -1269,19 +1274,83 @@ class TestStandalonePiOwnership:
         assert [file.action for file in dry_run.files_written] == ["create"]
         assert not output.exists()
 
-        reports = convert_plugin(
-            plugin,
-            [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
-            output,
-        )
-        assert set(reports) == {
-            TargetTool.CODEX,
-            TargetTool.CURSOR,
-            TargetTool.OPENCODE,
-            TargetTool.PI,
-        }
+        targets = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI]
+        reports = convert_plugin(plugin, targets, output)
+        assert list(reports) == targets
+        assert (output / ".ai-config/codex").is_dir()
+        assert (output / ".cursor").is_dir()
+        assert (output / ".opencode/skills/alpha-plugin-alpha/SKILL.md").is_file()
         assert (output / ".pi/skills/alpha-plugin-alpha/SKILL.md").is_file()
         assert load_pi_ownership(output)
+
+    @staticmethod
+    def _assert_no_non_pi_output(output: Path) -> None:
+        assert not (output / ".ai-config/codex").exists()
+        assert not (output / ".cursor").exists()
+        assert not (output / ".opencode").exists()
+        assert not (output / "opencode.json").exists()
+        assert not (output / "opencode.lsp.json").exists()
+
+    @pytest.mark.parametrize(
+        "invalid_ledger",
+        [
+            '{"version": 1, "files": []}',
+            "not json",
+        ],
+        ids=["legacy-schema", "malformed"],
+    )
+    def test_pi_ledger_preflight_blocks_all_target_writes(
+        self, tmp_path: Path, invalid_ledger: str
+    ) -> None:
+        output = tmp_path / "output"
+        ledger = output / ".ai-config/pi-ownership.json"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text(invalid_ledger)
+
+        with pytest.raises(ValueError):
+            convert_plugin(
+                self._plugin(tmp_path, "alpha-plugin", "alpha"),
+                [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
+                output,
+                best_effort=True,
+            )
+
+        self._assert_no_non_pi_output(output)
+        assert ledger.read_text() == invalid_ledger
+
+    def test_pi_domain_conflict_preflight_blocks_all_target_writes(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        apply_pi_reconciliation(
+            output,
+            [PiDesiredFile("sync-plugin@1", Path(".pi/sync.md"), b"sync")],
+            ownership_domain="sync",
+        )
+
+        with pytest.raises(ValueError, match="ownership domain conflict"):
+            convert_plugin(
+                self._plugin(tmp_path, "alpha-plugin", "alpha"),
+                [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
+                output,
+            )
+
+        self._assert_no_non_pi_output(output)
+        assert (output / ".pi/sync.md").read_text() == "sync"
+
+    def test_unowned_pi_collision_preflight_blocks_all_target_writes(self, tmp_path: Path) -> None:
+        output = tmp_path / "output"
+        collision = output / ".pi/skills/alpha-plugin-alpha/SKILL.md"
+        collision.parent.mkdir(parents=True)
+        collision.write_text("local")
+
+        with pytest.raises(ValueError, match="Unowned Pi output collision"):
+            convert_plugin(
+                self._plugin(tmp_path, "alpha-plugin", "alpha"),
+                [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
+                output,
+            )
+
+        self._assert_no_non_pi_output(output)
+        assert collision.read_text() == "local"
 
     def test_standalone_sources_with_shared_manifest_id_cannot_take_over_output(
         self, tmp_path: Path
