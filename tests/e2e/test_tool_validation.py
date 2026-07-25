@@ -152,7 +152,7 @@ class TestCodexToolValidation:
     def test_codex_pinned_version(self, all_tools_container: Container) -> None:
         exit_code, output = exec_in_container(all_tools_container, "codex --version")
         assert exit_code == 0, f"Codex CLI not available: {output}"
-        assert "0.144.5" in output
+        assert "0.145.0" in output
 
     def test_generated_package_full_lifecycle(self, all_tools_container: Container) -> None:
         """The pinned all-tools lane proves install, discovery, update, and removal."""
@@ -161,7 +161,7 @@ class TestCodexToolValidation:
             "codex_bin=$(command -v codex) && "
             "env -u OPENAI_API_KEY -u CODEX_API_KEY -u CHATGPT_API_KEY "
             "uv run python tests/probes/probe_codex_plugin_package.py "
-            '--codex "$codex_bin" --expected-version 0.144.5',
+            '--codex "$codex_bin" --expected-version 0.145.0',
         )
         assert exit_code == 0, f"Codex package lifecycle probe failed: {output}"
         assert '"result": "passed"' in output
