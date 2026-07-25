@@ -156,7 +156,11 @@ def _convert_to_target(
         ]
         retained_sources = _standalone_pi_retained_sources(output_dir, source_plugin)
         actions = apply_pi_reconciliation(
-            output_dir, desired, dry_run=dry_run, retained_sources=retained_sources
+            output_dir,
+            desired,
+            dry_run=dry_run,
+            retained_sources=retained_sources,
+            ownership_domain="standalone",
         )
         desired_sizes = {item.relative_path: len(item.content) for item in desired}
         for item in actions:
@@ -235,7 +239,9 @@ def convert_plugin_simple(
                 for file in result.files
             ]
             retained_sources = _standalone_pi_retained_sources(root, source_plugin)
-            apply_pi_reconciliation(root, desired, retained_sources=retained_sources)
+            apply_pi_reconciliation(
+                root, desired, retained_sources=retained_sources, ownership_domain="standalone"
+            )
         else:
             result.write_to(Path(output_dir))
 

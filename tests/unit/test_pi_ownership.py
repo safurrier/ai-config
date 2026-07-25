@@ -32,22 +32,88 @@ def test_create_update_remove_and_noop_are_owned(tmp_path: Path) -> None:
     assert [a.action for a in apply_pi_reconciliation(tmp_path, [])] == ["remove_pi_output"]
 
 
-def test_ledger_owner_collision_rejects_standalone_and_sync_in_both_directions(
-    tmp_path: Path,
-) -> None:
-    standalone_owner = standalone_pi_source_identity(tmp_path / "standalone", "shared-plugin")
-    sync_owner = "shared-plugin@marketplace"
+def test_non_overlapping_ownership_domains_reject_in_both_directions(tmp_path: Path) -> None:
+    standalone_owner = standalone_pi_source_identity(tmp_path / "plugin", "standalone")
+    apply_pi_reconciliation(
+        tmp_path,
+        [desired(".pi/standalone", owner=standalone_owner)],
+        ownership_domain="standalone",
+    )
+    with pytest.raises(ValueError, match="ownership domain conflict.*separate root"):
+        apply_pi_reconciliation(
+            tmp_path,
+            [desired(".pi/sync", owner="sync@local")],
+            ownership_domain="sync",
+        )
+
+    other = tmp_path / "other"
+    apply_pi_reconciliation(
+        other, [desired(".pi/sync", owner="sync@local")], ownership_domain="sync"
+    )
+    with pytest.raises(ValueError, match="ownership domain conflict.*separate root"):
+        apply_pi_reconciliation(
+            other,
+            [desired(".pi/standalone", owner=standalone_owner)],
+            ownership_domain="standalone",
+        )
+
+
+def test_same_ownership_domain_allows_multiple_standalone_sources(tmp_path: Path) -> None:
+    first = standalone_pi_source_identity(tmp_path / "first", "first")
+    second = standalone_pi_source_identity(tmp_path / "second", "second")
+    apply_pi_reconciliation(
+        tmp_path, [desired(".pi/first", owner=first)], ownership_domain="standalone"
+    )
+    apply_pi_reconciliation(
+        tmp_path,
+        [desired(".pi/second", owner=second)],
+        retained_sources={first},
+        ownership_domain="standalone",
+    )
+    assert {entry.source_plugin for entry in load_pi_ownership(tmp_path).values()} == {
+        first,
+        second,
+    }
+
+
+def test_invalid_ledger_source_identity_is_rejected(tmp_path: Path) -> None:
+    state = tmp_path / ".ai-config/pi-ownership.json"
+    state.parent.mkdir()
+    state.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "root": str(tmp_path.resolve()),
+                "files": [
+                    {
+                        "source_plugin": "standalone:bad",
+                        "path": ".pi/a",
+                        "digest": digest_content("a"),
+                        "executable": False,
+                    }
+                ],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid standalone Pi ownership identity"):
+        load_pi_ownership(tmp_path)
+
+
+def test_ledger_owner_collision_rejects_same_domain_owner_reassignment(tmp_path: Path) -> None:
+    first_owner = "first@marketplace"
+    second_owner = "second@marketplace"
     apply_pi_reconciliation(
         tmp_path,
         [
-            desired(".pi/standalone-first", owner=standalone_owner),
-            desired(".pi/sync-first", owner=sync_owner),
+            desired(".pi/first", owner=first_owner),
+            desired(".pi/second", owner=second_owner),
         ],
+        ownership_domain="sync",
     )
 
     for path, existing, requested in (
-        (".pi/standalone-first", standalone_owner, sync_owner),
-        (".pi/sync-first", sync_owner, standalone_owner),
+        (".pi/first", first_owner, second_owner),
+        (".pi/second", second_owner, first_owner),
     ):
         with pytest.raises(ValueError, match="existing owner.*requested owner") as error:
             apply_pi_reconciliation(tmp_path, [desired(path, owner=requested)])

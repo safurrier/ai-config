@@ -812,7 +812,11 @@ def _sync_conversions(
             preflight_actions.extend(
                 SyncAction(action=action.action, target=str(action.path), reason=action.reason)
                 for action in apply_pi_reconciliation(
-                    pi_root, desired, dry_run=True, retained_sources=retained_sources
+                    pi_root,
+                    desired,
+                    dry_run=True,
+                    retained_sources=retained_sources,
+                    ownership_domain="sync",
                 )
             )
         for retiring_root in retiring_output_dirs:
@@ -863,7 +867,10 @@ def _sync_conversions(
     ) + [(root, [], set()) for root in retiring_pi_output_dirs]:
         try:
             completed_pi = apply_pi_reconciliation(
-                pi_root, desired, retained_sources=retained_sources
+                pi_root,
+                desired,
+                retained_sources=retained_sources,
+                ownership_domain="sync",
             )
             actions.extend(
                 SyncAction(action=item.action, target=str(item.path), reason=item.reason)
@@ -873,9 +880,11 @@ def _sync_conversions(
             return actions, failed_actions, [str(error)]
     # Keep a root in the cache only while it still has owned output. An enabled
     # Pi target with no configured (or no emitting) plugins has converged too.
-    retained_pi_roots = (
-        {str(output_dir.resolve())} if pi_enabled and _pi_root_has_ownership(output_dir) else set()
-    )
+    retained_pi_roots = {
+        str(root.resolve())
+        for root in ([output_dir] if pi_enabled else []) + prior_pi_output_dirs
+        if _pi_root_has_ownership(root)
+    }
     if tracked_pi_output_dirs != sorted(retained_pi_roots):
         tracked_pi_output_dirs[:] = sorted(retained_pi_roots)
         cache_dirty = True

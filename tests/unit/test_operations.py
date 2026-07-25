@@ -285,6 +285,66 @@ def test_pi_target_and_plugin_removal_retire_cached_root_after_reconciliation(
     assert str(output.resolve()) not in json.loads(cache_path.read_text())["pi_output_dirs"]
 
 
+def test_pi_preserved_retired_roots_remain_tracked_until_repeat_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    home, old_root, new_root = tmp_path / "home", tmp_path / "old", tmp_path / "new"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    plugin = PluginConfig(id="dev-tools@local", scope="project", enabled=True)
+
+    def target(root: Path, targets: tuple[str, ...]) -> TargetConfig:
+        return TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(plugin,),
+                conversion=ConversionConfig(targets=targets, scope="project", output_dir=str(root)),
+            ),
+        )
+
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        assert sync_target(target(old_root, ("pi",))).success
+        modified = old_root / ".pi/prompts/dev-tools-commit.md"
+        modified.write_text("local edit")
+        cache_path = home / ".ai-config/cache/conversion-hashes.json"
+        before_dry_run = cache_path.read_bytes()
+
+        dry_run = sync_target(target(old_root, ("cursor",)), dry_run=True)
+        assert any(action.action == "preserve_pi_output" for action in dry_run.actions_taken)
+        assert cache_path.read_bytes() == before_dry_run
+        retired = sync_target(target(old_root, ("cursor",)))
+        assert retired.success, retired.errors
+        assert str(old_root.resolve()) in json.loads(cache_path.read_text())["pi_output_dirs"]
+
+        # A subsequent sync revisits the retained root and prunes it after user cleanup.
+        modified.unlink()
+        cleaned = sync_target(target(old_root, ("cursor",)))
+        assert cleaned.success, cleaned.errors
+        assert not load_pi_ownership(old_root)
+        assert str(old_root.resolve()) not in json.loads(cache_path.read_text())["pi_output_dirs"]
+
+        assert sync_target(target(old_root, ("pi",))).success
+        modified = old_root / ".pi/prompts/dev-tools-commit.md"
+        modified.write_text("local edit")
+        migrated = sync_target(target(new_root, ("pi",)))
+        assert migrated.success, migrated.errors
+        tracked = json.loads(cache_path.read_text())["pi_output_dirs"]
+        assert str(old_root.resolve()) in tracked
+        assert str(new_root.resolve()) in tracked
+
+        modified.unlink()
+        repeated = sync_target(target(new_root, ("pi",)))
+
+    assert repeated.success, repeated.errors
+    assert not load_pi_ownership(old_root)
+    assert json.loads(cache_path.read_text())["pi_output_dirs"] == [str(new_root.resolve())]
+
+
 def test_pi_dry_run_matches_apply_without_mutating_output_or_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
