@@ -15,7 +15,8 @@ from pathlib import Path
 
 from ai_config.semver import SemanticVersion
 
-_SUPPORTED_CODEX_MAJOR_MINOR = (0, 144)
+_SUPPORTED_CODEX_MAJOR_MINORS = {(0, 144), (0, 145)}
+_SUPPORTED_CODEX_CONTRACT = "0.144.x or 0.145.x"
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _TERMINATION_GRACE_SECONDS = 0.5
 _REAP_TIMEOUT_SECONDS = 0.5
@@ -77,6 +78,7 @@ class CodexMarketplace:
 
     name: str
     root: Path
+    source_type: str | None
 
 
 @dataclass(frozen=True)
@@ -255,8 +257,8 @@ class CodexCLI:
         if self._version is not None:
             return self._version
         remediation = (
-            "Install the Codex 0.144.x compatibility baseline or update ai-config's "
-            "Codex adapter and probes for the new CLI contract."
+            f"Install a supported Codex CLI ({_SUPPORTED_CODEX_CONTRACT}) or update "
+            "ai-config's Codex adapter and probes for the new CLI contract."
         )
         output = self._run("inspect-version", ["--version"], remediation=remediation)
         match = re.fullmatch(r"codex-cli (\S+)\s*", output.stdout)
@@ -281,14 +283,15 @@ class CodexCLI:
                 stderr=str(error),
                 remediation=remediation,
             ) from error
-        if (version.major, version.minor) != _SUPPORTED_CODEX_MAJOR_MINOR:
+        if (version.major, version.minor) not in _SUPPORTED_CODEX_MAJOR_MINORS:
             raise self._error(
                 "inspect-version",
                 ["--version"],
                 returncode=output.returncode,
                 stdout=output.stdout,
                 stderr=(
-                    f"unsupported Codex CLI response contract {version_text}; expected 0.144.x"
+                    f"unsupported Codex CLI response contract {version_text}; "
+                    f"expected {_SUPPORTED_CODEX_CONTRACT}"
                 ),
                 remediation=remediation,
             )
@@ -339,9 +342,37 @@ class CodexCLI:
             args,
             returncode=0,
             stdout=json.dumps(payload, sort_keys=True),
-            stderr=f"invalid Codex 0.144.x JSON response: {detail}",
+            stderr=f"invalid supported Codex JSON response: {detail}",
             remediation=remediation,
         )
+
+    def _optional_marketplace_source(
+        self,
+        entry: dict[str, object],
+        *,
+        field: str,
+        stage: str,
+        args: list[str],
+        payload: dict[str, object],
+        remediation: str,
+    ) -> tuple[str, str] | None:
+        if "marketplaceSource" not in entry:
+            return None
+        source = _as_object_dict(entry["marketplaceSource"])
+        if source is None:
+            detail = f"{field} must be an object when present"
+            raise self._schema_error(stage, args, payload, detail, remediation)
+        source_type = source.get("sourceType")
+        source_value = source.get("source")
+        if (
+            not isinstance(source_type, str)
+            or source_type not in _KNOWN_SOURCE_TYPES
+            or not isinstance(source_value, str)
+            or not source_value
+        ):
+            detail = f"{field} has an unknown source type or empty source"
+            raise self._schema_error(stage, args, payload, detail, remediation)
+        return source_type, source_value
 
     def list_marketplaces(self) -> list[CodexMarketplace]:
         self._ensure_supported_version()
@@ -368,7 +399,6 @@ class CodexCLI:
             entry = object_entry
             name = entry.get("name")
             root = entry.get("root")
-            source = entry.get("marketplaceSource")
             if not isinstance(name, str) or not name:
                 detail = f"marketplaces[{index}].name must be a non-empty string"
                 raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
@@ -383,20 +413,29 @@ class CodexCLI:
             if not isinstance(root, str) or not root:
                 detail = f"marketplaces[{index}].root must be a non-empty string"
                 raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
-            source_object = _as_object_dict(source)
-            if source_object is None:
-                detail = f"marketplaces[{index}].marketplaceSource must be an object"
-                raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
-            source_type = source_object.get("sourceType")
-            source_value = source_object.get("source")
-            if source_type not in _KNOWN_SOURCE_TYPES or not isinstance(source_value, str):
-                detail = f"marketplaces[{index}] has an unknown marketplace source"
-                raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
-            if source_type == "local" and Path(source_value).resolve() != Path(root).resolve():
-                detail = f"marketplaces[{index}] local root and source disagree"
+            marketplace_source = self._optional_marketplace_source(
+                entry,
+                field=f"marketplaces[{index}].marketplaceSource",
+                stage="list-marketplaces",
+                args=args,
+                payload=payload,
+                remediation=remediation,
+            )
+            if (
+                marketplace_source is not None
+                and marketplace_source[0] == "local"
+                and Path(marketplace_source[1]).resolve() != Path(root).resolve()
+            ):
+                detail = f"marketplaces[{index}].marketplaceSource and local root disagree"
                 raise self._schema_error("list-marketplaces", args, payload, detail, remediation)
             seen.add(name)
-            results.append(CodexMarketplace(name=name, root=Path(root).resolve()))
+            results.append(
+                CodexMarketplace(
+                    name=name,
+                    root=Path(root).resolve(),
+                    source_type=marketplace_source[0] if marketplace_source is not None else None,
+                )
+            )
         return results
 
     def add_marketplace(self, path: str, expected_name: str) -> CodexMarketplace:
@@ -429,7 +468,7 @@ class CodexCLI:
                 f"installedRoot does not match requested path {expected_root}",
                 remediation,
             )
-        return CodexMarketplace(name=name, root=expected_root)
+        return CodexMarketplace(name=name, root=expected_root, source_type="local")
 
     def remove_marketplace(self, name: str) -> None:
         self._ensure_supported_version()
@@ -472,7 +511,6 @@ class CodexCLI:
         marketplace_name = object_entry.get("marketplaceName")
         version = object_entry.get("version")
         source = _as_object_dict(object_entry.get("source"))
-        marketplace_source = _as_object_dict(object_entry.get("marketplaceSource"))
         if (
             not isinstance(plugin_id, str)
             or not plugin_id
@@ -509,12 +547,6 @@ class CodexCLI:
             ) from error
         source_type = source.get("source") if source is not None else None
         source_path = source.get("path") if source is not None else None
-        marketplace_source_type = (
-            marketplace_source.get("sourceType") if marketplace_source is not None else None
-        )
-        marketplace_source_value = (
-            marketplace_source.get("source") if marketplace_source is not None else None
-        )
         if source_type not in _KNOWN_SOURCE_TYPES:
             detail = f"available[{index}].source has an unknown source type"
             raise self._schema_error("list-plugins", args, payload, detail, remediation)
@@ -526,21 +558,26 @@ class CodexCLI:
         ):
             detail = f"available[{index}].source.url must be a non-empty string"
             raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        marketplace_source = self._optional_marketplace_source(
+            object_entry,
+            field=f"available[{index}].marketplaceSource",
+            stage="list-plugins",
+            args=args,
+            payload=payload,
+            remediation=remediation,
+        )
         if (
-            marketplace_source_type not in _KNOWN_SOURCE_TYPES
-            or not isinstance(marketplace_source_value, str)
-            or not marketplace_source_value
+            source_type == "local"
+            and marketplace_source is not None
+            and marketplace_source[0] == "local"
         ):
-            detail = f"available[{index}].marketplaceSource has an unknown source type"
-            raise self._schema_error("list-plugins", args, payload, detail, remediation)
-        if source_type == "local" and marketplace_source_type == "local":
             if not isinstance(source_path, str):
                 detail = f"available[{index}].source.path must be a non-empty string"
                 raise self._schema_error("list-plugins", args, payload, detail, remediation)
             source_root = Path(source_path).resolve()
-            marketplace_root = Path(marketplace_source_value).resolve()
+            marketplace_root = Path(marketplace_source[1]).resolve()
             if marketplace_root not in source_root.parents:
-                detail = f"available[{index}] plugin source is outside its marketplace root"
+                detail = f"available[{index}] plugin source is outside its marketplaceSource root"
                 raise self._schema_error("list-plugins", args, payload, detail, remediation)
         return plugin_id
 
@@ -597,7 +634,6 @@ class CodexCLI:
             version = entry.get("version")
             enabled = entry.get("enabled")
             source = entry.get("source")
-            marketplace_source = entry.get("marketplaceSource")
             if (
                 not isinstance(plugin_id, str)
                 or not plugin_id
@@ -664,23 +700,17 @@ class CodexCLI:
             resolved_source = (
                 Path(source_path_value).resolve() if isinstance(source_path_value, str) else None
             )
-            marketplace_source_object = _as_object_dict(marketplace_source)
-            marketplace_source_value = (
-                marketplace_source_object.get("source")
-                if marketplace_source_object is not None
-                else None
+            marketplace_source = self._optional_marketplace_source(
+                entry,
+                field=f"installed[{index}].marketplaceSource",
+                stage="list-plugins",
+                args=args,
+                payload=payload,
+                remediation=remediation,
             )
-            if (
-                marketplace_source_object is None
-                or marketplace_source_object.get("sourceType") not in _KNOWN_SOURCE_TYPES
-                or not isinstance(marketplace_source_value, str)
-            ):
-                detail = f"installed[{index}].marketplaceSource has an unknown source type"
-                raise self._schema_error("list-plugins", args, payload, detail, remediation)
-            marketplace_source_type = marketplace_source_object.get("sourceType")
             marketplace_root = (
-                Path(marketplace_source_value).resolve()
-                if marketplace_source_type == "local"
+                Path(marketplace_source[1]).resolve()
+                if marketplace_source is not None and marketplace_source[0] == "local"
                 else None
             )
             if (
@@ -688,7 +718,7 @@ class CodexCLI:
                 and resolved_source is not None
                 and marketplace_root not in resolved_source.parents
             ):
-                detail = f"installed[{index}] plugin source is outside its marketplace root"
+                detail = f"installed[{index}] plugin source is outside its marketplaceSource root"
                 raise self._schema_error("list-plugins", args, payload, detail, remediation)
             seen.add(plugin_id)
             results.append(

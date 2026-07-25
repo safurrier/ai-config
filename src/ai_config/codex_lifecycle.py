@@ -326,10 +326,13 @@ def _plan_actions(
         entry = previous[plugin_id]
         removal_reason = removal_reasons.get(plugin_id, default_removal_reason)
         marketplace = marketplaces.get(entry.marketplace_name)
-        if marketplace is not None and marketplace.root != entry.marketplace_path:
+        if marketplace is not None and (
+            marketplace.root != entry.marketplace_path or marketplace.source_type != "local"
+        ):
             raise ValueError(
                 f"Codex marketplace ownership changed for '{entry.marketplace_name}': "
-                f"registered root is {marketplace.root}, expected {entry.marketplace_path}. "
+                f"registered root/source is {marketplace.root} ({marketplace.source_type}), "
+                f"expected local {entry.marketplace_path}. "
                 "ai-config will not remove the marketplace or plugin. Resolve the collision and retry."
             )
         installed = plugins.get(plugin_id)
@@ -380,10 +383,13 @@ def _plan_actions(
                     f"Generated marketplace is not registered at {spec.marketplace_path}",
                 )
             )
-        elif marketplace is not None and marketplace.root != spec.marketplace_path:
+        elif marketplace is not None and (
+            marketplace.root != spec.marketplace_path or marketplace.source_type != "local"
+        ):
             raise ValueError(
                 f"Codex marketplace name collision for '{spec.marketplace_name}': "
-                f"registered root is {marketplace.root}, expected {spec.marketplace_path}. "
+                f"registered root/source is {marketplace.root} ({marketplace.source_type}), "
+                f"expected local {spec.marketplace_path}. "
                 "ai-config will not modify the unrelated marketplace. Rename/remove the collision and retry."
             )
 

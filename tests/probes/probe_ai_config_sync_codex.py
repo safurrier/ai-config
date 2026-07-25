@@ -23,6 +23,8 @@ from probe_codex_plugin_package import (
 )
 
 _MANAGED_PLUGIN_ID = "dev-tools@ai-config-dev-tools"
+_SOURCE_LESS_MARKETPLACE = "source-less-marketplace"
+_SOURCE_LESS_PLUGIN_ID = f"source-less-plugin@{_SOURCE_LESS_MARKETPLACE}"
 
 
 def _write_fake_claude(path: Path, plugin_path: Path, marketplace_path: Path) -> None:
@@ -86,6 +88,38 @@ def _write_config(path: Path, marketplace_path: Path, output_path: Path, *, enab
         ],
     }
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+
+def _write_source_less_catalog(codex_home: Path) -> None:
+    marketplace = codex_home / ".tmp/plugins"
+    plugin = marketplace / "plugins/source-less-plugin"
+    (marketplace / ".agents/plugins").mkdir(parents=True)
+    (plugin / ".codex-plugin").mkdir(parents=True)
+    (marketplace / ".agents/plugins/marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": _SOURCE_LESS_MARKETPLACE,
+                "plugins": [
+                    {
+                        "name": "source-less-plugin",
+                        "source": {
+                            "source": "local",
+                            "path": "./plugins/source-less-plugin",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (plugin / ".codex-plugin/plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "source-less-plugin",
+                "version": "1.0.0",
+                "description": "unrelated source-less catalog state",
+            }
+        )
+    )
 
 
 def _run_ai_config(config: Path, env: dict[str, str], *extra: str) -> dict[str, object]:
@@ -161,6 +195,42 @@ def _assert_prompt_marker(codex: str, env: dict[str, str], output: Path, marker:
         raise AssertionError(f"public sync package marker was not discovered: {marker}")
 
 
+def _source_less_catalog_state(codex: str, env: dict[str, str]) -> set[tuple[str, str]]:
+    marketplaces = load_json(run(codex, ["plugin", "marketplace", "list", "--json"], env)).get(
+        "marketplaces"
+    )
+    if not isinstance(marketplaces, list):
+        raise AssertionError("Codex source-less marketplace probe did not return an array")
+    marketplace_names = {
+        entry["name"]
+        for entry in marketplaces
+        if isinstance(entry, dict)
+        and "marketplaceSource" not in entry
+        and isinstance(entry.get("name"), str)
+    }
+    if not marketplace_names:
+        raise AssertionError("Codex catalog did not expose a source-less marketplace row")
+
+    available = load_json(run(codex, ["plugin", "list", "--available", "--json"], env)).get(
+        "available"
+    )
+    if not isinstance(available, list):
+        raise AssertionError("Codex source-less plugin probe did not return an available array")
+    catalog_pairs = {
+        (entry["marketplaceName"], entry["pluginId"])
+        for entry in available
+        if isinstance(entry, dict)
+        and "marketplaceSource" not in entry
+        and entry.get("marketplaceName") in marketplace_names
+        and isinstance(entry.get("marketplaceName"), str)
+        and isinstance(entry.get("pluginId"), str)
+    }
+    if not catalog_pairs:
+        raise AssertionError("Codex catalog did not expose a source-less available-plugin row")
+
+    return catalog_pairs
+
+
 def probe(codex: str) -> dict[str, object]:
     repo_root = Path(__file__).resolve().parents[2]
     source_fixture = repo_root / "tests/fixtures/sample-plugins/complete-plugin"
@@ -202,6 +272,13 @@ def probe(codex: str) -> dict[str, object]:
         load_json(run(codex, ["plugin", "marketplace", "add", unrelated_path, "--json"], env))
         load_json(run(codex, ["plugin", "add", unrelated_id, "--json"], env))
         set_enabled(codex_home / "config.toml", unrelated_id, False)
+        _write_source_less_catalog(codex_home)
+        source_less_catalog_entry = (_SOURCE_LESS_MARKETPLACE, _SOURCE_LESS_PLUGIN_ID)
+        if source_less_catalog_entry not in _source_less_catalog_state(codex, env):
+            raise AssertionError(
+                "Codex did not expose the constructed source-less catalog state: "
+                f"{source_less_catalog_entry}"
+            )
 
         first = _actions(_run_ai_config(config, env))
         if not {"register_codex_marketplace", "install_codex_plugin"} <= set(first):
@@ -288,6 +365,11 @@ def probe(codex: str) -> dict[str, object]:
         }
         if "ai-config-dev-tools" in names or "user-marketplace" not in names:
             raise AssertionError(f"public removal did not preserve unrelated marketplace: {names}")
+        if source_less_catalog_entry not in _source_less_catalog_state(codex, env):
+            raise AssertionError(
+                "public sync removed unrelated source-less catalog state: "
+                f"{source_less_catalog_entry}"
+            )
         final_config = config_path.read_text()
         if 'model = "preserve-public-sync"' not in final_config:
             raise AssertionError("public sync clobbered unrelated scalar config")
@@ -308,6 +390,7 @@ def probe(codex: str) -> dict[str, object]:
             "missing-drift-install",
             "owned-removal",
             "unrelated-state-preservation",
+            "source-less-catalog-preservation",
         ],
     }
 
