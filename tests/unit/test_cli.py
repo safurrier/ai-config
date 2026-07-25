@@ -1,6 +1,7 @@
 """Tests for ai_config.cli module."""
 
 import json
+import shutil
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
@@ -8,11 +9,11 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from ai_config.adapters.claude import CommandResult
+from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
 from ai_config.cli import main
 from ai_config.converters.ir import PluginIdentity, TargetTool
 from ai_config.converters.report import ConversionReport
-from ai_config.types import PluginStatus, StatusResult, SyncAction, SyncResult
+from ai_config.types import PluginSource, PluginStatus, StatusResult, SyncAction, SyncResult
 
 
 @pytest.fixture
@@ -59,6 +60,69 @@ def _stub_report(target: TargetTool) -> ConversionReport:
     """Create a minimal conversion report for CLI tests."""
     identity = PluginIdentity(plugin_id="test-plugin", name="test-plugin", version="1.0.0")
     return ConversionReport(source_plugin=identity, target_tool=target)
+
+
+def test_pi_cli_verify_and_json_report_no_false_drift(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Drive sync/status verification through Click with actual Pi output and only CLI inventory patched."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        dedent(f"""
+        version: 1
+        targets:
+          - type: claude
+            config:
+              marketplaces:
+                local:
+                  source: local
+                  path: {source}
+              plugins:
+                - id: dev-tools@local
+                  scope: project
+                  enabled: true
+              conversion:
+                targets: [pi]
+                scope: project
+                output_dir: {output}
+        """)
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=(
+                [InstalledMarketplace("local", PluginSource.LOCAL, "", str(source))],
+                [],
+            ),
+        ),
+    ):
+        first = runner.invoke(main, ["sync", "-c", str(config), "--verify"])
+        sync_json = runner.invoke(main, ["sync", "-c", str(config), "--verify", "--json"])
+        status = runner.invoke(main, ["status", "-c", str(config), "--verify"])
+        status_json = runner.invoke(main, ["status", "-c", str(config), "--verify", "--json"])
+
+    assert (
+        first.exit_code == sync_json.exit_code == status.exit_code == status_json.exit_code == 0
+    ), (
+        first.output,
+        sync_json.output,
+        status.output,
+        status_json.output,
+    )
+    payload = json.loads(sync_json.output)
+    assert payload["verification"]["discrepancies"] == []
+    assert {item["action"] for item in payload["targets"]["claude"]["completed_actions"]} == {
+        "noop_pi_output"
+    }
+    assert "All in sync" in first.output
+    assert "Out of sync" not in status.output
+    assert json.loads(status_json.output)["errors"] == []
 
 
 class TestMainGroup:

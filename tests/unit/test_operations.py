@@ -1,7 +1,10 @@
 """Tests for ai_config.operations module."""
 
+import hashlib
 import json
+import shutil
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -26,7 +29,7 @@ from ai_config.operations import (
     update_plugins,
     verify_sync,
 )
-from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation
+from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation, load_pi_ownership
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -89,6 +92,140 @@ def mock_installed_marketplaces() -> list[InstalledMarketplace]:
             install_location="/path/to/marketplace",
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("scope", "root_suffix", "skill_path", "prompt_path", "extension_path"),
+    [
+        (
+            "user",
+            "home",
+            ".pi/agent/skills/dev-tools-nested-skill/SKILL.md",
+            ".pi/agent/prompts/dev-tools-commit.md",
+            ".pi/agent/extensions/dev-tools-hooks.ts",
+        ),
+        (
+            "project",
+            "project",
+            ".pi/skills/dev-tools-nested-skill/SKILL.md",
+            ".pi/prompts/dev-tools-commit.md",
+            ".pi/extensions/dev-tools-hooks.ts",
+        ),
+    ],
+)
+def test_pi_sync_target_reconciles_real_emitter_output_at_each_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scope: Literal["user", "project"],
+    root_suffix: str,
+    skill_path: str,
+    prompt_path: str,
+    extension_path: str,
+) -> None:
+    """Exercise Pi ownership through sync_target using a complete Claude plugin fixture."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    root = tmp_path / root_suffix
+    monkeypatch.setattr(Path, "home", lambda: root)
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope=scope, enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope=scope, output_dir=str(root)),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", scope, True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        result = sync_target(target)
+        repeat = sync_target(target)
+
+    assert result.success, result.errors
+    assert {action.action for action in result.actions_taken} == {"create_pi_output"}
+    reference_path = skill_path.replace("SKILL.md", "resources/reference.md")
+    expected = {Path(skill_path), Path(reference_path), Path(prompt_path), Path(extension_path)}
+    ledger = load_pi_ownership(root)
+    assert expected <= set(ledger)
+    for relative in expected:
+        owned = ledger[relative]
+        output = root / relative
+        assert output.is_file()
+        assert owned.source_plugin == "dev-tools@local"
+        assert owned.relative_path == relative
+        assert owned.digest == hashlib.sha256(output.read_bytes()).hexdigest()
+        assert owned.executable is bool(output.stat().st_mode & 0o111)
+    assert {action.action for action in repeat.actions_taken} == {"noop_pi_output"}
+
+
+def test_pi_sync_config_removes_renamed_and_disabled_fixture_components(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A real emitter refresh removes obsolete owned paths even while directories remain."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    enabled = PluginConfig(id="dev-tools@local", scope="project", enabled=True)
+    config = AIConfig(
+        version=1,
+        targets=(
+            TargetConfig(
+                type="claude",
+                config=ClaudeTargetConfig(
+                    plugins=(enabled,),
+                    conversion=ConversionConfig(
+                        targets=("pi",), scope="project", output_dir=str(output)
+                    ),
+                ),
+            ),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        patch(
+            "ai_config.operations.claude.disable_plugin",
+            return_value=CommandResult(success=True, stdout="", stderr="", returncode=0),
+        ),
+    ):
+        assert sync_config(config)["claude"].success
+        old_prompt = output / ".pi/prompts/dev-tools-commit.md"
+        old_reference = output / ".pi/skills/dev-tools-nested-skill/resources/reference.md"
+        stale = old_reference.parent / "manual.txt"
+        stale.write_text("unowned")
+        (source / "commands/commit.md").rename(source / "commands/renamed.md")
+        (source / "skills/category/nested-skill/resources/reference.md").unlink()
+        refreshed = sync_config(config)["claude"]
+        assert refreshed.success, refreshed.errors
+        assert not old_prompt.exists()
+        assert not old_reference.exists()
+        assert stale.read_text() == "unowned"
+        assert (output / ".pi/prompts/dev-tools-renamed.md").is_file()
+        assert any(action.action == "remove_pi_output" for action in refreshed.actions_taken)
+        disabled = AIConfig(
+            version=1,
+            targets=(
+                TargetConfig(
+                    type="claude",
+                    config=ClaudeTargetConfig(
+                        plugins=(
+                            PluginConfig(id="dev-tools@local", scope="project", enabled=False),
+                        ),
+                        conversion=ConversionConfig(
+                            targets=("pi",), scope="project", output_dir=str(output)
+                        ),
+                    ),
+                ),
+            ),
+        )
+        removed = sync_config(disabled)["claude"]
+
+    assert removed.success, removed.errors
+    assert not load_pi_ownership(output)
+    assert stale.exists()
 
 
 def test_noop_pi_output_is_not_a_verification_discrepancy() -> None:

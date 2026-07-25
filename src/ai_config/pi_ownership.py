@@ -153,10 +153,9 @@ def _atomic_write(path: Path, payload: dict[str, object]) -> None:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(temporary, path)
-    except BaseException:
+    finally:
         # Only this process-created name is ever cleaned up.
         temporary.unlink(missing_ok=True)
-        raise
 
 
 def _write_state(root: Path, entries: dict[Path, PiOwnedFile]) -> None:
@@ -425,9 +424,9 @@ def _apply_actions(root: Path, actions: list[PiAction], desired: dict[Path, PiDe
                     handle.write(item.content)
                 temporary.chmod(0o755 if item.executable else 0o644)
                 os.replace(temporary, path)
-            except BaseException:
+            finally:
+                # Only this process-created name is ever cleaned up.
                 temporary.unlink(missing_ok=True)
-                raise
         elif action.action == "remove_pi_output":
             # State validation before this call proves this is the exact old owned file.
             path.unlink(missing_ok=True)
