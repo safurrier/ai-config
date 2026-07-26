@@ -345,7 +345,7 @@ def status(
                 }
                 for drift_result in (drift_results or {}).values()
                 for action in drift_result.actions_taken
-                if action.action != "noop_codex_plugin"
+                if action.action not in {"noop_codex_plugin", "noop_pi_output"}
             ],
             "errors": result.errors
             + [
@@ -403,7 +403,7 @@ def status(
             action
             for drift_result in drift_results.values()
             for action in drift_result.actions_taken
-            if action.action != "noop_codex_plugin"
+            if action.action not in {"noop_codex_plugin", "noop_pi_output"}
         ]
         if planned_actions:
             table = Table(show_header=True, header_style="bold", box=None)
@@ -973,7 +973,7 @@ def convert(
       pi         Pi (skills, prompt templates, supported hook extensions)
       all        All of the above (default)
     """
-    from ai_config.converters import InstallScope, TargetTool, convert_plugin, preview_conversion
+    from ai_config.converters import InstallScope, TargetTool, convert_plugin
 
     # Resolve targets
     if "all" in targets:
@@ -986,25 +986,10 @@ def convert(
         output_dir = Path.home() if scope == "user" else Path.cwd()
     install_scope = InstallScope(scope)
 
-    if dry_run:
-        # Just preview
-        console.print()
-        console.print(
-            Panel.fit("[header]ai-config convert (preview)[/header]", border_style="cyan")
-        )
-        console.print()
-        preview = preview_conversion(
-            plugin_path,
-            target_list,
-            output_dir,
-            scope=install_scope,
-        )
-        console.print(preview)
-        return
-
-    # Perform conversion
+    # Perform conversion or report its ownership-aware plan.
     console.print()
-    console.print(Panel.fit("[header]ai-config convert[/header]", border_style="cyan"))
+    title = "ai-config convert (preview)" if dry_run else "ai-config convert"
+    console.print(Panel.fit(f"[header]{title}[/header]", border_style="cyan"))
     console.print()
 
     with Progress(
@@ -1019,7 +1004,7 @@ def convert(
             targets=target_list,
             output_dir=output_dir,
             scope=install_scope,
-            dry_run=False,
+            dry_run=dry_run,
             best_effort=best_effort,
         )
 
@@ -1059,9 +1044,11 @@ def convert(
 
             # Show files
             if report.files_written:
-                console.print(f"\n[info]Files created ({len(report.files_written)}):[/info]")
+                label = "Files planned" if dry_run else "File actions"
+                console.print(f"\n[info]{label} ({len(report.files_written)}):[/info]")
                 for f in report.files_written:
-                    console.print(f"  {SYMBOLS['arrow']} {f.path}")
+                    reason = f" - {f.reason}" if f.reason else ""
+                    console.print(f"  {SYMBOLS['arrow']} {f.action}: {f.path}{reason}")
 
         if report.has_errors():
             any_errors = True

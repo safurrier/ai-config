@@ -1,6 +1,7 @@
 """Tests for ai_config.cli module."""
 
 import json
+import shutil
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
@@ -8,11 +9,11 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from ai_config.adapters.claude import CommandResult
+from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
 from ai_config.cli import main
 from ai_config.converters.ir import PluginIdentity, TargetTool
 from ai_config.converters.report import ConversionReport
-from ai_config.types import PluginStatus, StatusResult, SyncAction, SyncResult
+from ai_config.types import PluginSource, PluginStatus, StatusResult, SyncAction, SyncResult
 
 
 @pytest.fixture
@@ -59,6 +60,69 @@ def _stub_report(target: TargetTool) -> ConversionReport:
     """Create a minimal conversion report for CLI tests."""
     identity = PluginIdentity(plugin_id="test-plugin", name="test-plugin", version="1.0.0")
     return ConversionReport(source_plugin=identity, target_tool=target)
+
+
+def test_pi_cli_verify_and_json_report_no_false_drift(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Drive sync/status verification through Click with actual Pi output and only CLI inventory patched."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        dedent(f"""
+        version: 1
+        targets:
+          - type: claude
+            config:
+              marketplaces:
+                local:
+                  source: local
+                  path: {source}
+              plugins:
+                - id: dev-tools@local
+                  scope: project
+                  enabled: true
+              conversion:
+                targets: [pi]
+                scope: project
+                output_dir: {output}
+        """)
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=(
+                [InstalledMarketplace("local", PluginSource.LOCAL, "", str(source))],
+                [],
+            ),
+        ),
+    ):
+        first = runner.invoke(main, ["sync", "-c", str(config), "--verify"])
+        sync_json = runner.invoke(main, ["sync", "-c", str(config), "--verify", "--json"])
+        status = runner.invoke(main, ["status", "-c", str(config), "--verify"])
+        status_json = runner.invoke(main, ["status", "-c", str(config), "--verify", "--json"])
+
+    assert (
+        first.exit_code == sync_json.exit_code == status.exit_code == status_json.exit_code == 0
+    ), (
+        first.output,
+        sync_json.output,
+        status.output,
+        status_json.output,
+    )
+    payload = json.loads(sync_json.output)
+    assert payload["verification"]["discrepancies"] == []
+    assert {item["action"] for item in payload["targets"]["claude"]["completed_actions"]} == {
+        "noop_pi_output"
+    }
+    assert "All in sync" in first.output
+    assert "Out of sync" not in status.output
+    assert json.loads(status_json.output)["errors"] == []
 
 
 class TestMainGroup:
@@ -412,6 +476,67 @@ class TestConvertCommand:
         assert result.exit_code == 0
         call_args = mock_convert.call_args.kwargs
         assert call_args["output_dir"] == Path(tmp_path / "home")
+
+    def test_convert_pi_records_standalone_ownership(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        skill = minimal_plugin / "skills" / "thing" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: thing\ndescription: thing\n---\nthing\n")
+        result = runner.invoke(
+            main, ["convert", str(minimal_plugin), "--target", "pi", "--output", str(output)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (output / ".ai-config/pi-ownership.json").is_file()
+        assert "Standalone Pi conversion is disabled" not in result.output
+
+    def test_convert_all_preflights_pi_before_other_target_writes(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        ledger = output / ".ai-config/pi-ownership.json"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text('{"version": 1, "files": []}')
+
+        with pytest.raises(ValueError, match="Unsupported Pi ownership state schema"):
+            runner.invoke(
+                main,
+                ["convert", str(minimal_plugin), "-t", "all", "--output", str(output)],
+                catch_exceptions=False,
+            )
+
+        assert not (output / ".ai-config/codex").exists()
+        assert not (output / ".cursor").exists()
+        assert not (output / ".opencode").exists()
+        assert not (output / "opencode.json").exists()
+
+    def test_convert_pi_dry_run_reports_ownership_actions(
+        self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "output"
+        skill = minimal_plugin / "skills" / "thing" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: thing\ndescription: thing\n---\nthing\n")
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(minimal_plugin),
+                "--target",
+                "pi",
+                "--output",
+                str(output),
+                "--dry-run",
+                "--format",
+                "json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert '"action": "create"' in result.output
+        assert not output.exists()
 
     def test_convert_writes_report_file(
         self, runner: CliRunner, minimal_plugin: Path, tmp_path: Path

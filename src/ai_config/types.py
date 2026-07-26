@@ -26,6 +26,13 @@ SyncActionName: TypeAlias = (
         "register_marketplace",
     ]
     | CodexLifecycleActionName
+    | Literal[
+        "create_pi_output",
+        "update_pi_output",
+        "remove_pi_output",
+        "noop_pi_output",
+        "preserve_pi_output",
+    ]
 )
 
 

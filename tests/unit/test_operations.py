@@ -1,7 +1,10 @@
 """Tests for ai_config.operations module."""
 
+import hashlib
 import json
+import shutil
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -21,10 +24,12 @@ from ai_config.operations import (
     _load_conversion_cache,
     get_status,
     sync_config,
+    sync_discrepancies,
     sync_target,
     update_plugins,
     verify_sync,
 )
+from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation, load_pi_ownership
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -32,6 +37,8 @@ from ai_config.types import (
     MarketplaceConfig,
     PluginConfig,
     PluginSource,
+    SyncAction,
+    SyncResult,
     TargetConfig,
 )
 
@@ -85,6 +92,471 @@ def mock_installed_marketplaces() -> list[InstalledMarketplace]:
             install_location="/path/to/marketplace",
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("scope", "root_suffix", "skill_path", "prompt_path", "extension_path"),
+    [
+        (
+            "user",
+            "home",
+            ".pi/agent/skills/dev-tools-nested-skill/SKILL.md",
+            ".pi/agent/prompts/dev-tools-commit.md",
+            ".pi/agent/extensions/dev-tools-hooks.ts",
+        ),
+        (
+            "project",
+            "project",
+            ".pi/skills/dev-tools-nested-skill/SKILL.md",
+            ".pi/prompts/dev-tools-commit.md",
+            ".pi/extensions/dev-tools-hooks.ts",
+        ),
+    ],
+)
+def test_pi_sync_target_reconciles_real_emitter_output_at_each_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scope: Literal["user", "project"],
+    root_suffix: str,
+    skill_path: str,
+    prompt_path: str,
+    extension_path: str,
+) -> None:
+    """Exercise Pi ownership through sync_target using a complete Claude plugin fixture."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    root = tmp_path / root_suffix
+    native_relative = Path("prompts/native.md")
+    native_source = source / "targets/pi" / native_relative
+    native_source.parent.mkdir(parents=True)
+    native_source.write_text("native Pi prompt")
+    monkeypatch.setattr(Path, "home", lambda: root)
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope=scope, enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope=scope, output_dir=str(root)),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", scope, True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        result = sync_target(target)
+        repeat = sync_target(target)
+
+    assert result.success, result.errors
+    assert {action.action for action in result.actions_taken} == {"create_pi_output"}
+    reference_path = skill_path.replace("SKILL.md", "resources/reference.md")
+    native_output = (
+        Path(".pi/agent") / native_relative if scope == "user" else Path(".pi") / native_relative
+    )
+    expected = {
+        Path(skill_path),
+        Path(reference_path),
+        Path(prompt_path),
+        Path(extension_path),
+        native_output,
+    }
+    ledger = load_pi_ownership(root)
+    assert expected <= set(ledger)
+    for relative in expected:
+        owned = ledger[relative]
+        output = root / relative
+        assert output.is_file()
+        assert owned.source_plugin == "dev-tools@local"
+        assert owned.relative_path == relative
+        assert owned.digest == hashlib.sha256(output.read_bytes()).hexdigest()
+        assert owned.executable is bool(output.stat().st_mode & 0o111)
+    assert {action.action for action in repeat.actions_taken} == {"noop_pi_output"}
+
+
+def test_pi_sync_config_removes_renamed_and_disabled_fixture_components(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A real emitter refresh removes obsolete owned paths even while directories remain."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    enabled = PluginConfig(id="dev-tools@local", scope="project", enabled=True)
+    config = AIConfig(
+        version=1,
+        targets=(
+            TargetConfig(
+                type="claude",
+                config=ClaudeTargetConfig(
+                    plugins=(enabled,),
+                    conversion=ConversionConfig(
+                        targets=("pi",), scope="project", output_dir=str(output)
+                    ),
+                ),
+            ),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        patch(
+            "ai_config.operations.claude.disable_plugin",
+            return_value=CommandResult(success=True, stdout="", stderr="", returncode=0),
+        ),
+    ):
+        assert sync_config(config)["claude"].success
+        old_prompt = output / ".pi/prompts/dev-tools-commit.md"
+        old_reference = output / ".pi/skills/dev-tools-nested-skill/resources/reference.md"
+        stale = old_reference.parent / "manual.txt"
+        stale.write_text("unowned")
+        (source / "commands/commit.md").rename(source / "commands/renamed.md")
+        (source / "skills/category/nested-skill/resources/reference.md").unlink()
+        refreshed = sync_config(config)["claude"]
+        assert refreshed.success, refreshed.errors
+        assert not old_prompt.exists()
+        assert not old_reference.exists()
+        assert stale.read_text() == "unowned"
+        assert (output / ".pi/prompts/dev-tools-renamed.md").is_file()
+        assert any(action.action == "remove_pi_output" for action in refreshed.actions_taken)
+        disabled = AIConfig(
+            version=1,
+            targets=(
+                TargetConfig(
+                    type="claude",
+                    config=ClaudeTargetConfig(
+                        plugins=(
+                            PluginConfig(id="dev-tools@local", scope="project", enabled=False),
+                        ),
+                        conversion=ConversionConfig(
+                            targets=("pi",), scope="project", output_dir=str(output)
+                        ),
+                    ),
+                ),
+            ),
+        )
+        removed = sync_config(disabled)["claude"]
+
+    assert removed.success, removed.errors
+    assert not load_pi_ownership(output)
+    assert stale.exists()
+    # The removed reference's parent is deliberately retained only because it has user content.
+    assert old_reference.parent.exists()
+
+
+def test_pi_target_and_plugin_removal_retire_cached_root_after_reconciliation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pi root tracking survives until its owned files are safely reconciled away."""
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    home, output = tmp_path / "home", tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+
+    def config(targets: tuple[str, ...], plugins: tuple[PluginConfig, ...]) -> TargetConfig:
+        return TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=plugins,
+                conversion=ConversionConfig(
+                    targets=targets, scope="project", output_dir=str(output)
+                ),
+            ),
+        )
+
+    enabled = PluginConfig(id="dev-tools@local", scope="project", enabled=True)
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        assert sync_target(config(("pi", "cursor"), (enabled,))).success
+        cache_path = home / ".ai-config/cache/conversion-hashes.json"
+        assert str(output.resolve()) in json.loads(cache_path.read_text())["pi_output_dirs"]
+        removed_target = sync_target(config(("cursor",), (enabled,)))
+        assert removed_target.success, removed_target.errors
+        assert not load_pi_ownership(output)
+        assert str(output.resolve()) not in json.loads(cache_path.read_text())["pi_output_dirs"]
+        # Re-create ownership, then prove a plugin removed entirely from config follows the same path.
+        assert sync_target(config(("pi",), (enabled,))).success
+        removed_plugin = sync_target(config(("pi",), ()))
+
+    assert removed_plugin.success, removed_plugin.errors
+    assert not load_pi_ownership(output)
+    assert str(output.resolve()) not in json.loads(cache_path.read_text())["pi_output_dirs"]
+
+
+def test_pi_preserved_retired_roots_remain_tracked_until_repeat_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    home, old_root, new_root = tmp_path / "home", tmp_path / "old", tmp_path / "new"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    plugin = PluginConfig(id="dev-tools@local", scope="project", enabled=True)
+
+    def target(root: Path, targets: tuple[str, ...]) -> TargetConfig:
+        return TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                plugins=(plugin,),
+                conversion=ConversionConfig(targets=targets, scope="project", output_dir=str(root)),
+            ),
+        )
+
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        assert sync_target(target(old_root, ("pi",))).success
+        modified = old_root / ".pi/prompts/dev-tools-commit.md"
+        modified.write_text("local edit")
+        cache_path = home / ".ai-config/cache/conversion-hashes.json"
+        before_dry_run = cache_path.read_bytes()
+
+        dry_run = sync_target(target(old_root, ("cursor",)), dry_run=True)
+        assert any(action.action == "preserve_pi_output" for action in dry_run.actions_taken)
+        assert cache_path.read_bytes() == before_dry_run
+        retired = sync_target(target(old_root, ("cursor",)))
+        assert retired.success, retired.errors
+        assert str(old_root.resolve()) in json.loads(cache_path.read_text())["pi_output_dirs"]
+
+        # A subsequent sync revisits the retained root and prunes it after user cleanup.
+        modified.unlink()
+        cleaned = sync_target(target(old_root, ("cursor",)))
+        assert cleaned.success, cleaned.errors
+        assert not load_pi_ownership(old_root)
+        assert str(old_root.resolve()) not in json.loads(cache_path.read_text())["pi_output_dirs"]
+
+        assert sync_target(target(old_root, ("pi",))).success
+        modified = old_root / ".pi/prompts/dev-tools-commit.md"
+        modified.write_text("local edit")
+        migrated = sync_target(target(new_root, ("pi",)))
+        assert migrated.success, migrated.errors
+        tracked = json.loads(cache_path.read_text())["pi_output_dirs"]
+        assert str(old_root.resolve()) in tracked
+        assert str(new_root.resolve()) in tracked
+
+        modified.unlink()
+        repeated = sync_target(target(new_root, ("pi",)))
+
+    assert repeated.success, repeated.errors
+    assert not load_pi_ownership(old_root)
+    assert json.loads(cache_path.read_text())["pi_output_dirs"] == [str(new_root.resolve())]
+
+
+def test_pi_dry_run_matches_apply_without_mutating_output_or_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    home, output = tmp_path / "home", tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope="project", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="project", output_dir=str(output)),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        assert sync_target(target).success
+        old_prompt = output / ".pi/prompts/dev-tools-commit.md"
+        ledger_path = output / ".ai-config/pi-ownership.json"
+        cache_path = home / ".ai-config/cache/conversion-hashes.json"
+        before = (old_prompt.read_bytes(), ledger_path.read_bytes(), cache_path.read_bytes())
+        (source / "commands/commit.md").unlink()
+        planned = sync_target(target, dry_run=True)
+        assert before == (
+            old_prompt.read_bytes(),
+            ledger_path.read_bytes(),
+            cache_path.read_bytes(),
+        )
+        applied = sync_target(target)
+
+    assert [(a.action, a.target) for a in planned.actions_taken] == [
+        (a.action, a.target) for a in applied.actions_taken
+    ]
+    assert not old_prompt.exists()
+
+
+def test_pi_operation_preserves_local_change_and_rejects_unowned_collision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope="project", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="project", output_dir=str(output)),
+        ),
+    )
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        assert sync_target(target).success
+        owned = output / ".pi/prompts/dev-tools-commit.md"
+        owned.write_text("user edit")
+        (source / "commands/commit.md").unlink()
+        preserved = sync_target(target)
+        assert any(action.action == "preserve_pi_output" for action in preserved.actions_taken)
+        assert owned.read_text() == "user edit"
+        assert verify_sync(AIConfig(version=1, targets=(target,)))
+
+    collision_source = tmp_path / "collision-source"
+    shutil.copytree(
+        Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", collision_source
+    )
+    collision_output = tmp_path / "collision-output"
+    collision = collision_output / ".pi/prompts/dev-tools-commit.md"
+    collision.parent.mkdir(parents=True)
+    collision.write_text("user owned")
+    collision_installed = [
+        InstalledPlugin("dev-tools@local", "1", "project", True, str(collision_source))
+    ]
+    collision_target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope="project", enabled=True),),
+            conversion=ConversionConfig(
+                targets=("pi",), scope="project", output_dir=str(collision_output)
+            ),
+        ),
+    )
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            return_value=(collision_installed, []),
+        ),
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+    ):
+        failed = sync_target(collision_target)
+
+    assert not failed.success
+    assert any("Unowned Pi output collision" in error for error in failed.errors)
+    assert collision.read_text() == "user owned"
+    assert not load_pi_ownership(collision_output)
+
+
+def test_pi_unavailable_source_recovers_and_converges_on_next_real_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    output = tmp_path / "output"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="dev-tools@local", scope="project", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="project", output_dir=str(output)),
+        ),
+    )
+    available = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    unavailable = [InstalledPlugin("dev-tools@local", "1", "project", True, None)]
+    old_prompt = output / ".pi/prompts/dev-tools-commit.md"
+    with patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])):
+        with patch(
+            "ai_config.operations.claude.list_installed_plugins", return_value=(available, [])
+        ):
+            assert sync_target(target).success
+        (source / "commands/commit.md").unlink()
+        with patch(
+            "ai_config.operations.claude.list_installed_plugins", return_value=(unavailable, [])
+        ):
+            blocked = sync_target(target)
+        assert not blocked.success
+        assert old_prompt.exists()
+        with patch(
+            "ai_config.operations.claude.list_installed_plugins", return_value=(available, [])
+        ):
+            recovered = sync_target(target)
+
+    assert recovered.success, recovered.errors
+    assert not old_prompt.exists()
+    assert not load_pi_ownership(output).get(Path(".pi/prompts/dev-tools-commit.md"))
+
+
+def test_noop_pi_output_is_not_a_verification_discrepancy() -> None:
+    result = SyncResult(actions_taken=[SyncAction("noop_pi_output", ".pi/skill", reason="matches")])
+    assert sync_discrepancies({"claude": result}) == []
+
+
+def test_pi_parse_error_preserves_owned_output_before_any_reconciliation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "home"
+    apply_pi_reconciliation(
+        output, [PiDesiredFile("plugin1@my-marketplace", Path(".pi/old"), b"old")]
+    )
+    broken_source = tmp_path / "broken"
+    broken_source.mkdir()
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="user"),
+        ),
+    )
+    monkeypatch.setattr(Path, "home", lambda: output)
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            return_value=(
+                [InstalledPlugin("plugin1@my-marketplace", "1", "user", True, str(broken_source))],
+                [],
+            ),
+        ),
+        patch(
+            "ai_config.operations._load_conversion_cache",
+            return_value={"version": 7, "entries": {}},
+        ),
+    ):
+        result = sync_target(target)
+    assert not result.success
+    assert any("Pi conversion failed" in error for error in result.errors)
+    assert (output / ".pi/old").read_bytes() == b"old"
+
+
+def test_pi_unavailable_source_dry_run_preserves_same_output_as_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "home"
+    owned_path = output / ".pi/old"
+    apply_pi_reconciliation(
+        output, [PiDesiredFile("plugin1@my-marketplace", Path(".pi/old"), b"old")]
+    )
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig(id="plugin1@my-marketplace", scope="user", enabled=True),),
+            conversion=ConversionConfig(targets=("pi",), scope="user"),
+        ),
+    )
+    monkeypatch.setattr(Path, "home", lambda: output)
+    installed = [InstalledPlugin("plugin1@my-marketplace", "1", "user", True, None)]
+    with (
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
+        patch(
+            "ai_config.operations._load_conversion_cache",
+            return_value={"version": 7, "entries": {}, "pi_output_dirs": [str(output)]},
+        ),
+    ):
+        dry_run = sync_target(target, dry_run=True)
+        actual = sync_target(target)
+    assert any(action.action == "preserve_pi_output" for action in dry_run.actions_taken), dry_run
+    assert any("temporarily unavailable" in error for error in dry_run.errors)
+    assert actual.errors == dry_run.errors
+    assert owned_path.read_bytes() == b"old"
 
 
 class TestConversionCache:
@@ -535,6 +1007,8 @@ class TestSyncTarget:
         """Conversion falls back to local marketplace source when Claude cache path is stale."""
         plugin_dir = tmp_path / "marketplace" / "plugin1"
         plugin_dir.mkdir(parents=True)
+        (plugin_dir / ".claude-plugin").mkdir()
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text('{"name":"plugin1"}')
         conversion = ConversionConfig(
             enabled=True,
             targets=("pi",),
@@ -604,6 +1078,8 @@ class TestSyncTarget:
         marketplace_dir = tmp_path / "marketplace"
         plugin_dir = marketplace_dir / "plugins" / "plugin-source"
         plugin_dir.mkdir(parents=True)
+        (plugin_dir / ".claude-plugin").mkdir()
+        (plugin_dir / ".claude-plugin" / "plugin.json").write_text('{"name":"plugin1"}')
         (marketplace_dir / ".claude-plugin").mkdir()
         (marketplace_dir / ".claude-plugin" / "marketplace.json").write_text(
             '{"name":"my-marketplace","plugins":[{"name":"plugin1","source":"./plugins/plugin-source"}]}'
