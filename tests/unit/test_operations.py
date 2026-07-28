@@ -18,10 +18,6 @@ from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import Diagnostic, PluginIdentity, Severity, TargetTool
 from ai_config.converters.report import ConversionReport
 from ai_config.operations import (
-    _CONVERSION_CACHE_VERSION,
-    _compute_owned_codex_hash,
-    _conversion_signature,
-    _load_conversion_cache,
     get_status,
     sync_config,
     sync_discrepancies,
@@ -30,6 +26,18 @@ from ai_config.operations import (
     verify_sync,
 )
 from ai_config.pi_ownership import PiDesiredFile, apply_pi_reconciliation, load_pi_ownership
+from ai_config.sync_state import (
+    _CONVERSION_CACHE_VERSION,
+)
+from ai_config.sync_state import (
+    compute_owned_codex_hash as _compute_owned_codex_hash,
+)
+from ai_config.sync_state import (
+    conversion_signature as _conversion_signature,
+)
+from ai_config.sync_state import (
+    load_conversion_cache as _load_conversion_cache,
+)
 from ai_config.types import (
     AIConfig,
     ClaudeTargetConfig,
@@ -43,10 +51,29 @@ from ai_config.types import (
 )
 
 
+class RuntimeObservationRecorder:
+    """Record fresh-cache and runtime-observation call ordering."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def clear_cache(self) -> CommandResult:
+        self.calls.append("clear")
+        return CommandResult(success=True, stdout="", stderr="", returncode=0)
+
+    def marketplaces(self) -> tuple[list[InstalledMarketplace], list[str]]:
+        self.calls.append("marketplaces")
+        return [], []
+
+    def plugins(self) -> tuple[list[InstalledPlugin], list[str]]:
+        self.calls.append("plugins")
+        return [], []
+
+
 @pytest.fixture(autouse=True)
 def isolate_codex_lifecycle():
     """Operations tests do not invoke the real Codex binary."""
-    with patch("ai_config.operations.sync_codex_packages", return_value=[]) as lifecycle:
+    with patch("ai_config.sync_conversion.sync_codex_packages", return_value=[]) as lifecycle:
         yield lifecycle
 
 
@@ -517,7 +544,7 @@ def test_pi_parse_error_preserves_owned_output_before_any_reconciliation(
             ),
         ),
         patch(
-            "ai_config.operations._load_conversion_cache",
+            "ai_config.sync_state.load_conversion_cache",
             return_value={"version": 7, "entries": {}},
         ),
     ):
@@ -547,7 +574,7 @@ def test_pi_unavailable_source_dry_run_preserves_same_output_as_sync(
     with (
         patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
         patch(
-            "ai_config.operations._load_conversion_cache",
+            "ai_config.sync_state.load_conversion_cache",
             return_value={"version": 7, "entries": {}, "pi_output_dirs": [str(output)]},
         ),
     ):
@@ -633,6 +660,16 @@ class TestSyncTarget:
 
         assert result.success is False
         assert any("only supports 'claude'" in e for e in result.errors)
+
+    def test_unsupported_fresh_target_does_not_clear_claude_cache(self) -> None:
+        target = TargetConfig.__new__(TargetConfig)
+        object.__setattr__(target, "type", "codex")
+
+        with patch("ai_config.operations.claude.clear_cache") as clear_cache:
+            result = sync_target(target, fresh=True)
+
+        assert result.success is False
+        clear_cache.assert_not_called()
 
     def test_dry_run_no_changes(
         self,
@@ -806,9 +843,9 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
+            patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
             patch(
-                "ai_config.operations.convert_plugin",
+                "ai_config.sync_conversion.convert_plugin",
                 return_value={TargetTool.CODEX: report},
             ) as mock_convert,
         ):
@@ -870,13 +907,13 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value=cache),
-            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+            patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
             patch(
-                "ai_config.operations._compute_owned_codex_hash",
+                "ai_config.sync_state.compute_owned_codex_hash",
                 return_value="generated123",
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
         ):
             result = sync_target(target)
 
@@ -922,13 +959,13 @@ class TestSyncTarget:
                 return_value=(mock_installed_marketplaces, []),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
-            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
+            patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
             patch(
-                "ai_config.operations.convert_plugin",
+                "ai_config.sync_conversion.convert_plugin",
                 return_value={TargetTool.CODEX: report},
             ) as mock_convert,
         ):
@@ -983,13 +1020,15 @@ class TestSyncTarget:
                 return_value=(mock_installed_marketplaces, []),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
-            patch("ai_config.operations._compute_owned_codex_hash", return_value="generated"),
-            patch("ai_config.operations.convert_plugin", return_value={TargetTool.CODEX: report}),
-            patch("ai_config.operations._save_conversion_cache", side_effect=_capture_cache),
+            patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
+            patch(
+                "ai_config.sync_conversion.convert_plugin", return_value={TargetTool.CODEX: report}
+            ),
+            patch("ai_config.sync_state.save_conversion_cache", side_effect=_capture_cache),
         ):
             result = sync_target(target)
 
@@ -1058,10 +1097,10 @@ class TestSyncTarget:
                 ),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1133,10 +1172,10 @@ class TestSyncTarget:
                 ),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1189,10 +1228,10 @@ class TestSyncTarget:
                 return_value=([], []),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1240,11 +1279,11 @@ class TestSyncTarget:
                 return_value=(mock_installed_marketplaces, []),
             ),
             patch(
-                "ai_config.operations._load_conversion_cache",
+                "ai_config.sync_state.load_conversion_cache",
                 return_value={"version": 1, "entries": {}},
             ),
-            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
-            patch("ai_config.operations.convert_plugin", return_value={TargetTool.PI: report}),
+            patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.sync_conversion.convert_plugin", return_value={TargetTool.PI: report}),
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1343,7 +1382,7 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=([], []),
             ),
-            patch("ai_config.operations.convert_plugin") as convert,
+            patch("ai_config.sync_conversion.convert_plugin") as convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1398,7 +1437,7 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=([], []),
             ),
-            patch("ai_config.operations.convert_plugin") as convert,
+            patch("ai_config.sync_conversion.convert_plugin") as convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1526,7 +1565,7 @@ class TestSyncTarget:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         with (
-            patch("ai_config.operations._load_conversion_cache", return_value=cache),
+            patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
             patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
             patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
         ):
@@ -1580,14 +1619,14 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations._load_conversion_cache", return_value=cache),
-            patch("ai_config.operations._compute_plugin_hash", return_value="abc123"),
+            patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+            patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
             patch(
-                "ai_config.operations._compute_owned_codex_hash",
+                "ai_config.sync_state.compute_owned_codex_hash",
                 side_effect=[None, "generated123"],
             ),
             patch(
-                "ai_config.operations.convert_plugin",
+                "ai_config.sync_conversion.convert_plugin",
                 return_value={TargetTool.CODEX: report},
             ) as convert,
         ):
@@ -1627,7 +1666,7 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations.convert_plugin") as convert,
+            patch("ai_config.sync_conversion.convert_plugin") as convert,
         ):
             result = sync_target(target, force_convert=True)
 
@@ -1703,7 +1742,7 @@ class TestSyncTarget:
                 "ai_config.operations.claude.list_installed_marketplaces",
                 return_value=(mock_installed_marketplaces, []),
             ),
-            patch("ai_config.operations.convert_plugin") as mock_convert,
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
         ):
             sync_target(target)
             mock_convert.assert_not_called()
@@ -1733,20 +1772,19 @@ class TestSyncTarget:
             mock_add.assert_called_once_with(repo="owner/repo", name="my-marketplace", path=None)
             assert any(a.action == "register_marketplace" for a in result.actions_taken)
 
-    def test_fresh_clears_cache(self, sample_config: AIConfig) -> None:
-        """Fresh mode clears cache before sync."""
+    def test_fresh_clears_cache_before_runtime_observation(self, sample_config: AIConfig) -> None:
+        """Fresh mode clears cache before marketplace and plugin observation."""
+        recorder = RuntimeObservationRecorder()
+
         with (
-            patch(
-                "ai_config.operations.claude.clear_cache",
-                return_value=CommandResult(success=True, stdout="", stderr="", returncode=0),
-            ) as mock_clear,
+            patch("ai_config.operations.claude.clear_cache", side_effect=recorder.clear_cache),
             patch(
                 "ai_config.operations.claude.list_installed_plugins",
-                return_value=([], []),
+                side_effect=recorder.plugins,
             ),
             patch(
                 "ai_config.operations.claude.list_installed_marketplaces",
-                return_value=([], []),
+                side_effect=recorder.marketplaces,
             ),
             patch(
                 "ai_config.operations.claude.add_marketplace",
@@ -1759,7 +1797,7 @@ class TestSyncTarget:
         ):
             sync_target(sample_config.targets[0], fresh=True)
 
-            mock_clear.assert_called_once()
+        assert recorder.calls[:3] == ["clear", "marketplaces", "plugins"]
 
     def test_dry_run_skips_cache_clear(self, sample_config: AIConfig) -> None:
         """Dry run does not clear cache."""
@@ -2069,5 +2107,6 @@ class TestSyncMarketplaceNameMismatch:
         ):
             result = sync_target(sample_config.targets[0])
 
-            # Should have an error about name mismatch
+            # Registration completed, while the postcondition mismatch remains an error.
+            assert any(action.action == "register_marketplace" for action in result.actions_taken)
             assert any("actual-name" in e and "my-marketplace" in e for e in result.errors)

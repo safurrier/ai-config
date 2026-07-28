@@ -26,6 +26,33 @@ from ai_config.codex_lifecycle import (
 from ai_config.converters.codex_package import CODEX_OWNERSHIP_FILE, codex_package_spec
 
 
+def test_expected_plan_drift_fails_before_codex_mutation(tmp_path: Path) -> None:
+    spec = _package(tmp_path)
+    cli = FakeCodexCLI()
+    expected = tuple(
+        sync_codex_packages(
+            [spec],
+            output_dir=tmp_path,
+            refreshed_plugin_ids={spec.plugin_id},
+            dry_run=True,
+            cli=cli,
+        )
+    )
+    cli.marketplaces = [_marketplace(spec)]
+    cli.plugins = [_installed(spec)]
+
+    with pytest.raises(ValueError, match="preconditions changed"):
+        sync_codex_packages(
+            [spec],
+            output_dir=tmp_path,
+            refreshed_plugin_ids={spec.plugin_id},
+            cli=cli,
+            expected_actions=expected,
+        )
+
+    assert cli.calls == []
+
+
 def _pid_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)

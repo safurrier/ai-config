@@ -161,7 +161,7 @@ class PluginStatus:
     version: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class SyncAction:
     """A single action to be taken during sync."""
 
