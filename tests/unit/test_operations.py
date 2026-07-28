@@ -536,6 +536,7 @@ def test_pi_parse_error_preserves_owned_output_before_any_reconciliation(
     )
     monkeypatch.setattr(Path, "home", lambda: output)
     with (
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
         patch(
             "ai_config.operations.claude.list_installed_plugins",
             return_value=(
@@ -572,6 +573,7 @@ def test_pi_unavailable_source_dry_run_preserves_same_output_as_sync(
     monkeypatch.setattr(Path, "home", lambda: output)
     installed = [InstalledPlugin("plugin1@my-marketplace", "1", "user", True, None)]
     with (
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
         patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
         patch(
             "ai_config.sync_state.load_conversion_cache",
