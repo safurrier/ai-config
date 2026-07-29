@@ -2,8 +2,8 @@
 
 This file records the runtime assumptions behind ai-config target conversion.
 
-Last checked: 2026-07-24
-Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0 and source-less Codex marketplace metadata for issue #20.
+Last checked: 2026-07-29
+Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0, source-less Codex marketplace metadata for issue #20, and Codex 0.146.0 compatibility for ai-config 0.6.2.
 
 ## Summary
 
@@ -15,7 +15,7 @@ Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0 and s
 | OpenCode | `.opencode/skills/`, `opencode.json`, `opencode.lsp.json` | `opencode debug skill/config`, `opencode mcp list` |
 | Pi | project `.pi/` or user `.pi/agent/` skills, prompts, extensions | RPC `get_commands` and extension marker probe |
 
-## Codex 0.144.5 and 0.145.0 evidence
+## Codex 0.144.5, 0.145.0, and 0.146.0 evidence
 
 The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
 
@@ -38,6 +38,16 @@ resolved package: @openai/codex@0.145.0
 version output:   codex-cli 0.145.0
 main integrity:   sha512-/PSPSFujjjmiyVFvG2yu/grOFhsWdokTH8t2KGWhXSo/M5n/dIDsnbsnO82/7bLtIoDuzQf7ATBUMWqPWQINlQ==
 darwin-arm64 integrity: sha512-h6aQ0UxnaP8mIM/9/qPAH9MNkRliJo88toq1T36IxNM2L5JSU0TFamu+MZn7YkFgDsrp0RfiI+97Tm8AVVxqtA==
+install source:    integrity-verified direct npm registry tarball extraction
+```
+
+The same lane resolved and passed both complete probes for Codex 0.146.0 on 2026-07-29:
+
+```text
+resolved package: @openai/codex@0.146.0
+version output:   codex-cli 0.146.0
+main integrity:   sha512-yG3sPWNda/2YAIQIDq9MrrjoCTIQ7rxYM5IasrG3VBcuhCLTkgeg/JzqmJq1V98RE4MJ5jCxDXXQlOjrditFRw==
+darwin-arm64 integrity: sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+uv2hTBIVZ++fgXWV9yoeuNrNnNcn7GoTGOe2Tg==
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
@@ -73,9 +83,10 @@ Observed help surfaces:
 | `codex plugin marketplace upgrade --help` | Refresh configured Git marketplace snapshots. |
 | `codex plugin marketplace remove --help` | Remove a configured marketplace source by name |
 
-Official sources checked on 2026-07-24:
+Official sources checked through 2026-07-29:
 
 - [Codex changelog](https://developers.openai.com/codex/changelog)
+- [Codex 0.146.0 release](https://github.com/openai/codex/releases/tag/rust-v0.146.0)
 - [Codex 0.145.0 release](https://github.com/openai/codex/releases/tag/rust-v0.145.0)
 - [Plugins](https://learn.chatgpt.com/docs/plugins)
 - [Build plugins](https://learn.chatgpt.com/docs/build-plugins)
@@ -106,7 +117,7 @@ duplicate runtime records, source/path mismatches, and SemVer downgrades fail be
 Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
 by `doctor` and never removed without proof of ownership.
 
-The adapter intentionally accepts only the observed Codex 0.144.x and 0.145.x contracts. It validates
+The adapter intentionally accepts only the observed Codex 0.144.x, 0.145.x, and 0.146.x contracts. It validates
 the CLI version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
 list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
 and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips

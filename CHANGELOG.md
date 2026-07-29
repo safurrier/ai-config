@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Codex plugin lifecycle validation now accepts the observed 0.146.x response contract after the isolated latest-package and public-sync probes passed against Codex 0.146.0.
 - Sync orchestration now materializes immutable desired, observed, source, action, diagnostic, and checkpoint records before normal mutation. Dry-run and real execution share the same ordered plan while preserving existing CLI, cache, ownership, and partial-progress behavior.
 
 ## [0.6.1] - 2026-07-24
