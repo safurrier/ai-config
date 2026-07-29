@@ -8,7 +8,11 @@ Implementation of the declarative plugin manager and cross-tool converter.
 ai_config/
 ├── cli.py           # Click commands (entry point)
 ├── config.py        # YAML config loading + validation
-├── operations.py    # sync/update/status + sync-driven conversion
+├── operations.py    # stable sync/update/status entry points
+├── sync_pipeline.py # immutable desired/runtime/source/plan/report data contracts
+├── sync_orchestration.py # external observation + narrow plan executor
+├── sync_conversion.py # exact conversion planning and plan-only lifecycle application
+├── sync_state.py    # cache/source/output-root observation and persistence helpers
 ├── init.py          # Interactive setup wizard
 ├── types.py         # Frozen dataclasses for config schema
 ├── scaffold.py      # Plugin scaffold generation

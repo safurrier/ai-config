@@ -479,6 +479,7 @@ def sync_codex_packages(
     default_removal_reason: str = "Source plugin is no longer configured",
     ignored_runtime_plugin_ids: set[str] | None = None,
     ignored_runtime_marketplace_names: set[str] | None = None,
+    expected_actions: tuple[CodexLifecycleAction, ...] | None = None,
 ) -> list[CodexLifecycleAction]:
     """Converge generated Codex packages without touching unrelated Codex state."""
     desired = _index_specs(specs)
@@ -509,6 +510,11 @@ def sync_codex_packages(
 
     if dry_run:
         return actions
+    if expected_actions is not None and tuple(actions) != expected_actions:
+        raise ValueError(
+            "Codex lifecycle preconditions changed after sync planning; no lifecycle action "
+            "was executed"
+        )
     if not actions and not desired and retained_ids:
         return []
 

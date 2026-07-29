@@ -9,7 +9,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypeAlias, cast
 
 from ai_config.output_safety import validated_output_path
 
@@ -17,6 +17,13 @@ _PI_STATE = Path(".ai-config") / "pi-ownership.json"
 _PI_PENDING = Path(".ai-config") / "pi-ownership.pending.json"
 _VERSION = 4
 PiOwnershipDomain = Literal["standalone", "sync"]
+PiActionName: TypeAlias = Literal[
+    "create_pi_output",
+    "update_pi_output",
+    "remove_pi_output",
+    "noop_pi_output",
+    "preserve_pi_output",
+]
 _STANDALONE_SOURCE = re.compile(r"standalone:([^:\s]+):([0-9a-f]{64})$")
 
 
@@ -42,13 +49,7 @@ class PiDesiredFile:
 
 @dataclass(frozen=True)
 class PiAction:
-    action: Literal[
-        "create_pi_output",
-        "update_pi_output",
-        "remove_pi_output",
-        "noop_pi_output",
-        "preserve_pi_output",
-    ]
+    action: PiActionName
     path: Path
     reason: str
 
@@ -626,6 +627,7 @@ def apply_pi_reconciliation(
     dry_run: bool = False,
     retained_sources: set[str] | None = None,
     ownership_domain: PiOwnershipDomain | None = None,
+    expected_actions: tuple[PiAction, ...] | None = None,
 ) -> list[PiAction]:
     root = root.expanduser().resolve()
     desired_by_path = _normalize_desired(root, desired)
@@ -638,6 +640,13 @@ def apply_pi_reconciliation(
         if dry_run:
             _recover_pending_plan(root, desired_by_path, retained_sources, domain, pending)
             return pending[1]
+        if expected_actions is not None:
+            _recover_pending_plan(root, desired_by_path, retained_sources, domain, pending)
+            if tuple(pending[1]) != expected_actions:
+                raise ValueError(
+                    "Pi ownership preconditions changed after sync planning; no output action "
+                    "was executed"
+                )
         recovered = _recover_pending(root, desired_by_path, retained_sources, domain)
         if recovered is not None:
             return recovered
@@ -649,6 +658,10 @@ def apply_pi_reconciliation(
     )
     if dry_run:
         return actions
+    if expected_actions is not None and tuple(actions) != expected_actions:
+        raise ValueError(
+            "Pi ownership preconditions changed after sync planning; no output action was executed"
+        )
     if domain is None:
         return actions
     _write_pending(root, domain, actions, next_state, desired_by_path)

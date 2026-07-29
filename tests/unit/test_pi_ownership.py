@@ -33,6 +33,18 @@ def test_create_update_remove_and_noop_are_owned(tmp_path: Path) -> None:
     assert [a.action for a in apply_pi_reconciliation(tmp_path, [])] == ["remove_pi_output"]
 
 
+def test_expected_plan_drift_fails_before_pi_mutation(tmp_path: Path) -> None:
+    wanted = [desired(".pi/a")]
+    expected = tuple(apply_pi_reconciliation(tmp_path, wanted, dry_run=True))
+
+    with pytest.raises(ValueError, match="preconditions changed"):
+        apply_pi_reconciliation(tmp_path, wanted, expected_actions=())
+
+    assert expected
+    assert not (tmp_path / ".pi/a").exists()
+    assert not (tmp_path / ".ai-config/pi-ownership.json").exists()
+
+
 def test_current_state_persists_explicit_domain(tmp_path: Path) -> None:
     apply_pi_reconciliation(tmp_path, [desired(".pi/a")], ownership_domain="sync")
     state = json.loads((tmp_path / ".ai-config/pi-ownership.json").read_text())
