@@ -191,6 +191,12 @@ Cross-cutting docs in `ai_agent_docs/`:
 - `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
 - `ai_agent_docs/target-compatibility-baseline.md` — Current target-runtime assumptions, version baseline, and validation probes
 
+Architecture context in `docs/`:
+- `SPEC.md` — Normative current-truth correctness envelope
+- `docs/explanation/architecture.md` — Current boundaries, flows, and ownership
+- `docs/explanation/project-evolution.md` — Historical phases and retained tradeoffs
+- `docs/adr/` — Accepted architectural decisions and rationale
+
 ## Gotchas
 
 - **Claude Code reloads plugins at session start** — after `ai-config sync`, restart Claude Code (use `claude --resume` to continue)

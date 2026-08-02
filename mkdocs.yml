@@ -50,6 +50,13 @@ plugins:
             show_signature_annotations: true
             separate_signature: true
 
+exclude_docs: |
+  AGENTS.md
+
+validation:
+  nav:
+    omitted_files: warn
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -68,6 +75,15 @@ nav:
   - Commands: commands.md
   - Configuration: config.md
   - Conversion: conversion.md
+  - Explanation:
+      - Architecture: explanation/architecture.md
+      - Project evolution: explanation/project-evolution.md
+  - Decisions:
+      - Canonical Claude source: adr/001-use-claude-plugins-as-the-canonical-source.md
+      - Target-independent IR: adr/002-normalize-conversion-through-a-target-independent-ir.md
+      - Native Codex packages: adr/003-use-native-codex-plugin-packages.md
+      - Proven ownership: adr/004-require-proven-ownership-before-generated-output-cleanup.md
+      - Plan before apply: adr/005-plan-sync-before-applying-it.md
 
 extra:
   social:

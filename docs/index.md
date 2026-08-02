@@ -82,6 +82,10 @@ Check your `.ai-config/config.yaml` into your dotfiles. Run `ai-config sync` on 
 
 ## What's Next
 
+- [Specification](https://github.com/safurrier/ai-config/blob/main/SPEC.md) — Normative current-truth correctness envelope
 - [Commands](commands.md) — Full command reference
 - [Configuration](config.md) — Config file format and examples
 - [Conversion](conversion.md) — Converting plugins to other AI tools
+- [Architecture](explanation/architecture.md) — System boundaries, flows, and ownership
+- [Project evolution](explanation/project-evolution.md) — How the current design emerged
+- [Architecture decisions](adr/001-use-claude-plugins-as-the-canonical-source.md) — Lasting choices and rationale
