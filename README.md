@@ -182,6 +182,8 @@ ai-config doctor --target all ./output-dir
 
 ## Further reading
 
+- [Current specification](SPEC.md) — purpose, scope, invariants, interfaces, and proof
+- [Architecture decisions](docs/adr/001-use-native-codex-plugin-packages.md) — lasting choices and their tradeoffs
 - [Commands](docs/commands.md) — complete CLI reference
 - [Configuration](docs/config.md) — config schema, path resolution, scopes, and examples
 - [Conversion](docs/conversion.md) — target mappings, dry runs, reports, and validation

@@ -31,7 +31,7 @@ src/ai_config/
     ├── plugin/      # plugin validators
     └── target/      # converted output validators (codex, cursor, opencode, pi)
 tests/
-├── unit/            # Fast unit tests (577 tests)
+├── unit/            # Fast unit tests
 ├── integration/     # Integration tests (8 tests, marked)
 ├── e2e/             # Docker-based E2E tests (79 tests)
 │   ├── conftest.py             # Docker fixtures + exec_in_container()
@@ -162,7 +162,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 4. Create PR, merge to main
 5. Create GitHub release with tag `vX.Y.Z` (this auto-publishes to PyPI)
 
-Version is in `pyproject.toml` (currently `0.3.0`). Tags use `v` prefix (e.g., `v0.3.0`).
+Version is in `pyproject.toml` (currently `0.6.2`). Tags use a `v` prefix (e.g., `v0.6.2`).
 
 ### PyPI Publishing
 
@@ -190,6 +190,8 @@ Cross-cutting docs in `ai_agent_docs/`:
 - `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
 - `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
 - `ai_agent_docs/target-compatibility-baseline.md` — Current target-runtime assumptions, version baseline, and validation probes
+
+Lasting architecture choices and their tradeoffs live in `docs/adr/`.
 
 ## Gotchas
 

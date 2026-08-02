@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A current specification and retrospective architecture decision records now document ai-config's supported interfaces, target-specific ownership guarantees, native Codex package lifecycle, and observe-plan-apply sync model.
+
 ## [0.6.2] - 2026-07-29
 
 ### Added

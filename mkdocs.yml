@@ -68,6 +68,10 @@ nav:
   - Commands: commands.md
   - Configuration: config.md
   - Conversion: conversion.md
+  - Decisions:
+      - Native Codex packages: adr/001-use-native-codex-plugin-packages.md
+      - Proven ownership before cleanup: adr/002-require-proven-ownership-for-generated-output.md
+      - Plan sync before apply: adr/003-plan-sync-before-applying-it.md
 
 extra:
   social:

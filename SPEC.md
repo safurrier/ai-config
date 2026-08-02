@@ -1,564 +1,84 @@
-# SPEC.md — Claude Code Plugin Conversion + Validation for Claude Code, Codex, Cursor, OpenCode, Pi
-
-## 1) Purpose
-
-Create a tool that:
-1. Ingests a Claude Code plugin (the Claude "plugin bundle" format).
-2. Normalizes it into a Pydantic-based Intermediate Representation (IR).
-3. Emits equivalent artifacts to one or more targets:
-   - Claude Code
-   - OpenAI Codex (Codex CLI / IDE extension surfaces)
-   - Cursor
-   - OpenCode
-   - Pi
-4. Provides a post-conversion validator that can verify (via CLI where available, otherwise via TUI/UX steps) that each exported component is installed and functional.
-
-This spec is intentionally explicit about:
-- Component taxonomy
-- On-disk locations and scope layers (only when supported by primary sources)
-- What can be validated automatically vs what requires interactive confirmation
-
----
-
-## 2) Design constraints and principles
-
-### 2.1 Reliability over "perfect equivalence"
-
-Some primitives exist in one tool but not another (notably hooks). The converter must support degradation policies and produce a report that states exactly what was mapped, emulated, or dropped.
-
-### 2.2 Target surfaces vary (bundle vs split features)
-
-Claude Code plugins are a single installable bundle with multiple component types. Other tools typically split functionality across:
-- skills directories
-- command/prompt directories
-- hooks/event systems (if present)
-- MCP config files (TOML/JSON/etc.)
-
-Claude Code plugin system details and component schemas are defined in the official Plugins Reference and "Create plugins" docs.
-
----
-
-## 3) Research: component model and supported target surfaces
-
-### 3.1 Claude Code (source format)
-
-#### 3.1.1 Plugin layout
-Claude plugins are defined by plugin.json and can include component directories at the plugin root (e.g., skills/, commands/, agents/, hooks/, plus MCP/LSP definitions), with an explicit warning that only plugin.json goes inside .claude-plugin/ and component directories live at the plugin root.
-
-#### 3.1.2 What components Claude plugins can contain
-Claude plugin components include:
-- Skills
-- Commands
-- Hooks
-- Agents
-- MCP servers
-- LSP servers
-(all defined by schemas and documented in the Plugins Reference).
-
-#### 3.1.3 Debug and validation tooling
-Claude provides developer tooling in the plugin system:
-- `claude plugin validate` (and UI equivalents referenced in plugin documentation)
-- `claude --debug` to see plugin loading, registration, and initialization details (including MCP initialization per plugin debug expectations)
-
-Note: This spec does not assume a "list installed plugins" CLI exists as a stable command, because the authoritative plugin reference emphasizes validate/debug/installation surfaces rather than a guaranteed enumeration command.
-
----
-
-### 3.2 OpenAI Codex (Codex CLI / IDE surfaces)
-
-#### 3.2.1 Plugin packages and marketplaces
-Codex supports installable plugin packages containing a `.codex-plugin/plugin.json` manifest and package-local skills, hooks, and MCP servers. Local marketplaces are registered and packages are installed, listed, and removed through `codex plugin` commands.
-
-#### 3.2.2 Agent Skills (first-class)
-Codex package skills are reusable instruction/resource bundles. Claude commands map to package skills; Claude-only argument substitution is reported as degraded rather than emitted as a legacy custom prompt.
-
-#### 3.2.3 Ownership
-ai-config owns generated package sources, local marketplace sources, and its ownership record. Codex owns installed cache, enablement, and shared configuration. The converter does not write loose `.codex` skills, prompts, hooks, or MCP tables.
-
----
-
-### 3.3 Cursor
-
-#### 3.3.1 Commands
-Cursor supports project commands by creating a `.cursor/commands` directory with Markdown files.
-
-#### 3.3.2 Agent Skills
-Cursor supports "Agent Skills" as portable packages that can include instructions and executable elements; this is documented as a first-class "skills" feature.
-
-#### 3.3.3 Hooks
-Cursor supports hooks as external processes that interact with the agent loop (stdio + JSON protocol) and documents the hooks system.
-
----
-
-### 3.4 OpenCode
-
-#### 3.4.1 Agent Skills
-OpenCode supports Agent Skills via SKILL.md definitions and a native skill tool that loads them on demand.
-
-#### 3.4.2 Config directory override
-OpenCode supports overriding the config directory via `OPENCODE_CONFIG_DIR` and searches that directory for agents/commands/modes/plugins similarly to `.opencode`.
-
-#### 3.4.3 Native skills provenance
-OpenCode's skills support is explicitly described as native (graduated from a plugin into core support), providing confidence that "skills" are a stable surface.
-
-Note: This spec does not hardcode an "official skill listing debug command" for OpenCode because the authoritative docs shown here focus on skills behavior and configuration, not a guaranteed `opencode debug skill` CLI surface.
-
----
-
-## 4) Canonical component taxonomy (IR-level)
-
-The converter normalizes a Claude plugin into these component kinds:
-- Skill
-- Command
-- Hook
-- MCP server
-- Agent
-- LSP server
-- Arbitrary files (pass-through payload)
-
-This matches Claude's plugin reference categories for plugin contents.
-
----
-
-## 5) Intermediate Representation (Pydantic schema)
-
-### 5.1 Pydantic types (authoritative schema for the tool)
-
-```python
-from __future__ import annotations
-
-from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
-
-from pydantic import BaseModel, Field
-
-
-class TargetTool(str, Enum):
-    CLAUDE = "claude"
-    CODEX = "codex"
-    CURSOR = "cursor"
-    OPENCODE = "opencode"
-    PI = "pi"
-
-
-class InstallScope(str, Enum):
-    USER = "user"
-    PROJECT = "project"
-    LOCAL = "local"  # uncommitted machine-local where supported
-
-
-class ComponentKind(str, Enum):
-    SKILL = "skill"
-    COMMAND = "command"
-    HOOK = "hook"
-    MCP_SERVER = "mcp_server"
-    AGENT = "agent"
-    LSP_SERVER = "lsp_server"
-    FILE = "file"
-
-
-class MappingStatus(str, Enum):
-    NATIVE = "native"
-    TRANSFORM = "transform"
-    EMULATE = "emulate"
-    FALLBACK = "fallback"
-    UNSUPPORTED = "unsupported"
-
-
-class Severity(str, Enum):
-    INFO = "info"
-    WARN = "warn"
-    ERROR = "error"
-
-
-class EvidenceType(str, Enum):
-    CLI = "cli"
-    TUI = "tui"
-    FILESYSTEM = "filesystem"
-    LOG = "log"
-
-
-class Diagnostic(BaseModel):
-    severity: Severity
-    message: str
-    component_ref: Optional[str] = None  # e.g. "skill:my-skill"
-
-
-class PluginIdentity(BaseModel):
-    plugin_id: str = Field(..., description="Stable ID for namespacing")
-    name: str
-    version: Optional[str] = None
-    description: Optional[str] = None
-
-
-class TextFile(BaseModel):
-    relpath: str
-    content: str
-    executable: bool = False
-
-
-class BinaryFile(BaseModel):
-    relpath: str
-    content_b64: str
-    executable: bool = False
-
-
-AnyFile = Union[TextFile, BinaryFile]
-
-
-class Skill(BaseModel):
-    kind: Literal[ComponentKind.SKILL] = ComponentKind.SKILL
-    name: str
-    scope_hint: InstallScope = InstallScope.USER
-    entrypoint: str = "SKILL.md"
-    files: List[AnyFile] = Field(default_factory=list)
-
-
-class Command(BaseModel):
-    kind: Literal[ComponentKind.COMMAND] = ComponentKind.COMMAND
-    name: str
-    scope_hint: InstallScope = InstallScope.USER
-    markdown: str
-
-
-class HookHandlerType(str, Enum):
-    COMMAND = "command"
-    PROMPT = "prompt"
-
-
-class HookHandler(BaseModel):
-    type: HookHandlerType
-    command: Optional[str] = None
-    prompt: Optional[str] = None
-    timeout_sec: Optional[int] = None
-
-
-class HookEvent(BaseModel):
-    # Canonical event names follow Claude's hook event taxonomy.
-    name: str
-    matcher: Optional[str] = None
-    handlers: List[HookHandler] = Field(default_factory=list)
-
-
-class Hook(BaseModel):
-    kind: Literal[ComponentKind.HOOK] = ComponentKind.HOOK
-    scope_hint: InstallScope = InstallScope.USER
-    events: List[HookEvent] = Field(default_factory=list)
-
-
-class McpTransport(str, Enum):
-    STDIO = "stdio"
-    HTTP = "http"
-    STREAMING_HTTP = "streaming_http"
-
-
-class McpServer(BaseModel):
-    kind: Literal[ComponentKind.MCP_SERVER] = ComponentKind.MCP_SERVER
-    name: str
-    scope_hint: InstallScope = InstallScope.USER
-    transport: McpTransport
-    command: Optional[str] = None
-    args: List[str] = Field(default_factory=list)
-    url: Optional[str] = None
-    env: Dict[str, str] = Field(default_factory=dict)
-    cwd: Optional[str] = None
-
-
-class Agent(BaseModel):
-    kind: Literal[ComponentKind.AGENT] = ComponentKind.AGENT
-    name: str
-    scope_hint: InstallScope = InstallScope.USER
-    markdown: str
-
-
-class LspServer(BaseModel):
-    kind: Literal[ComponentKind.LSP_SERVER] = ComponentKind.LSP_SERVER
-    name: str
-    scope_hint: InstallScope = InstallScope.USER
-    config: Dict[str, Any] = Field(default_factory=dict)
-
-
-Component = Union[Skill, Command, Hook, McpServer, Agent, LspServer]
-
-
-class PluginIR(BaseModel):
-    identity: PluginIdentity
-    components: List[Component] = Field(default_factory=list)
-    diagnostics: List[Diagnostic] = Field(default_factory=list)
+# ai-config specification
+
+## Purpose
+
+ai-config makes an AI coding-tool setup reproducible from one versioned YAML
+configuration. It reconciles Claude Code marketplaces and plugins, then can
+convert Claude plugin bundles for Codex, Cursor, OpenCode, and Pi.
+
+## Scope
+
+ai-config owns:
+
+- configuration discovery and validation for the version 1 schema;
+- Claude marketplace and plugin observation, planning, reconciliation, status,
+  update, and watch workflows;
+- parsing Claude plugin bundles into a target-independent representation;
+- emitting and validating target-specific output for Codex, Cursor, OpenCode,
+  and Pi; and
+- ownership-aware lifecycle and cleanup for generated Codex and Pi state.
+
+It does not define a universal plugin standard, promise exact feature parity
+between tools, own unrelated target-tool state, or remove historical output
+whose ownership cannot be established.
+
+## Invariants
+
+- The selected YAML configuration is the desired state for `sync`; observed
+  runtime state never silently becomes configuration.
+- Normal dry-run and apply consume the same ordered `SyncPlan`. Planning does
+  not write files, clear caches, delete output, or call state-changing tool
+  commands.
+- Apply checks that observed state and conversion inputs still match the plan
+  before mutation.
+- Codex removal is limited by its package ownership ledger and reserved
+  `.ai-config/codex/` root; package emission may replace files inside that
+  generated root. Pi create, update, and removal use per-file ownership and
+  content evidence, preserving locally modified owned files. Both paths reject
+  traversal and symlinked output. Cursor and OpenCode writes are path-contained
+  but do not have equivalent durable ownership ledgers.
+- A conversion records each component as `native`, `transform`, `emulate`,
+  `fallback`, or `unsupported`. Target gaps are reported rather than presented
+  as exact equivalence.
+- Cache and ownership checkpoints are committed only after their authorized
+  actions succeed. Completed and failed actions remain distinguishable when a
+  later phase fails.
+- Each target emitter receives the same parsed plugin representation and owns
+  an independent result; emitters do not mutate the shared representation.
+
+## Interfaces
+
+- `ai-config init` creates a configuration interactively or from a minimal
+  non-interactive path.
+- `ai-config sync` reconciles configured Claude plugin state;
+  `sync --dry-run` is the mutation-free preview boundary.
+- `ai-config status` inspects installed state. With `--config` or `--verify`, it
+  also plans and reports drift from configuration.
+- `ai-config update` refreshes named installed plugins or all installed plugins.
+  `ai-config watch` reruns sync after relevant configuration or source changes.
+- `ai-config convert <plugin>` parses one Claude plugin and emits selected
+  target formats. `--dry-run` previews paths and mappings without writing.
+- `ai-config doctor` validates configured plugin health;
+  `doctor --target <target> <output>` validates converted output.
+- `.ai-config/config.yaml` and `.ai-config/config.yml` are the project-local
+  configuration surfaces; the same names under `~/.ai-config/` are the global
+  fallback. An explicit `--config` path takes precedence.
+- The version 1 schema accepts a Claude source target with marketplaces,
+  plugins, and optional conversion settings for `codex`, `cursor`, `opencode`,
+  and `pi`.
+- JSON and terminal reports expose planned, completed, failed, and no-op action
+  evidence where the command supports lifecycle reporting.
+
+## Validation
+
+```bash
+uv run ruff check src/ tests/
+uv run ruff format --check src/
+uv run ty check src/
+uv run pytest tests/unit -q
+uv run mkdocs build --strict
 ```
 
-### 5.2 Canonicalization rules
-- Treat Claude's SKILL.md-based skills as the canonical "skill" primitive across all targets that support skills (Codex/Cursor/OpenCode all document skills).
-- Use Claude hook event names as canonical in IR (Claude defines these in the plugin reference); targets may translate to their event systems where feasible.
-- Preserve original file trees in skills whenever possible; do not flatten unless a target forces it (e.g., legacy prompts).
-
----
-
-## 6) Mapping matrix (component × target × status)
-
-Statuses:
-- **native**: direct representation exists
-- **transform**: config/schema conversion required
-- **emulate**: implement as a plugin/hook wrapper mechanism
-- **fallback**: degrade to a prompt/command/flattened file
-- **unsupported**: no documented equivalent in target surfaces
-
-| Component | Claude Code | Codex | Cursor | OpenCode | Pi |
-|-----------|-------------|-------|--------|----------|----|
-| Skill | native (Claude plugin skills) | native (package-local Agent Skill) | native (Agent Skills) | native (Agent Skills + skill tool) | native (Agent Skills) |
-| Command | native (plugin commands exist, though skills are recommended) | transform/fallback (package skill; degraded when Claude argument substitution is used) | native (.cursor/commands) | native (OpenCode supports markdown-backed commands in .opencode/commands/ and ~/.config/opencode/commands/; optionally also supports JSON-defined commands in config). | transform (Pi prompt templates) |
-| Hook | native (Claude hooks in plugin system) | transform (supported command hooks in the package hooks file) | native (Cursor hooks) | emulate (OpenCode has plugins; implement hook-like behavior via plugins if needed, but this spec does not claim a specific hook event API beyond what OpenCode documents as plugin/config extensibility) | emulate (generated TypeScript extension) |
-| MCP server | native (Claude plugin MCP support) | transform (package manifest `mcpServers`) | transform (Cursor supports MCP) | native/transform (OpenCode supports MCP; config directory overridable) | unsupported |
-| Agent | native (Claude plugin agents) | unsupported (no documented matching file schema in cited sources) | unsupported | unsupported | unsupported |
-| LSP | native (Claude plugin LSP servers) | unsupported | unsupported | transform (OpenCode supports LSP configuration via the lsp section in opencode.json, including custom LSP servers by command + extensions). | unsupported |
-
----
-
-## 7) Emission rules (what the converter writes)
-
-### 7.1 Core output conventions
-- Use a deterministic namespace prefix derived from `plugin_id` for all emitted assets to prevent collisions.
-- Maintain an install manifest recording every file write so uninstall is deterministic (especially for targets without a bundle lifecycle).
-
-### 7.2 Skill emission
-- Prefer skills as the universal export mechanism when possible (Codex recommends skills for reusable prompts; OpenCode and Cursor also support skills).
-- Preserve the skill directory file tree; only transform metadata if the target requires additional frontmatter keys (not assumed by this spec unless a primary source demands it).
-
-### 7.3 Command emission
-- **Cursor**: emit project commands under `.cursor/commands/<plugin_id>-<command>.md`.
-- **Codex**: always emit commands as package-local skills and report Claude-only argument substitution as degraded.
-- **OpenCode**: emit markdown commands under `.opencode/commands/<plugin_id>-<command>.md` (project scope) or `~/.config/opencode/commands/` (user scope). Use YAML frontmatter for metadata when needed (description/agent/model). Alternatively (optional), emit JSON-defined commands into opencode.json under command.
-
-### 7.4 Hooks emission
-- **Claude**: emit hooks as Claude plugin hooks per schema.
-- **Cursor**: emit Cursor hooks (implementation requires Cursor hook configuration schema; Cursor documents the hooks subsystem but this spec does not hardcode file formats beyond what's explicitly documented).
-- **Codex**: emit supported command hooks into the package and rewrite `${CLAUDE_PLUGIN_ROOT}` to `${PLUGIN_ROOT}`; copy referenced support files and diagnose unsupported or unsafe handlers.
-- **Pi**: emit supported command hooks as a TypeScript extension under `.pi/extensions/` or `.pi/agent/extensions/`; diagnose unsupported events and non-command handlers.
-
-### 7.5 MCP emission
-- Convert Claude plugin MCP entries to each target's MCP configuration surface.
-- For Codex, emit `mcpServers` in the package manifest, rewrite plugin-root references, and include referenced local support files.
-- For OpenCode, allow `OPENCODE_CONFIG_DIR` support: emit into the selected config directory, so validation can be done against that directory.
-
-### 7.6 LSP emission (OpenCode)
-
-Convert Claude LSP entries to OpenCode's `opencode.json` lsp map. For each server, set `command` and `extensions`; carry over environment variables and initialization options where representable. OpenCode supports custom LSP servers via `lsp.<name>.command` and `lsp.<name>.extensions`.
-
----
-
-## 8) Validation: run-after-conversion checks
-
-### 8.1 Validator architecture
-
-The tool emits a set of `ValidationSteps`, then runs them to produce a `ValidationReport`.
-- Prefer CLI checks.
-- Use TUI/UX checks only where CLI enumeration is not documented.
-- Each step must record:
-  - command or UI steps
-  - expected output (substring/regex)
-  - captured evidence (stdout/stderr/screenshot/text capture)
-  - pass/fail/skip
-
-### 8.2 Validator Pydantic models
-
-```python
-from enum import Enum
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
-
-class CheckResult(str, Enum):
-    PASS = "pass"
-    FAIL = "fail"
-    SKIP = "skip"
-
-class ValidationStep(BaseModel):
-    id: str
-    target: TargetTool
-    scope: InstallScope
-    component_kind: ComponentKind
-    component_name: Optional[str] = None
-    evidence_type: EvidenceType
-    command: Optional[str] = None
-    tui_steps: Optional[List[str]] = None
-    expected: str
-    notes: Optional[str] = None
-
-class ValidationEvidence(BaseModel):
-    captured_stdout: Optional[str] = None
-    captured_stderr: Optional[str] = None
-    files_checked: List[str] = Field(default_factory=list)
-    extra: Dict[str, str] = Field(default_factory=dict)
-
-class ValidationRecord(BaseModel):
-    step: ValidationStep
-    result: CheckResult
-    evidence: Optional[ValidationEvidence] = None
-    diagnostics: List[Diagnostic] = Field(default_factory=list)
-
-class ValidationReport(BaseModel):
-    plugin: PluginIdentity
-    records: List[ValidationRecord] = Field(default_factory=list)
-    summary: Dict[str, int] = Field(default_factory=dict)
-```
-
----
-
-## 9) Concrete validation steps (only those supported by cited sources)
-
-### 9.1 Claude Code validation steps
-
-**C1 — Validate plugin manifest**
-- Evidence: CLI
-- Command: `claude plugin validate <path-to-plugin>`
-- Expect: exit 0 / "valid"
-- Source: Claude plugin reference includes developer tools and validate flows.
-
-**C2 — Load plugin with debug and verify registration**
-- Evidence: CLI/LOG
-- Command: `claude --debug ...` (categories as needed)
-- Expect: debug indicates plugin loaded and components registered (including MCP initialization details)
-- Source: plugin reference describes --debug output for plugin loading/initialization.
-
-**C3 — Skills/commands discoverable (interactive smoke test)**
-- Evidence: TUI
-- Steps:
-  1. Start Claude Code interactive session
-  2. Type `/` and verify plugin skill/command appears
-  3. Invoke `/skill-name` (or command)
-- Expect: selection shows component; invocation works
-- Source: plugin reference states skills/commands are discovered when plugin is installed.
-
-**C4 — Hooks fire (debug-driven)**
-- Evidence: LOG
-- Steps:
-  1. Start with `claude --debug ...`
-  2. Trigger a tool-use path that the hook matches
-- Expect: hook event lines in debug/log output
-- Source: hooks are a defined plugin component and part of plugin debug surface.
-
-### 9.2 Codex validation steps
-
-**X1 — Package and marketplace validate**
-- Evidence: FILESYSTEM + CLI
-- Steps:
-  1. Run `ai-config doctor --target codex <output-dir>`.
-  2. Register the generated local marketplace with `codex plugin marketplace add`.
-- Expect: package paths and manifests validate; marketplace appears in JSON listing.
-
-**X2 — Plugin lifecycle converges**
-- Evidence: CLI
-- Steps:
-  1. Install the generated selector with `codex plugin add`.
-  2. Verify enabled state with `codex plugin list --json`.
-  3. Re-sync, update source, re-sync, then remove source and re-sync.
-- Expect: install, idempotence, refresh, and removal succeed without duplicate or unrelated state changes.
-
-**X3 — Skill discovery and package ingestion**
-- Evidence: CLI
-- Steps:
-  1. Run auth-free `codex debug prompt-input` in an isolated home.
-  2. Verify package skills when enabled, absent when disabled, and restored when re-enabled.
-  3. Verify hooks in the installed cache and MCP servers through `codex mcp list`.
-- Expect: package components are visible only while the generated plugin is enabled.
-
-**X4 — Shared config remains valid**
-- Evidence: CLI
-- Steps:
-  1. Seed unrelated settings, marketplace, and plugin state.
-  2. Complete the managed lifecycle.
-  3. Run `codex --strict-config doctor --json`.
-- Expect: unrelated state remains and strict configuration loading succeeds.
-
-### 9.3 Cursor validation steps
-
-**U1 — Commands discoverable**
-- Evidence: FILESYSTEM + TUI
-- Steps:
-  1. Ensure `.cursor/commands/<name>.md` exists
-  2. In Cursor agent/chat, type `/` to view commands
-- Expect: command appears
-- Source: Cursor commands doc specifies `.cursor/commands` and Markdown file format.
-
-**U2 — Skills available**
-- Evidence: TUI
-- Steps:
-  1. Install/export skills into Cursor's supported skills surface
-  2. Use Cursor's documented skills UX to invoke skill
-- Expect: skill works
-- Source: Cursor Agent Skills docs.
-
-**U3 — Hooks operational**
-- Evidence: LOG/TUI
-- Steps:
-  1. Configure hook per Cursor hooks docs
-  2. Trigger matching agent-loop activity
-- Expect: hook executes as expected
-- Source: Cursor hooks docs.
-
-### 9.4 OpenCode validation steps
-
-**O1 — Skills functional (runtime smoke test)**
-- Evidence: TUI
-- Steps:
-  1. Place skill in configured directory (default `.opencode` or `OPENCODE_CONFIG_DIR`)
-  2. Trigger skill loading via OpenCode skill tool (on-demand)
-- Expect: skill is discoverable/loadable by the skill tool
-- Source: OpenCode skills docs explain on-demand loading and skill tool behavior; config override is documented.
-
-**O2 — Commands discoverable (runtime smoke test)**
-- Evidence: FILESYSTEM + TUI
-- Steps:
-  1. Place command file in `.opencode/commands/` (project) or `~/.config/opencode/commands/` (user).
-  2. In OpenCode, type `/` and confirm the command appears; invoke it.
-- Expect: command appears and runs
-- Source: OpenCode commands docs (markdown commands + locations + invocation).
-
-**O3 — LSP server configured and starts (optional / best-effort)**
-- Evidence: FILESYSTEM + LOG/TUI
-- Steps:
-  1. Write `opencode.json` with `lsp.<server>.command` and `lsp.<server>.extensions`.
-  2. Open a file matching an extension.
-  3. Confirm LSP starts (via OpenCode logs/diagnostics if exposed) or by observing features that depend on LSP.
-- Source: OpenCode LSP docs (custom LSP config + behavior).
-- Notes: Mark best-effort if the log/diagnostic surface varies by version/build; the configuration surface itself is documented.
-
----
-
-## 10) Optional: Docker + tmux validation harness
-
-### 10.1 Rationale
-
-Some validations are inherently TUI-driven (`/` menus, slash commands). tmux can:
-- start a TUI in a session
-- send keystrokes
-- capture pane output
-- run regex assertions against captured output
-
-### 10.2 What is feasible per documented surfaces
-- Codex slash-command-based checks are explicitly documented, making tmux automation plausible.
-- Claude debug output checks are plausible via non-interactive `--debug` logs; plugin validate is CLI-based.
-- Cursor/OpenCode checks may require UI layers not intended for headless Docker; do not promise full automation without confirming headless support and stable CLIs.
-
----
-
-## 11) Deliverables
-
-### 11.1 Converter outputs
-- Emitted file tree(s) for each target
-- An install manifest (for uninstall/re-run)
-- Diagnostics describing mapping status per component
-
-### 11.2 Validator outputs
-- `ValidationReport` JSON (dumped from Pydantic)
-- Human-readable report (table + highlighted failures)
-- Evidence blobs (captured stdout/stderr/pane output)
-
----
-
-## 12) Explicit gaps / TODOs (must be resolved by additional primary research before claiming full automation)
-
-1. **Cursor skills path/version behavior is version-dependent**: Cursor indicates Agent Skills are compatible with Claude Skills format, but rollout/activation can vary (some users report it only enables when `~/.claude/skills` already exists). Do not hardcode user-global paths without primary Cursor docs confirming them; treat as conditional and include a "detection + instructions" step.
-
-2. **OpenCode CLI enumeration for skills** (not assumed; add only when documented as stable).
-
-These gaps are intentionally surfaced so the tool does not claim guarantees it cannot verify from authoritative sources.
+Real target-runtime changes also require the applicable probes and Docker E2E
+lanes selected by `.agents/skills/ai-config-target-refresh/SKILL.md` and recorded
+in `ai_agent_docs/target-compatibility-baseline.md`.
