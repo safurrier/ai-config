@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Canonical correctness-envelope specification, current architecture and project-evolution explanations, and five historical ADRs for source format, IR conversion, Codex packages, ownership-safe cleanup, and observe-plan-apply sync.
+
 ## [0.6.2] - 2026-07-29
 
 ### Added

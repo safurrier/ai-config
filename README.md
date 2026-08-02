@@ -182,9 +182,13 @@ ai-config doctor --target all ./output-dir
 
 ## Further reading
 
+- [Specification](SPEC.md) — normative current-truth correctness envelope
 - [Commands](docs/commands.md) — complete CLI reference
 - [Configuration](docs/config.md) — config schema, path resolution, scopes, and examples
 - [Conversion](docs/conversion.md) — target mappings, dry runs, reports, and validation
+- [Architecture](docs/explanation/architecture.md) — system boundaries, flows, and ownership
+- [Project evolution](docs/explanation/project-evolution.md) — historical phases and retained tradeoffs
+- [Architecture decisions](docs/adr/001-use-claude-plugins-as-the-canonical-source.md) — lasting choices and rationale
 
 ## License
 
