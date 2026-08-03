@@ -35,7 +35,7 @@ one self-contained package and local marketplace for each source plugin:
 
 The package manifest contains supported MCP server declarations. Referenced hook support scripts
 are copied into the package, and `${CLAUDE_PLUGIN_ROOT}` becomes Codex's `${PLUGIN_ROOT}`.
-Target-native files under `targets/codex/` are copied into the package root.
+Target-native files under the source plugin's targets/codex directory are copied into the package root.
 
 `ai-config convert` only generates package sources. A configured `ai-config sync` also registers
 each generated local marketplace and installs or refreshes the plugin through `codex plugin`.
@@ -61,7 +61,7 @@ manifest is used consistently for package paths, both manifests, ownership, Code
 and drift checks. Two configured sources that normalize to the same identity fail before files or
 runtime state change.
 
-Source package versions must be valid SemVer 2.0.0 values such as `1.2.3` or `1.2.3-rc.1`.
+Source package versions must be valid SemVer 2.0.0 values such as 1.2.3 or 1.2.3-rc.1.
 Same-version content refreshes are allowed, upgrades are applied, and ownership/runtime downgrades
 fail closed with a remediation message. ai-config records only owned entries in
 `.ai-config/codex/ownership.json`. Removal and update are limited to that state. A collision with an

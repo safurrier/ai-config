@@ -173,7 +173,7 @@ Publishing is automated via GitHub Actions (`.github/workflows/publish.yml`):
 
 **One-time setup (repo admin):**
 1. Go to PyPI → Account settings → Publishing
-2. Add trusted publisher: GitHub, `safurrier/ai-config`, workflow `publish.yml`, environment `pypi`
+2. Add trusted publisher: GitHub repository safurrier/ai-config, workflow `publish.yml`, environment `pypi`
 3. Go to GitHub repo → Settings → Environments → Create `pypi` environment
 
 ## Repo-local Skills
@@ -190,6 +190,12 @@ Cross-cutting docs in `ai_agent_docs/`:
 - `ai_agent_docs/e2e-testing.md` — Docker E2E infrastructure, fixtures, tmux helpers
 - `ai_agent_docs/adding-a-target.md` — Step-by-step guide for adding a new conversion target
 - `ai_agent_docs/target-compatibility-baseline.md` — Current target-runtime assumptions, version baseline, and validation probes
+
+Durable context contracts and explanations:
+- `SPEC.md` — Current correctness envelope and acceptance evidence
+- `docs/architecture.md` — Current system boundaries and data flow
+- `docs/project-evolution.md` — Evidence-backed project phases and supersession
+- `docs/adr/README.md` — Architecture decision index
 
 ## Gotchas
 
