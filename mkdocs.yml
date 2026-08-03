@@ -68,6 +68,16 @@ nav:
   - Commands: commands.md
   - Configuration: config.md
   - Conversion: conversion.md
+  - Architecture: architecture.md
+  - Project evolution: project-evolution.md
+  - Decisions:
+      - Overview: adr/README.md
+      - Claude plugin source model: adr/0001-claude-plugin-source-model.md
+      - Target-neutral plugin IR: adr/0002-target-neutral-plugin-ir.md
+      - Target-native overrides: adr/0003-target-native-overrides.md
+      - Codex plugin packages: adr/0004-codex-plugin-packages.md
+      - Proven output ownership: adr/0005-proven-output-ownership.md
+      - Observe-plan-apply sync: adr/0006-observe-plan-apply-sync.md
 
 extra:
   social:
