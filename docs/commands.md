@@ -266,8 +266,8 @@ ai-config plugin create NAME
 Creates a plugin directory with:
 
 - `manifest.yaml` — Plugin metadata
-- `skills/` — Directory for skill files
-- `hooks/` — Directory for hook files
+- skills directory — Skill files
+- hooks directory — Hook files
 
 ## cache clear
 
