@@ -31,7 +31,7 @@ flowchart LR
 
 Marketplace actions precede dependent Claude plugin actions. Conversion follows Claude reconciliation because conversion sources may come from installed or local marketplace plugins. The executor rechecks observed preconditions before mutation. It records completed and failed actions separately and commits cache or ownership checkpoints only where the plan permits them.
 
-`--dry-run` renders the same materialized plan without runtime or filesystem mutation. A real `--fresh` clears Claude's cache before observation; a fresh dry-run does not, because its mutation-free contract is stronger than simulating that altered observation.
+`--dry-run` renders the same materialized plan without runtime, cache, ownership, or filesystem mutation, except for a report explicitly requested with `convert --report PATH`. A real `--fresh` clears Claude's cache before observation; a fresh dry-run does not, because its mutation-free contract is stronger than simulating that altered observation.
 
 ## Conversion flow
 

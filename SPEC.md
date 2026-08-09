@@ -17,7 +17,7 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 
 - The system MUST accept config version 1 with `claude` as its top-level target type and validate marketplace, plugin, scope, and conversion settings before mutation.
 - `sync` MUST observe runtime and source state, create an ordered plan, validate its preconditions, and apply only that plan.
-- A dry run MUST avoid state-changing runtime calls, filesystem writes, cache writes, and ownership writes.
+- A dry run MUST avoid state-changing runtime calls, filesystem writes, cache writes, and ownership writes, except for an explicitly requested `convert --report PATH` artifact.
 - The conversion pipeline MUST parse a Claude Code plugin into a target-neutral IR before invoking an independent target emitter.
 - Every conversion MUST classify each component as native, transformed, degraded, unsupported, or otherwise diagnosed by the target emitter.
 - The system MUST refuse destructive cleanup unless target-specific evidence proves ownership of the exact state being removed.
