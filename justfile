@@ -10,17 +10,17 @@ setup:
 # Run all code quality checks
 check: lint ty test
 
-# Lint source code
+# Lint source and test code
 lint:
-    uv run ruff check src/
+    uv run ruff check src/ tests/
 
-# Format source code
+# Format source and test code
 format:
-    uv run ruff format src/
+    uv run ruff format src/ tests/
 
 # Fix linting issues
 fix:
-    uv run ruff check src/ --fix
+    uv run ruff check src/ tests/ --fix
 
 # Type check with ty
 ty:

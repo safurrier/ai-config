@@ -3,13 +3,13 @@ repos:
     hooks:
     -   id: lint
         name: Run Linter
-        entry: env -u VIRTUAL_ENV uv run --python .venv/bin/python ruff check src/
+        entry: env -u VIRTUAL_ENV uv run --python .venv/bin/python ruff check src/ tests/
         language: system
         always_run: true
         pass_filenames: false
     -   id: format
         name: Run Formatter
-        entry: env -u VIRTUAL_ENV uv run --python .venv/bin/python ruff format --check src/
+        entry: env -u VIRTUAL_ENV uv run --python .venv/bin/python ruff format --check src/ tests/
         language: system
         always_run: true
         pass_filenames: false
