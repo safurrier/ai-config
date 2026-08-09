@@ -1,0 +1,46 @@
+# Default owner for repository-wide changes.
+* @safurrier
+
+# Command-line interface, configuration schema, and source-of-truth types.
+/src/ai_config/cli.py @safurrier
+/src/ai_config/__main__.py @safurrier
+/src/ai_config/cli_render.py @safurrier
+/src/ai_config/cli_theme.py @safurrier
+/src/ai_config/config.py @safurrier
+/src/ai_config/settings.py @safurrier
+/src/ai_config/types.py @safurrier
+/src/ai_config/init.py @safurrier
+/src/ai_config/scaffold.py @safurrier
+
+# Claude runtime adapter and sync planning/execution lifecycle.
+/src/ai_config/adapters/ @safurrier
+/src/ai_config/operations.py @safurrier
+/src/ai_config/sync_pipeline.py @safurrier
+/src/ai_config/sync_orchestration.py @safurrier
+/src/ai_config/sync_conversion.py @safurrier
+/src/ai_config/sync_state.py @safurrier
+/src/ai_config/watch.py @safurrier
+
+# Target-neutral conversion and destructive target-output ownership semantics.
+/src/ai_config/converters/ @safurrier
+/src/ai_config/codex_lifecycle.py @safurrier
+/src/ai_config/pi_ownership.py @safurrier
+/src/ai_config/output_safety.py @safurrier
+
+# Validation framework and target compatibility checks.
+/src/ai_config/validators/ @safurrier
+
+# Test suites, fixtures, and Docker-backed end-to-end infrastructure.
+/tests/unit/ @safurrier
+/tests/integration/ @safurrier
+/tests/e2e/ @safurrier
+/tests/fixtures/ @safurrier
+/tests/docker/ @safurrier
+
+# User-facing architecture, operational documentation, and agent guidance.
+/docs/ @safurrier
+/ai_agent_docs/ @safurrier
+/AGENTS.md @safurrier
+/src/AGENTS.md @safurrier
+/README.md @safurrier
+/SPEC.md @safurrier
