@@ -18,6 +18,8 @@
         <link rel="prev" href="../config/">
       
       
+        <link rel="next" href="../architecture/">
+      
       
         
       
@@ -292,6 +294,64 @@
 
       </a>
     </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../project-evolution/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Project evolution
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../adr/" class="md-tabs__link">
+          
+  
+  
+  Decisions
+
+        </a>
+      </li>
+    
   
 
       
@@ -595,6 +655,315 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../project-evolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project evolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decisions
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Decisions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0001-claude-plugin-source-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude plugin source model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0002-target-neutral-plugin-ir/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target-neutral plugin IR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0003-target-native-overrides/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target-native overrides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0004-codex-plugin-packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codex plugin packages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0005-proven-output-ownership/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proven output ownership
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0006-observe-plan-apply-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observe-plan-apply sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -782,7 +1151,7 @@ one self-contained package and local marketplace for each source plugin:</p>
 </code></pre></div>
 <p>The package manifest contains supported MCP server declarations. Referenced hook support scripts
 are copied into the package, and <code>${CLAUDE_PLUGIN_ROOT}</code> becomes Codex's <code>${PLUGIN_ROOT}</code>.
-Target-native files under <code>targets/codex/</code> are copied into the package root.</p>
+Target-native files under the source plugin's targets/codex directory are copied into the package root.</p>
 <p><code>ai-config convert</code> only generates package sources. A configured <code>ai-config sync</code> also registers
 each generated local marketplace and installs or refreshes the plugin through <code>codex plugin</code>.
 Codex owns its installed cache and enablement in <code>CODEX_HOME</code>; ai-config does not imitate that
@@ -805,7 +1174,7 @@ layout or rewrite unrelated Codex settings.</p>
 manifest is used consistently for package paths, both manifests, ownership, Codex CLI selectors,
 and drift checks. Two configured sources that normalize to the same identity fail before files or
 runtime state change.</p>
-<p>Source package versions must be valid SemVer 2.0.0 values such as <code>1.2.3</code> or <code>1.2.3-rc.1</code>.
+<p>Source package versions must be valid SemVer 2.0.0 values such as 1.2.3 or 1.2.3-rc.1.
 Same-version content refreshes are allowed, upgrades are applied, and ownership/runtime downgrades
 fail closed with a remediation message. ai-config records only owned entries in
 <code>.ai-config/codex/ownership.json</code>. Removal and update are limited to that state. A collision with an
@@ -1028,6 +1397,10 @@ include remediation, and report completed and failed actions.</p>
     
     
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="https://unpkg.com/mermaid@11.9.0/dist/mermaid.min.js"></script>
+      
+        <script src="../javascripts/mermaid.js"></script>
       
     
   </body>

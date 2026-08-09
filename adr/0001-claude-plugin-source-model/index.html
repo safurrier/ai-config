@@ -12,25 +12,31 @@
         <meta name="author" content="Alex Furrier">
       
       
+        <link rel="canonical" href="https://safurrier.github.io/ai-config/adr/0001-claude-plugin-source-model/">
       
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../0002-target-neutral-plugin-ir/">
       
       
         
       
       
-      <link rel="icon" href="/ai-config/assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
     
     
       
-        <title>ai-config</title>
+        <title>Claude plugin source model - ai-config</title>
       
     
     
-      <link rel="stylesheet" href="/ai-config/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="/ai-config/assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +55,9 @@
       
     
     
-      <link rel="stylesheet" href="/ai-config/assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("/ai-config/",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -75,6 +81,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#use-claude-code-plugins-as-the-source-model" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -87,7 +98,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/ai-config/." title="ai-config" class="md-header__button md-logo" aria-label="ai-config" data-md-component="logo">
+    <a href="../.." title="ai-config" class="md-header__button md-logo" aria-label="ai-config" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -107,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              
+              Claude plugin source model
             
           </span>
         </div>
@@ -214,7 +225,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -233,7 +244,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/commands/" class="md-tabs__link">
+      <a href="../../commands/" class="md-tabs__link">
         
   
   
@@ -252,7 +263,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/config/" class="md-tabs__link">
+      <a href="../../config/" class="md-tabs__link">
         
   
   
@@ -271,7 +282,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/conversion/" class="md-tabs__link">
+      <a href="../../conversion/" class="md-tabs__link">
         
   
   
@@ -290,7 +301,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/architecture/" class="md-tabs__link">
+      <a href="../../architecture/" class="md-tabs__link">
         
   
   
@@ -309,7 +320,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/ai-config/project-evolution/" class="md-tabs__link">
+      <a href="../../project-evolution/" class="md-tabs__link">
         
   
   
@@ -326,11 +337,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="/ai-config/adr/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -370,7 +383,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/ai-config/." title="ai-config" class="md-nav__button md-logo" aria-label="ai-config" data-md-component="logo">
+    <a href="../.." title="ai-config" class="md-nav__button md-logo" aria-label="ai-config" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -400,7 +413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -427,7 +440,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/commands/" class="md-nav__link">
+      <a href="../../commands/" class="md-nav__link">
         
   
   
@@ -454,7 +467,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/config/" class="md-nav__link">
+      <a href="../../config/" class="md-nav__link">
         
   
   
@@ -481,7 +494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/conversion/" class="md-nav__link">
+      <a href="../../conversion/" class="md-nav__link">
         
   
   
@@ -508,7 +521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/architecture/" class="md-nav__link">
+      <a href="../../architecture/" class="md-nav__link">
         
   
   
@@ -535,7 +548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/project-evolution/" class="md-nav__link">
+      <a href="../../project-evolution/" class="md-nav__link">
         
   
   
@@ -559,26 +572,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
         
           
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
             
   
   
@@ -596,7 +614,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -614,7 +632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -639,10 +657,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/ai-config/adr/0001-claude-plugin-source-model/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Claude plugin source model
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -658,6 +703,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -670,7 +768,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/0002-target-neutral-plugin-ir/" class="md-nav__link">
+      <a href="../0002-target-neutral-plugin-ir/" class="md-nav__link">
         
   
   
@@ -698,7 +796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/0003-target-native-overrides/" class="md-nav__link">
+      <a href="../0003-target-native-overrides/" class="md-nav__link">
         
   
   
@@ -726,7 +824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/0004-codex-plugin-packages/" class="md-nav__link">
+      <a href="../0004-codex-plugin-packages/" class="md-nav__link">
         
   
   
@@ -754,7 +852,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/0005-proven-output-ownership/" class="md-nav__link">
+      <a href="../0005-proven-output-ownership/" class="md-nav__link">
         
   
   
@@ -782,7 +880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/ai-config/adr/0006-observe-plan-apply-sync/" class="md-nav__link">
+      <a href="../0006-observe-plan-apply-sync/" class="md-nav__link">
         
   
   
@@ -827,6 +925,49 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -839,8 +980,36 @@
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+
+  
+  
+
+
+<h1 id="use-claude-code-plugins-as-the-source-model">Use Claude Code plugins as the source model<a class="headerlink" href="#use-claude-code-plugins-as-the-source-model" title="Permanent link">&para;</a></h1>
+<p>Status: Accepted
+Date: 2026-02-03</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>The project began to replace repeated manual <code>claude plugin marketplace add</code> and <code>claude plugin install</code> operations with a version-controlled YAML configuration. Claude Code already supplied the bundle model for skills, hooks, commands, agents, MCP servers, and LSP servers. When cross-tool conversion was explored, that model also contained the richest component set; other tools could accept subsets or transformations of it.</p>
+<p>Evidence: repository genesis <code>499cb2b612d26909c6787775401b76e806384310</code> in <code>README.md</code>, followed by the feasibility research and implementation merged as <a href="https://github.com/safurrier/ai-config/pull/3">PR #3</a> at <code>a11b2c66134b3a6304d23d4dd2daea5910244b2d</code>.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>Config version 1 treats Claude Code as the only top-level runtime target. Cross-tool support consumes a Claude Code plugin as source and converts it to Codex, Cursor, OpenCode, or Pi output. It does not define independent desired-state schemas for those runtimes.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>One source bundle and one declarative marketplace/plugin model remain authoritative. Conversion can reuse the source plugin's structure, but fidelity is asymmetric: target-only capabilities are not inputs, and unsupported Claude features must be diagnosed rather than silently claimed as portable.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -899,14 +1068,14 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/ai-config/", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "toc.follow", "content.code.copy"], "search": "/ai-config/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "toc.follow", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="/ai-config/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@11.9.0/dist/mermaid.min.js"></script>
       
-        <script src="/ai-config/javascripts/mermaid.js"></script>
+        <script src="../../javascripts/mermaid.js"></script>
       
     
   </body>
