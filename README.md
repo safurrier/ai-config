@@ -139,6 +139,7 @@ Relative local marketplace paths and conversion output paths are resolved from t
 | Rebuild stale output | `ai-config sync --fresh` | Clears cache and re-converts everything. |
 | Re-run conversion only | `ai-config sync --force-convert` | Useful after changing conversion targets. |
 | Develop local plugins | `ai-config watch` | Add `--dry-run` if you only want file-change reports. |
+| Check historical change concentration | `ai-config bus-factor --since "1 year ago"` | Read-only Git-history risk signal; it is not formal ownership. |
 
 For options and examples, use [Commands](docs/commands.md). For target behavior and fidelity notes, use [Conversion](docs/conversion.md).
 

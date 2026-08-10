@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ai-config bus-factor`, a read-only Git-history analyzer for repository and file-level change concentration, with configurable windows, thresholds, limits, and JSON output.
 - Current system specification, architecture overview, project-evolution timeline,
   and six evidence-backed architecture decisions for plugin source, target-neutral
   IR, target-native overrides, Codex packages, ownership, and observe-plan-apply sync.

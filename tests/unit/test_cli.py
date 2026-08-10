@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
+from ai_config.bus_factor import BusFactorReport, FileConcentration, GitHistoryError
 from ai_config.cli import main
 from ai_config.converters.ir import PluginIdentity, TargetTool
 from ai_config.converters.report import ConversionReport
@@ -139,6 +140,67 @@ class TestMainGroup:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
         assert "ai-config" in result.output
+
+
+class TestBusFactorCommand:
+    """Tests for historical change-concentration CLI output."""
+
+    def test_default_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        report = BusFactorReport(
+            repository=tmp_path,
+            since=None,
+            threshold=0.5,
+            commits_analyzed=2,
+            total_contributors=1,
+            top_contributor_share=1.0,
+            contributors_for_threshold=1,
+            files=(FileConcentration("src/app.py", 2, 1.0),),
+            high_risk_files=(FileConcentration("src/app.py", 2, 1.0),),
+        )
+        with patch("ai_config.cli.analyze_repository", return_value=report):
+            result = runner.invoke(main, ["bus-factor", str(tmp_path)])
+
+        assert result.exit_code == 0
+        assert "Top contributor share" in result.output
+        assert "src/app.py" in result.output
+        assert "formal ownership" in result.output
+
+    def test_json_output_and_options(self, runner: CliRunner, tmp_path: Path) -> None:
+        report = BusFactorReport(tmp_path, "1 year ago", 0.7, 0, 0, 0.0, 0, (), ())
+        with patch("ai_config.cli.analyze_repository", return_value=report) as analyze:
+            result = runner.invoke(
+                main,
+                [
+                    "bus-factor",
+                    str(tmp_path),
+                    "--since",
+                    "1 year ago",
+                    "--threshold",
+                    "0.7",
+                    "--limit",
+                    "4",
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["contributors_for_threshold"] == 0
+        assert analyze.call_args.args[1:] == ("1 year ago", 0.7, 4)
+
+    def test_invalid_bounds_and_non_git_path_fail_actionably(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        invalid = runner.invoke(main, ["bus-factor", "--threshold", "2"])
+        with patch(
+            "ai_config.cli.analyze_repository",
+            side_effect=GitHistoryError("Not a Git worktree"),
+        ):
+            non_git = runner.invoke(main, ["bus-factor", str(tmp_path)])
+
+        assert invalid.exit_code == 2
+        assert "Invalid value" in invalid.output
+        assert non_git.exit_code == 1
+        assert "Not a Git worktree" in non_git.output
 
 
 class TestSyncCommand:

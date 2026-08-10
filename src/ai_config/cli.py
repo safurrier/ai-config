@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from ai_config.bus_factor import GitHistoryError, analyze_repository
 from ai_config.cli_theme import SYMBOLS, create_console
 from ai_config.config import (
     ConfigError,
@@ -41,6 +42,7 @@ COMMAND_ORDER = [
     "watch",
     "update",
     "doctor",
+    "bus-factor",
     "plugin",
     "convert",
     "cache",
@@ -79,6 +81,73 @@ def main() -> None:
     other AI tools (Codex, Cursor, OpenCode, Pi) via convert.
     """
     pass
+
+
+@main.command(
+    name="bus-factor",
+    epilog="\b\nExamples:\n"
+    "  ai-config bus-factor                 Analyze the current repository\n"
+    "  ai-config bus-factor ../project --since '1 year ago'\n"
+    "  ai-config bus-factor --threshold 0.7 --json\n",
+)
+@click.argument("repository", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
+@click.option("--since", help="Only analyze commits newer than this Git date expression.")
+@click.option(
+    "--threshold",
+    type=click.FloatRange(min=0.0001, max=1.0),
+    default=0.5,
+    show_default=True,
+    help="Coverage and dominant-file concentration threshold (0-1).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1, max=1000),
+    default=20,
+    show_default=True,
+    help="Maximum number of files to include.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output stable machine-readable JSON.")
+def bus_factor(
+    repository: Path | None, since: str | None, threshold: float, limit: int, as_json: bool
+) -> None:
+    """Measure historical change concentration; commit history is not ownership."""
+    try:
+        report = analyze_repository(repository or Path.cwd(), since, threshold, limit)
+    except (GitHistoryError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if as_json:
+        console.print_json(json.dumps(report.to_dict()))
+        return
+
+    console.print()
+    console.print(Panel.fit("[header]ai-config bus-factor[/header]", border_style="cyan"))
+    console.print(f"[subheader]Repository:[/subheader] {report.repository}")
+    if report.since:
+        console.print(f"[subheader]Since:[/subheader] {report.since}")
+    console.print("[dim]Commit history is a proxy for change concentration, not formal ownership.[/dim]")
+    console.print()
+    console.print(f"[subheader]Commits analyzed:[/subheader] {report.commits_analyzed}")
+    console.print(f"[subheader]Contributors:[/subheader] {report.total_contributors}")
+    console.print(f"[subheader]Top contributor share:[/subheader] {report.top_contributor_share:.1%}")
+    console.print(
+        f"[subheader]Contributors for {report.threshold:.0%} coverage:[/subheader] "
+        f"{report.contributors_for_threshold}"
+    )
+    console.print()
+    if not report.files:
+        console.print("[info]No non-merge commits found in this history window.[/info]")
+        return
+    table = Table(title="Files by dominant contributor concentration", box=None)
+    table.add_column("File", style="key")
+    table.add_column("Touches", justify="right")
+    table.add_column("Dominant share", justify="right")
+    table.add_column("Risk")
+    high_risk_paths = {file.path for file in report.high_risk_files}
+    for file in report.files:
+        risk = "high" if file.path in high_risk_paths else "-"
+        table.add_row(file.path, str(file.total_touches), f"{file.dominant_share:.1%}", risk)
+    console.print(table)
 
 
 @main.command(

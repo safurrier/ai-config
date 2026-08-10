@@ -12,6 +12,7 @@ Complete reference for all ai-config commands.
 | `watch` | Auto-sync on file changes |
 | `update` | Update plugins to latest versions |
 | `doctor` | Validate setup and show fix hints |
+| `bus-factor` | Analyze historical change concentration |
 | `convert` | Convert plugins to other AI tools |
 | `plugin create` | Scaffold a new plugin |
 | `cache clear` | Clear the plugin cache |
@@ -165,6 +166,29 @@ ai-config update PLUGIN1 PLUGIN2
 | `PLUGINS` | Specific plugin IDs to update (positional, space-separated) |
 
 You must specify either `--all` or one or more plugin names.
+
+## bus-factor
+
+Analyze historical change concentration in the current Git repository, or an explicit path.
+
+```bash
+ai-config bus-factor
+ai-config bus-factor ../another-repository --since "1 year ago" --threshold 0.7
+ai-config bus-factor --json
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--since DATE` | Only include commits newer than a Git date expression |
+| `--threshold NUMBER` | Coverage and dominant-file threshold from greater than 0 through 1 (default: `0.5`) |
+| `--limit NUMBER` | Maximum files in the result, from 1 through 1000 (default: `20`) |
+| `--json` | Output stable machine-readable JSON |
+
+The report uses non-merge commits and changed-file touch counts. It includes total contributors, the top contributor's share of commits, the minimum number of contributors required to reach the threshold, and files whose dominant contributor exceeds that threshold. Contributor identities are not printed.
+
+Commit history measures historical change concentration; it is a useful risk signal, not formal organizational ownership. Renamed files, pair work, reviews, and work done outside Git are not represented.
 
 ## doctor
 
