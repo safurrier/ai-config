@@ -90,7 +90,9 @@ def main() -> None:
     "  ai-config bus-factor ../project --since '1 year ago'\n"
     "  ai-config bus-factor --threshold 0.7 --json\n",
 )
-@click.argument("repository", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
+@click.argument(
+    "repository", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False
+)
 @click.option("--since", help="Only analyze commits newer than this Git date expression.")
 @click.option(
     "--threshold",
@@ -125,11 +127,15 @@ def bus_factor(
     console.print(f"[subheader]Repository:[/subheader] {report.repository}")
     if report.since:
         console.print(f"[subheader]Since:[/subheader] {report.since}")
-    console.print("[dim]Commit history is a proxy for change concentration, not formal ownership.[/dim]")
+    console.print(
+        "[dim]Commit history is a proxy for change concentration, not formal ownership.[/dim]"
+    )
     console.print()
     console.print(f"[subheader]Commits analyzed:[/subheader] {report.commits_analyzed}")
     console.print(f"[subheader]Contributors:[/subheader] {report.total_contributors}")
-    console.print(f"[subheader]Top contributor share:[/subheader] {report.top_contributor_share:.1%}")
+    console.print(
+        f"[subheader]Top contributor share:[/subheader] {report.top_contributor_share:.1%}"
+    )
     console.print(
         f"[subheader]Contributors for {report.threshold:.0%} coverage:[/subheader] "
         f"{report.contributors_for_threshold}"
