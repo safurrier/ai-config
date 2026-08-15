@@ -289,11 +289,7 @@ def clear_cache() -> CommandResult:
         CommandResult indicating success or failure.
     """
     configured_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    config_dir = (
-        Path(configured_dir).expanduser()
-        if configured_dir
-        else Path.home() / ".claude"
-    )
+    config_dir = Path(configured_dir).expanduser() if configured_dir else Path.home() / ".claude"
     cache_dir = config_dir / "plugins" / "cache"
     if not cache_dir.exists():
         return CommandResult(
