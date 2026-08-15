@@ -374,6 +374,25 @@ class TestClearCache:
         assert result.success is True
         assert not cache_dir.exists()
 
+    def test_cache_removed_from_configured_claude_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Removes only the cache for the configured Claude profile."""
+        default_cache = tmp_path / ".claude" / "plugins" / "cache"
+        configured_cache = tmp_path / ".claude-personal" / "plugins" / "cache"
+        default_cache.mkdir(parents=True)
+        configured_cache.mkdir(parents=True)
+        (default_cache / "work-plugin").write_text("work")
+        (configured_cache / "personal-plugin").write_text("personal")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude-personal"))
+
+        result = clear_cache()
+
+        assert result.success is True
+        assert default_cache.exists()
+        assert not configured_cache.exists()
+
 
 class TestGetByHelpers:
     """Tests for get_plugin_by_id and get_marketplace_by_name."""

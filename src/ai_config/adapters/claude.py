@@ -6,6 +6,7 @@ This module shells out to the `claude` CLI to manage plugins and marketplaces.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -282,12 +283,18 @@ def update_marketplace(name: str | None = None) -> CommandResult:
 
 
 def clear_cache() -> CommandResult:
-    """Clear the plugin cache by removing the cache directory.
+    """Clear the active Claude profile's plugin cache directory.
 
     Returns:
         CommandResult indicating success or failure.
     """
-    cache_dir = Path.home() / ".claude" / "plugins" / "cache"
+    configured_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    config_dir = (
+        Path(configured_dir).expanduser()
+        if configured_dir
+        else Path.home() / ".claude"
+    )
+    cache_dir = config_dir / "plugins" / "cache"
     if not cache_dir.exists():
         return CommandResult(
             success=True,

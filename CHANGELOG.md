@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Validate the observed Codex plugin lifecycle contract through Codex CLI 0.147.x.
 
+### Fixed
+
+- Claude cache clearing now respects `CLAUDE_CONFIG_DIR`, so fresh syncs for
+  alternate profiles remove the intended profile cache without affecting the
+  default profile.
+
 ## [0.6.2] - 2026-07-29
 
 ### Added
