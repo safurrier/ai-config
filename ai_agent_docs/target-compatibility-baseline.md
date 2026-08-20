@@ -2,8 +2,8 @@
 
 This file records the runtime assumptions behind ai-config target conversion.
 
-Last checked: 2026-07-29
-Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0, source-less Codex marketplace metadata for issue #20, and Codex 0.146.0 compatibility for ai-config 0.6.2.
+Last checked: 2026-08-20
+Context: first-class Codex plugin packages, source-less Codex marketplace metadata, Codex compatibility, and Claude skill include metadata for shared-resource projection.
 
 ## Summary
 
@@ -14,6 +14,58 @@ Context: first-class Codex plugin packages for issue #18 / ai-config 0.6.0, sour
 | Cursor | `.cursor/skills/`, `.cursor/mcp.json`, `.cursor/hooks.json` | JSON checks and `cursor-agent mcp list` |
 | OpenCode | `.opencode/skills/`, `opencode.json`, `opencode.lsp.json` | `opencode debug skill/config`, `opencode mcp list` |
 | Pi | project `.pi/` or user `.pi/agent/` skills, prompts, extensions | RPC `get_commands` and extension marker probe |
+
+## Claude 2.1.231 shared-skill metadata evidence
+
+Phase 0 froze the per-skill `x-ai-config-includes` contract only after strict validation and native
+plugin loading both accepted it. Run the isolated, credential-free probe with:
+
+```bash
+uv run python tests/probes/probe_claude_skill_includes.py
+```
+
+Exact output captured on 2026-08-20 (temporary path suffixes vary):
+
+```text
+$ /Users/alexfurrier/.local/share/mise/installs/node/24/bin/claude plugin validate --strict /var/folders/.../ai-config-include-probe-v4xprg3l
+Validating plugin manifest: /var/folders/.../ai-config-include-probe-v4xprg3l/.claude-plugin/plugin.json
+
+✔ Validation passed
+exit=0
+$ /Users/alexfurrier/.local/share/mise/installs/node/24/bin/claude --plugin-dir /var/folders/.../ai-config-include-probe-v4xprg3l plugin details include-probe
+include-probe 1.0.0
+  Validate ai-config include metadata
+  Source: include-probe@inline
+
+Component inventory
+  Skills (1)  one
+  Agents (0)
+  Hooks (0)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~23 tok   added to every session
+
+Per-component (rounded)
+  component  always-on  on-invoke
+  one              ~20        ~40
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.
+exit=0
+```
+
+The probe's `SKILL.md` declares exactly:
+
+```yaml
+x-ai-config-includes:
+  - shared/data.txt
+```
+
+This is ai-config build metadata, not a claim that Claude itself materializes the resource. Claude
+accepts and loads the source skill; ai-config strips the field while producing self-contained target
+skills.
 
 ## Codex 0.144.5, 0.145.0, and 0.146.0 evidence
 

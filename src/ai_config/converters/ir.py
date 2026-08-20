@@ -111,6 +111,23 @@ class BinaryFile(BaseModel):
 AnyFile = TextFile | BinaryFile
 
 
+class IncludeKind(str, Enum):
+    """How an included source file's bytes decode."""
+
+    TEXT = "text"
+    BINARY = "binary"
+
+
+class SkillInclude(BaseModel, frozen=True):
+    """Immutable plugin-root file captured for one generated skill."""
+
+    source_relative_path: str
+    projected_path: str
+    content: bytes
+    kind: IncludeKind
+    executable: bool = False
+
+
 # --- Component Types ---
 
 
@@ -123,6 +140,7 @@ class Skill(BaseModel):
     scope_hint: InstallScope = InstallScope.USER
     entrypoint: str = "SKILL.md"
     files: list[AnyFile] = Field(default_factory=list)
+    includes: tuple[SkillInclude, ...] = ()
 
     # Claude-specific fields that may not convert
     allowed_tools: list[str] | None = None

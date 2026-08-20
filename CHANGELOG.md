@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared plugin resources can be declared per skill with `x-ai-config-includes`; Codex, Cursor,
+  OpenCode, and Pi now receive independent byte-preserved `_shared/` copies with exact instruction
+  rewrites and additive report evidence.
+- Conversion source reads now use one fail-closed plugin-root containment boundary for manifests,
+  components, skill assets, includes, Codex support files, and target-native files.
 - Current system specification, architecture overview, project-evolution timeline,
   and six evidence-backed architecture decisions for plugin source, target-neutral
   IR, target-native overrides, Codex packages, ownership, and observe-plan-apply sync.
 
 ### Changed
 
+- Conversion cache version 8 hashes the complete safely readable plugin source and rejects link or
+  special-file hash bypasses.
 - Validate the observed Codex plugin lifecycle contract through Codex CLI 0.147.x.
 
 ### Fixed

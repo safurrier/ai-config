@@ -51,14 +51,30 @@ Pi ownership ledgers. Cache and ownership formats are unchanged.
 ai-config converts Claude plugins through a target-independent IR:
 
 ```text
-Claude plugin directory -> ClaudePluginParser -> PluginIR -> target emitter -> EmitResult/report
+Claude plugin directory -> contained source reader -> ClaudePluginParser -> PluginIR
+                        -> pure skill projection -> target emitter -> EmitResult/report
 ```
 
 ## Ownership boundaries
 
 `PluginIR` carries identity, skills, commands, hooks, MCP servers, agents, LSP servers, source paths,
-and diagnostics. Emitters do not mutate the IR. Each target owns an independent `EmitResult`,
-component mappings, diagnostics, and output paths.
+and diagnostics. Skill include records are immutable and contain the plugin-relative source path,
+projected `_shared/` path, captured bytes, text/binary kind, and executable mode. Rewrite counts and
+duplication bytes belong to projection/report evidence rather than IR. Emitters do not mutate the IR
+or reopen include sources. Each target owns an independent `EmitResult`, component mappings,
+diagnostics, and output paths.
+
+`source_safety.py` is the canonical authority for conversion source reads. It validates portable
+plugin-relative paths, rejects final and in-root ancestor symlinks, traversal, special files, and
+resolved escape before reading. Manifests, components, skill assets, includes, Codex support files,
+and target-native files use this boundary. `compute_plugin_hash()` walks the same fail-closed source
+universe; cache format version 8 invalidates older signatures.
+
+`skill_projection.py` is pure and shared by all four emitters. It rewrites only exact declared
+`${CLAUDE_PLUGIN_ROOT}/<path>` occurrences in instruction Markdown, always to a skill-root-relative
+`_shared/<path>` even when the Markdown is nested. It copies captured bytes into each consumer,
+blocks remaining undeclared placeholders and projected collisions, and returns additive per-copy
+evidence. A zero direct rewrite count is valid for a transitive dependency.
 
 | Emitter | Primary output | Shared-state behavior |
 |---|---|---|
@@ -67,9 +83,12 @@ component mappings, diagnostics, and output paths.
 | `OpenCodeEmitter` | `.opencode/`, `opencode.json`, `opencode.lsp.json` | writes target files |
 | `PiEmitter` | project `.pi/` or user `.pi/agent/` | writes target files/extensions |
 
-`EmitResult` contains emitted files, independent component mappings, diagnostics, and proven-owned
-cleanup paths. `write_to()` removes only explicit owned cleanup paths before writing. Target-native
-files under `targets/<target>/` override generated files at the target's natural root.
+`EmitResult` contains emitted files, independent component mappings, diagnostics, additive include
+evidence, and proven-owned cleanup paths. `write_to()` removes only explicit owned cleanup paths
+before writing. Target-native files under `targets/<target>/` override generated files at the target's
+natural root. Pi's normal desired-file ledger owns included copies. Codex keeps them under its owned
+package. Cursor and OpenCode do not add cleanup paths for removed includes because they have no
+provenance ledger.
 
 ## Codex package and lifecycle seam
 

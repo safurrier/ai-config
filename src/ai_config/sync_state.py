@@ -13,9 +13,10 @@ from pathlib import Path
 from ai_config.adapters import claude
 from ai_config.converters.codex_package import CodexPackageSpec
 from ai_config.pi_ownership import load_pi_ownership
+from ai_config.source_safety import ContainedSource, SourceSafetyError
 from ai_config.types import ClaudeTargetConfig, ConversionConfig, PluginConfig, PluginSource
 
-_CONVERSION_CACHE_VERSION = 7
+_CONVERSION_CACHE_VERSION = 8
 
 
 def conversion_cache_path() -> Path:
@@ -73,22 +74,19 @@ def conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str:
 
 
 def compute_plugin_hash(plugin_path: Path) -> str | None:
-    if not plugin_path.is_dir():
-        return None
+    """Hash every safely readable plugin byte, failing closed on unsafe entries."""
     hasher = hashlib.sha256()
     try:
-        for file_path in sorted(plugin_path.rglob("*")):
-            if not file_path.is_file() or file_path.is_symlink():
-                continue
-            relpath = file_path.relative_to(plugin_path).as_posix()
-            hasher.update(relpath.encode("utf-8"))
+        source = ContainedSource(plugin_path)
+        for relative in source.walk_all_files(context="plugin hash"):
+            item = source.read_file(relative, context="plugin hash")
+            hasher.update(relative.as_posix().encode("utf-8"))
             hasher.update(b"\0")
-            hasher.update(b"x" if file_path.stat().st_mode & 0o111 else b"-")
-            data = file_path.read_bytes()
-            hasher.update(len(data).to_bytes(8, "big"))
-            hasher.update(data)
+            hasher.update(b"x" if item.executable else b"-")
+            hasher.update(len(item.content).to_bytes(8, "big"))
+            hasher.update(item.content)
         return hasher.hexdigest()
-    except OSError:
+    except (OSError, SourceSafetyError):
         return None
 
 

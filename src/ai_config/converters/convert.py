@@ -183,6 +183,19 @@ def _convert_to_target(
             lost_features=lost_features,
         )
 
+    for evidence in result.include_evidence:
+        report.add_include(
+            source_relative_path=evidence.source_relative_path,
+            consumer_skill=evidence.consumer_skill,
+            target_path=evidence.target_path,
+            copy_count=evidence.copy_count,
+            duplicated_bytes=evidence.duplicated_bytes,
+            direct_rewrite_count=evidence.direct_rewrite_count,
+        )
+
+    if result.has_errors() and not best_effort:
+        return report
+
     # Pi output is always reconciled through its ownership ledger. This lets a
     # standalone conversion remove only this plugin's stale files while retaining
     # projections from other plugins at the same root.

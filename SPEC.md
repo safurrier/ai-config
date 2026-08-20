@@ -19,6 +19,9 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - `sync` MUST observe runtime and source state, create an ordered plan, validate its preconditions, and apply only that plan.
 - A dry run MUST avoid state-changing runtime calls, filesystem writes, cache writes, and ownership writes, except for an explicitly requested `convert --report PATH` artifact.
 - The conversion pipeline MUST parse a Claude Code plugin into a target-neutral IR before invoking an independent target emitter.
+- Every source byte consumed by conversion MUST be read through a fail-closed plugin-root containment boundary and included in the source digest; absolute/traversing paths, resolved escape, final or in-root ancestor symlinks, and non-regular files MUST NOT be read or emitted.
+- A skill MAY declare exact plugin-root-relative regular files through `x-ai-config-includes`; each consuming generated skill MUST receive byte-preserved copies under `_shared/<plugin-relative-path>` and MUST remain self-contained.
+- Generated instruction Markdown MUST rewrite only exact declared `${CLAUDE_PLUGIN_ROOT}/<path>` references, generated `SKILL.md` MUST omit build metadata, and an undeclared remaining root reference MUST block that component.
 - Every conversion MUST classify each component as native, transformed, degraded, unsupported, or otherwise diagnosed by the target emitter.
 - The system MUST refuse destructive cleanup unless target-specific evidence proves ownership of the exact state being removed.
 - Pi reconciliation MUST preserve unowned collisions and locally modified owned output rather than overwrite or delete them.
@@ -46,12 +49,14 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - Planning is deterministic for an equivalent desired state, runtime snapshot, source batch, and conversion input.
 - The same materialized sync plan authorizes dry-run rendering and real execution.
 - Target emitters do not mutate the parsed plugin IR or another target's result.
+- Shared include records in IR are immutable, and one pure target-neutral projection supplies all target emitters without rereading include sources.
 - Marketplace actions precede dependent Claude plugin actions, and conversion actions follow them.
 - Failed or stale preconditions prevent the affected mutation and prevent unsupported cache or ownership checkpoints.
 - Missing or temporarily unavailable sources do not authorize deletion of their prior proven-owned output.
 - Generated Codex and Pi cleanup never crosses the validated ownership root.
 - Target-native files override generated files only within their selected target output and only after path and symlink validation.
 - Reports distinguish completed, failed, skipped, degraded, unsupported, and no-op outcomes rather than presenting partial work as success.
+- Include reports use plugin-relative logical sources and record the consumer, target-relative path, copy count, duplicated bytes, and direct rewrite count; zero rewrites remain valid transitive-dependency evidence.
 
 ## Acceptance
 
@@ -61,3 +66,4 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - Docker E2E lanes exercise supported tool surfaces, while isolated Codex and Pi probes verify real lifecycle behavior without using the caller's runtime homes or credentials.
 - `sync --dry-run` and the corresponding real sync expose the same planned action ordering for unchanged evidence.
 - Repeated sync converges without mutation, and tamper/removal tests prove cleanup stays within recorded target ownership.
+- Shared-resource fixtures prove two consumers receive independent byte-exact copies for all four emitters, with no build metadata or unresolved Claude root placeholder.

@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from ai_config.validators.base import ValidationResult
+from ai_config.validators.target.skill_invariants import generated_skill_invariant_errors
 
 # OpenCode has stricter name validation than other tools
 VALID_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -150,6 +151,17 @@ class OpenCodeOutputValidator:
                         check_name=f"opencode_skill_{skill_name}_description_length",
                         status="warn",
                         message=f"Description exceeds {MAX_DESCRIPTION_LENGTH} chars",
+                    )
+                )
+
+            for index, message in enumerate(
+                generated_skill_invariant_errors(skill_dir, frontmatter)
+            ):
+                results.append(
+                    ValidationResult(
+                        check_name=f"opencode_skill_{skill_name}_generated_{index}",
+                        status="fail",
+                        message=message,
                     )
                 )
 

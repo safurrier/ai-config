@@ -60,6 +60,28 @@ class FileResult:
         }
 
 
+@dataclass(frozen=True)
+class IncludeResult:
+    """Evidence for one materialized include in one generated skill."""
+
+    source_relative_path: str
+    consumer_skill: str
+    target_path: Path
+    copy_count: int
+    duplicated_bytes: int
+    direct_rewrite_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source_relative_path,
+            "consumer_skill": self.consumer_skill,
+            "target_path": self.target_path.as_posix(),
+            "copy_count": self.copy_count,
+            "duplicated_bytes": self.duplicated_bytes,
+            "direct_rewrite_count": self.direct_rewrite_count,
+        }
+
+
 @dataclass
 class ConversionReport:
     """Complete record of a conversion operation."""
@@ -77,6 +99,7 @@ class ConversionReport:
     # Files
     files_written: list[FileResult] = field(default_factory=list)
     files_skipped: list[FileResult] = field(default_factory=list)
+    includes: list[IncludeResult] = field(default_factory=list)
 
     # Diagnostics
     errors: list[Diagnostic] = field(default_factory=list)
@@ -128,6 +151,28 @@ class ConversionReport:
             self.files_skipped.append(result)
         else:
             self.files_written.append(result)
+
+    def add_include(
+        self,
+        *,
+        source_relative_path: str,
+        consumer_skill: str,
+        target_path: Path,
+        copy_count: int,
+        duplicated_bytes: int,
+        direct_rewrite_count: int,
+    ) -> None:
+        """Add materialized include evidence without inferring usage."""
+        self.includes.append(
+            IncludeResult(
+                source_relative_path,
+                consumer_skill,
+                target_path,
+                copy_count,
+                duplicated_bytes,
+                direct_rewrite_count,
+            )
+        )
 
     def add_diagnostic(self, diagnostic: Diagnostic) -> None:
         """Add a diagnostic message."""
@@ -222,6 +267,7 @@ class ConversionReport:
                 "written": [f.to_dict() for f in self.files_written],
                 "skipped": [f.to_dict() for f in self.files_skipped],
             },
+            "includes": [item.to_dict() for item in self.includes],
             "diagnostics": {
                 "errors": [
                     {"severity": d.severity.value, "message": d.message, "ref": d.component_ref}
@@ -343,6 +389,16 @@ class ConversionReport:
             )
             for c in self.components_skipped:
                 lines.append(f"- **{c.name}** ({c.kind}): {c.notes or 'Not supported'}")
+            lines.append("")
+
+        if self.includes:
+            lines.extend(["## Shared resources", ""])
+            for item in self.includes:
+                lines.append(
+                    f"- `{item.source_relative_path}` → `{item.target_path}` for "
+                    f"`{item.consumer_skill}` ({item.duplicated_bytes:,} bytes, "
+                    f"{item.direct_rewrite_count} direct rewrites)"
+                )
             lines.append("")
 
         # Files

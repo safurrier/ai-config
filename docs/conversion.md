@@ -105,6 +105,49 @@ targets:
 Reports classify each component independently as native, transform, emulate, fallback/degraded, or
 unsupported. One target's mapping never changes another target's report.
 
+## Shared skill resources
+
+Keep plugin-wide resources DRY and declare each exact consumer in its `SKILL.md`:
+
+```yaml
+---
+name: analyze
+description: Analyze data with the shared helper
+x-ai-config-includes:
+  - shared/analyze.py
+  - shared/schema.json
+---
+
+Run `${CLAUDE_PLUGIN_ROOT}/shared/analyze.py`.
+```
+
+Conversion captures each declared regular file once in IR and materializes byte-preserved copies at
+`_shared/shared/analyze.py` and `_shared/shared/schema.json` inside that generated skill. Exact
+declared root references in instruction Markdown become skill-root-relative `_shared/...` references.
+The generated `SKILL.md` omits `x-ai-config-includes`. If two skills consume the same source, each
+receives an independent regular-file copy; this intentional distribution-time duplication keeps every
+skill self-contained on Codex, Cursor, OpenCode, and Pi.
+
+V1 accepts exact plugin-root-relative files only. It rejects globs, directory or recursive declarations,
+absolute paths, empty/dot/dotdot components, backslashes, symlinks, hardlinks, special files, duplicate
+declarations, projected path collisions, and undeclared `${CLAUDE_PLUGIN_ROOT}` references. Declared
+transitive dependencies need no direct Markdown reference and are reported with a zero rewrite count,
+not as unused. Included scripts and binaries are byte-preserved and should locate siblings through
+language mechanisms such as `__file__`.
+
+Reports add one record per include and consumer with its plugin-relative logical source,
+target-relative destination, copy count, duplicated bytes, and direct rewrite count. Pi copies use the
+normal digest ownership ledger. Codex copies stay under the generated package root. Cursor and
+OpenCode write desired copies but do not delete removed copies because containment is not provenance.
+
+## Source safety
+
+Conversion reads manifests, component files, skill assets, includes, Codex support files, and
+target-native files through one plugin-root containment authority. Absolute/traversing paths, final or
+in-root ancestor symlinks, resolved escapes, and non-regular files fail closed before bytes are read.
+Unsafe components may be isolated with `--best-effort`; unrelated safe components can continue. The
+conversion digest covers every safely readable plugin file, including shared and target-native bytes.
+
 ## Target-native files
 
 Put hand-written files under `targets/<target>/`. They are copied into the target's natural output
