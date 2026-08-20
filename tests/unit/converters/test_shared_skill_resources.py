@@ -16,6 +16,10 @@ from ai_config.converters.emitters import CodexEmitter, CursorEmitter, OpenCodeE
 from ai_config.converters.ir import MappingStatus, McpServer, PluginIdentity, PluginIR, TargetTool
 from ai_config.pi_ownership import load_pi_ownership
 from ai_config.sync_state import compute_plugin_hash, load_conversion_cache
+from ai_config.validators.target.codex import CodexOutputValidator
+from ai_config.validators.target.cursor import CursorOutputValidator
+from ai_config.validators.target.opencode import OpenCodeOutputValidator
+from ai_config.validators.target.pi import PiOutputValidator
 from ai_config.validators.target.skill_invariants import generated_skill_invariant_errors
 
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "sample-plugins" / "shared-includes"
@@ -49,6 +53,16 @@ def _remove_include_metadata(plugin: Path) -> None:
         )
 
 
+def _target_native_alpha_skill(target: TargetTool) -> Path:
+    if target == TargetTool.CODEX:
+        return Path("targets/codex/skills/alpha")
+    if target == TargetTool.CURSOR:
+        return Path("targets/cursor/skills/shared-includes-alpha")
+    if target == TargetTool.OPENCODE:
+        return Path("targets/opencode/.opencode/skills/shared-includes-alpha")
+    return Path("targets/pi/skills/shared-includes-alpha")
+
+
 def _skill_roots(target: TargetTool) -> tuple[Path, Path]:
     if target == TargetTool.CODEX:
         root = Path(
@@ -71,7 +85,7 @@ def test_parser_captures_immutable_byte_exact_include_records() -> None:
     assert alpha.includes[0].projected_path == "_shared/shared/data.txt"
     assert alpha.includes[0].content == (FIXTURE / "shared/data.txt").read_bytes()
     assert alpha.includes[2].executable
-    assert alpha.includes[3].kind.value == "binary"
+    assert alpha.includes[3].content == (FIXTURE / "shared/blob.bin").read_bytes()
     with pytest.raises(ValidationError):
         alpha.includes[0].content = b"changed"  # type: ignore[misc]
 
@@ -124,6 +138,56 @@ def test_all_emitters_materialize_independent_self_contained_skill_copies(
     assert dependency.copy_count == 1
 
 
+@pytest.mark.parametrize(
+    ("target", "emitter"),
+    [
+        (TargetTool.CODEX, CodexEmitter()),
+        (TargetTool.CURSOR, CursorEmitter()),
+        (TargetTool.OPENCODE, OpenCodeEmitter()),
+        (TargetTool.PI, PiEmitter()),
+    ],
+)
+def test_target_native_skill_override_rechecks_invariants_and_updates_evidence(
+    target: TargetTool, emitter: object, tmp_path: Path
+) -> None:
+    plugin = tmp_path / "plugin"
+    shutil.copytree(FIXTURE, plugin)
+    native_skill = plugin / _target_native_alpha_skill(target) / "SKILL.md"
+    native_skill.parent.mkdir(parents=True)
+    native_skill.write_text(
+        "---\nname: "
+        + ("alpha" if target == TargetTool.CODEX else "shared-includes-alpha")
+        + "\ndescription: native safe override\n---\n\nRead `_shared/shared/data.txt`.\n"
+    )
+    result = emitter.emit(parse_claude_plugin(plugin))  # type: ignore[union-attr]
+    assert not result.has_errors()
+    alpha_evidence = [item for item in result.include_evidence if item.consumer_skill == "alpha"]
+    assert alpha_evidence
+    assert all(item.direct_rewrite_count == 0 for item in alpha_evidence)
+
+    native_skill.write_text(
+        "---\nname: unsafe\ndescription: unsafe\nx-ai-config-includes: [shared/data.txt]\n"
+        "---\n\n${CLAUDE_PLUGIN_ROOT}/shared/data.txt\n"
+    )
+    unsafe = emitter.emit(parse_claude_plugin(plugin))  # type: ignore[union-attr]
+    assert unsafe.has_errors()
+    assert any("build metadata" in item.message for item in unsafe.diagnostics)
+    assert any("CLAUDE_PLUGIN_ROOT" in item.message for item in unsafe.diagnostics)
+
+
+def test_target_native_shared_override_removes_original_copy_evidence(tmp_path: Path) -> None:
+    plugin = tmp_path / "plugin"
+    shutil.copytree(FIXTURE, plugin)
+    native = plugin / "targets/pi/skills/shared-includes-alpha/_shared/shared/data.txt"
+    native.parent.mkdir(parents=True)
+    native.write_text("native payload")
+    result = PiEmitter().emit(parse_claude_plugin(plugin))
+    target = Path(".pi/skills/shared-includes-alpha/_shared/shared/data.txt")
+    emitted = next(item for item in result.files if item.path == target)
+    assert emitted.content == "native payload"
+    assert not any(item.target_path == target for item in result.include_evidence)
+
+
 def test_nested_markdown_rewrites_from_skill_root_not_nested_file(tmp_path: Path) -> None:
     plugin = _plugin(
         tmp_path,
@@ -153,6 +217,7 @@ def test_nested_markdown_rewrites_from_skill_root_not_nested_file(tmp_path: Path
         "shared/./data.txt",
         "shared/missing.txt",
         "shared/*.txt",
+        "shared/bad\0name",
         3,
     ],
 )
@@ -222,7 +287,7 @@ def test_include_hardlink_is_rejected(tmp_path: Path) -> None:
 def test_component_absolute_traversal_and_malformed_paths_are_rejected(tmp_path: Path) -> None:
     plugin = tmp_path / "plugin"
     (plugin / ".claude-plugin").mkdir(parents=True)
-    for value in ("../outside", "/tmp/outside", 7):
+    for value in ("../outside", "/tmp/outside", "skills/bad\0name", 7):
         (plugin / ".claude-plugin/plugin.json").write_text(
             json.dumps({"name": "unsafe", "commands": value})
         )
@@ -278,9 +343,43 @@ def test_cache_v7_is_invalidated_for_complete_source_hashing(
     monkeypatch.setenv("HOME", str(tmp_path))
     cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
     cache.parent.mkdir(parents=True)
-    cache.write_text(json.dumps({"version": 7, "entries": {"old": {}}}))
+    cache.write_text(
+        json.dumps(
+            {
+                "version": 7,
+                "entries": {"old": {}},
+                "codex_output_dirs": ["/custom/codex"],
+                "pi_output_dirs": ["/custom/pi"],
+            }
+        )
+    )
     loaded = load_conversion_cache()
-    assert loaded == {"version": 8, "entries": {}, "codex_output_dirs": []}
+    assert loaded == {
+        "version": 8,
+        "entries": {},
+        "codex_output_dirs": ["/custom/codex"],
+        "pi_output_dirs": ["/custom/pi"],
+    }
+
+
+def test_cache_v7_rejects_invalid_preserved_output_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(
+        json.dumps(
+            {
+                "version": 7,
+                "entries": {},
+                "codex_output_dirs": ["/valid"],
+                "pi_output_dirs": ["bad\0root"],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid conversion cache Pi output roots"):
+        load_conversion_cache()
 
 
 def test_codex_support_file_rejects_ancestor_symlink(tmp_path: Path) -> None:
@@ -366,6 +465,10 @@ def test_report_contains_additive_relative_include_evidence(tmp_path: Path) -> N
     assert not Path(payload[0]["source"]).is_absolute()
     assert payload[0]["copy_count"] == 1
     assert payload[0]["duplicated_bytes"] == len((FIXTURE / "shared/data.txt").read_bytes())
+    markdown = report.to_markdown()
+    assert f"{payload[0]['copy_count']} copy" in markdown
+    assert f"{payload[0]['duplicated_bytes']:,} bytes" in markdown
+    assert f"{payload[0]['direct_rewrite_count']} direct rewrites" in markdown
 
 
 def test_target_validator_invariants_reject_build_metadata_and_root_placeholder(
@@ -379,6 +482,24 @@ def test_target_validator_invariants_reject_build_metadata_and_root_placeholder(
     )
     assert any("build metadata" in message for message in errors)
     assert any("CLAUDE_PLUGIN_ROOT" in message for message in errors)
+
+
+@pytest.mark.parametrize(
+    ("target", "validator"),
+    [
+        (TargetTool.CODEX, CodexOutputValidator()),
+        (TargetTool.CURSOR, CursorOutputValidator()),
+        (TargetTool.OPENCODE, OpenCodeOutputValidator()),
+        (TargetTool.PI, PiOutputValidator()),
+    ],
+)
+def test_shared_resource_output_passes_each_target_validator(
+    target: TargetTool, validator: object, tmp_path: Path
+) -> None:
+    report = convert_plugin(FIXTURE, [target], output_dir=tmp_path)[target]
+    assert not report.errors
+    results = validator.validate_all(tmp_path)  # type: ignore[union-attr]
+    assert not [result for result in results if result.status == "fail"]
 
 
 def test_skill_without_include_metadata_retains_native_projection() -> None:

@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, replace
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -33,9 +33,11 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
+from ai_config.converters.report import IncludeResult
 from ai_config.converters.skill_projection import project_skill
 from ai_config.output_safety import validated_output_path
 from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
+from ai_config.validators.target.skill_invariants import generated_skill_bytes_invariant_errors
 
 _ENV_VAR_PATTERN = re.compile(
     r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
@@ -74,18 +76,6 @@ class ComponentMapping:
     lost_features: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class IncludeEvidence:
-    """Additive evidence for one include copied into one consuming skill."""
-
-    source_relative_path: str
-    consumer_skill: str
-    target_path: Path
-    copy_count: int
-    duplicated_bytes: int
-    direct_rewrite_count: int
-
-
 @dataclass
 class EmitResult:
     """Result of emitting a plugin to a target format."""
@@ -95,7 +85,7 @@ class EmitResult:
     mappings: list[ComponentMapping] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     cleanup_paths: list[Path] = field(default_factory=list)
-    include_evidence: list[IncludeEvidence] = field(default_factory=list)
+    include_evidence: list[IncludeResult] = field(default_factory=list)
 
     def add_file(self, path: Path | str, content: str, executable: bool = False) -> None:
         """Add a file to emit."""
@@ -266,26 +256,44 @@ class EmitResult:
             exact_conflict = next(
                 (index for index, emitted in conflicts if emitted.path == target_path), None
             )
-            if exact_conflict is not None and len(conflicts) == 1:
-                try:
-                    content = content_bytes.decode("utf-8")
-                    self.files[exact_conflict] = EmittedFile(
-                        path=target_path, content=content, executable=executable
-                    )
-                except UnicodeDecodeError:
-                    self.files[exact_conflict] = EmittedFile(
-                        path=target_path,
-                        content=content_bytes,
-                        binary=True,
-                        executable=executable,
-                    )
+            if conflicts and (exact_conflict is None or len(conflicts) != 1):
+                self.add_diagnostic(
+                    Severity.ERROR,
+                    "Target-native path conflicts with a generated directory; only exact file "
+                    f"overrides are allowed: {target_path.as_posix()}",
+                    component_ref=f"file:{source_relative.as_posix()}",
+                )
+                continue
+            try:
+                native_file = EmittedFile(
+                    path=target_path,
+                    content=content_bytes.decode("utf-8"),
+                    executable=executable,
+                )
+            except UnicodeDecodeError:
+                native_file = EmittedFile(
+                    path=target_path,
+                    content=content_bytes,
+                    binary=True,
+                    executable=executable,
+                )
+            if exact_conflict is not None:
+                self.files[exact_conflict] = native_file
+                self.include_evidence = [
+                    evidence
+                    for evidence in self.include_evidence
+                    if evidence.target_path != target_path
+                ]
+                if target_path.name == "SKILL.md":
+                    skill_dir = target_path.parent
+                    self.include_evidence = [
+                        replace(evidence, direct_rewrite_count=0)
+                        if skill_dir in evidence.target_path.parents
+                        else evidence
+                        for evidence in self.include_evidence
+                    ]
             else:
-                for index, _emitted in reversed(conflicts):
-                    del self.files[index]
-                try:
-                    self.add_file(target_path, content_bytes.decode("utf-8"), executable)
-                except UnicodeDecodeError:
-                    self.add_binary_file(target_path, content_bytes, executable)
+                self.files.append(native_file)
 
             if replaced:
                 self.add_diagnostic(
@@ -301,6 +309,47 @@ class EmitResult:
                 notes="Target-native file copied verbatim into converted output"
                 + (" and overrides generated output" if replaced else ""),
             )
+
+        self._validate_final_generated_skills()
+
+    def _validate_final_generated_skills(self) -> None:
+        """Recheck generated skill invariants after target-native precedence is final."""
+        skill_paths = {
+            mapping.target_path
+            for mapping in self.mappings
+            if mapping.target_path is not None
+            and mapping.target_path.name == "SKILL.md"
+            and mapping.component_kind in {"skill", "command"}
+        }
+        for skill_path in sorted(skill_paths, key=lambda path: path.as_posix()):
+            skill_dir = skill_path.parent
+            files: dict[PurePosixPath, bytes] = {}
+            for emitted in self.files:
+                if emitted.path != skill_path and skill_dir not in emitted.path.parents:
+                    continue
+                relative = PurePosixPath(emitted.path.relative_to(skill_dir).as_posix())
+                files[relative] = (
+                    emitted.content.encode("utf-8")
+                    if isinstance(emitted.content, str)
+                    else emitted.content
+                )
+            skill_bytes = files.get(PurePosixPath("SKILL.md"))
+            metadata: dict[str, Any] = {}
+            if skill_bytes is not None:
+                try:
+                    text = skill_bytes.decode("utf-8")
+                    parts = text.split("---", 2)
+                    parsed = yaml.safe_load(parts[1]) if len(parts) == 3 else None
+                    if isinstance(parsed, dict):
+                        metadata = parsed
+                except (UnicodeDecodeError, yaml.YAMLError):
+                    pass
+            for error in generated_skill_bytes_invariant_errors(files, metadata):
+                self.add_diagnostic(
+                    Severity.ERROR,
+                    error,
+                    component_ref=f"file:{skill_path.as_posix()}",
+                )
 
     def preview(self, output_dir: Path | None = None) -> str:
         """Generate preview of what would be written.
@@ -454,7 +503,7 @@ def _emit_projected_skill(
             result.add_file(target, item.content, item.executable)
     for evidence in projection.include_evidence:
         result.include_evidence.append(
-            IncludeEvidence(
+            IncludeResult(
                 source_relative_path=evidence.source_relative_path,
                 consumer_skill=skill.name,
                 target_path=skill_dir / evidence.projected_path,

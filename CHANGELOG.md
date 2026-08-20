@@ -20,9 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Conversion cache version 8 hashes the complete safely readable plugin source and rejects link or
-  special-file hash bypasses.
-- Validate the observed Codex plugin lifecycle contract through Codex CLI 0.147.x.
+- Conversion cache version 8 invalidates content entries after expanding source hashing while
+  preserving validated tracked Codex and Pi output roots for cleanup discovery.
+- Accept the repository-tested Codex plugin lifecycle schema/version contract through 0.147.x;
+  captured real-runtime probe evidence currently extends through 0.146.0.
 
 ### Fixed
 

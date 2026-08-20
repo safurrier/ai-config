@@ -44,7 +44,9 @@ Unavailable configured sources are represented separately from resolved sources.
 materialized as a reported (non-blocking) conversion error, so earlier independent marketplace and
 plugin actions retain historical progress while conversion mutation is skipped and prior proven-owned
 state is retained. Disabled or removed sources can request cleanup only through the existing Codex or
-Pi ownership ledgers. Cache and ownership formats are unchanged.
+Pi ownership ledgers. Cache version 8 invalidates content entries while preserving validated tracked
+Codex and Pi output roots so cleanup can still discover prior custom roots; ownership formats are
+unchanged.
 
 ## Plugin conversion
 
@@ -59,7 +61,7 @@ Claude plugin directory -> contained source reader -> ClaudePluginParser -> Plug
 
 `PluginIR` carries identity, skills, commands, hooks, MCP servers, agents, LSP servers, source paths,
 and diagnostics. Skill include records are immutable and contain the plugin-relative source path,
-projected `_shared/` path, captured bytes, text/binary kind, and executable mode. Rewrite counts and
+canonically derived projected `_shared/` path, captured bytes, and executable mode. Rewrite counts and
 duplication bytes belong to projection/report evidence rather than IR. Emitters do not mutate the IR
 or reopen include sources. Each target owns an independent `EmitResult`, component mappings,
 diagnostics, and output paths.
@@ -67,8 +69,11 @@ diagnostics, and output paths.
 `source_safety.py` is the canonical authority for conversion source reads. It validates portable
 plugin-relative paths, rejects final and in-root ancestor symlinks, traversal, special files, and
 resolved escape before reading. Manifests, components, skill assets, includes, Codex support files,
-and target-native files use this boundary. `compute_plugin_hash()` walks the same fail-closed source
-universe; cache format version 8 invalidates older signatures.
+and target-native files use this descriptor-relative, no-follow boundary. `compute_plugin_hash()`
+walks the same fail-closed source universe. Sync rehashes that universe before conversion as a stale
+plan precondition, but digesting and conversion remain separate contained passes. Standalone
+`convert` does not compute a digest. Cache version 8 invalidates older content signatures while
+preserving validated tracked Codex and Pi output roots.
 
 `skill_projection.py` is pure and shared by all four emitters. It rewrites only exact declared
 `${CLAUDE_PLUGIN_ROOT}/<path>` occurrences in instruction Markdown, always to a skill-root-relative

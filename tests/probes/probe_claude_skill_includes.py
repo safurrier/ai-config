@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+EXPECTED_CLAUDE_VERSION = "2.1.231 (Claude Code)"
+
 
 def run(command: list[str]) -> None:
     print("$ " + " ".join(command))
@@ -24,6 +26,13 @@ def main() -> None:
     claude = shutil.which("claude")
     if claude is None:
         raise SystemExit("claude is required for this compatibility probe")
+    version = subprocess.run([claude, "--version"], check=False, text=True, capture_output=True)
+    actual_version = version.stdout.strip()
+    print(f"$ {claude} --version")
+    print(actual_version)
+    print(f"exit={version.returncode}")
+    if version.returncode != 0 or actual_version != EXPECTED_CLAUDE_VERSION:
+        raise SystemExit(f"expected Claude {EXPECTED_CLAUDE_VERSION!r}, got {actual_version!r}")
     with tempfile.TemporaryDirectory(prefix="ai-config-include-probe-") as temporary:
         plugin = Path(temporary)
         (plugin / ".claude-plugin").mkdir()

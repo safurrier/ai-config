@@ -152,27 +152,9 @@ class ConversionReport:
         else:
             self.files_written.append(result)
 
-    def add_include(
-        self,
-        *,
-        source_relative_path: str,
-        consumer_skill: str,
-        target_path: Path,
-        copy_count: int,
-        duplicated_bytes: int,
-        direct_rewrite_count: int,
-    ) -> None:
-        """Add materialized include evidence without inferring usage."""
-        self.includes.append(
-            IncludeResult(
-                source_relative_path,
-                consumer_skill,
-                target_path,
-                copy_count,
-                duplicated_bytes,
-                direct_rewrite_count,
-            )
-        )
+    def add_include(self, evidence: IncludeResult) -> None:
+        """Add already-normalized materialized include evidence."""
+        self.includes.append(evidence)
 
     def add_diagnostic(self, diagnostic: Diagnostic) -> None:
         """Add a diagnostic message."""
@@ -396,7 +378,8 @@ class ConversionReport:
             for item in self.includes:
                 lines.append(
                     f"- `{item.source_relative_path}` → `{item.target_path}` for "
-                    f"`{item.consumer_skill}` ({item.duplicated_bytes:,} bytes, "
+                    f"`{item.consumer_skill}` ({item.copy_count} copy, "
+                    f"{item.duplicated_bytes:,} bytes, "
                     f"{item.direct_rewrite_count} direct rewrites)"
                 )
             lines.append("")

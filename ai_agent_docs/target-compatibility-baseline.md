@@ -27,6 +27,9 @@ uv run python tests/probes/probe_claude_skill_includes.py
 Exact output captured on 2026-08-20 (temporary path suffixes vary):
 
 ```text
+$ /Users/alexfurrier/.local/share/mise/installs/node/24/bin/claude --version
+2.1.231 (Claude Code)
+exit=0
 $ /Users/alexfurrier/.local/share/mise/installs/node/24/bin/claude plugin validate --strict /var/folders/.../ai-config-include-probe-v4xprg3l
 Validating plugin manifest: /var/folders/.../ai-config-include-probe-v4xprg3l/.claude-plugin/plugin.json
 
@@ -67,7 +70,7 @@ This is ai-config build metadata, not a claim that Claude itself materializes th
 accepts and loads the source skill; ai-config strips the field while producing self-contained target
 skills.
 
-## Codex 0.144.5, 0.145.0, and 0.146.0 evidence
+## Codex 0.144.5, 0.145.0, and 0.146.0 runtime evidence; 0.147.x repository support
 
 The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
 
@@ -169,8 +172,10 @@ duplicate runtime records, source/path mismatches, and SemVer downgrades fail be
 Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
 by `doctor` and never removed without proof of ownership.
 
-The adapter intentionally accepts only the observed Codex 0.144.x, 0.145.x, and 0.146.x contracts. It validates
-the CLI version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
+The adapter accepts Codex 0.144.x, 0.145.x, 0.146.x, and 0.147.x contracts. Captured isolated
+runtime evidence in this document extends through 0.146.0; 0.147.x is covered by the repository's
+version gate and schema tests and is not presented here as a completed runtime probe. The adapter
+validates the CLI version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
 list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
 and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
 control characters from error output. POSIX calls start a separate process group; after a bounded

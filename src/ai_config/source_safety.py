@@ -1,7 +1,8 @@
-"""Fail-closed reads for files contained by a plugin source root."""
+"""Fail-closed descriptor-contained reads for files below a plugin source root."""
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from collections.abc import Iterator
@@ -26,10 +27,36 @@ class SourceFile:
     executable: bool
 
 
+def _validate_platform_path(value: str, *, context: str) -> None:
+    """Reject values the host cannot safely pass to filesystem APIs."""
+    if "\0" in value:
+        raise SourceSafetyError(f"{context} path contains an embedded NUL: {value!r}")
+    try:
+        os.fsencode(value)
+    except (UnicodeError, ValueError) as error:
+        raise SourceSafetyError(f"{context} path is invalid on this platform: {value!r}") from error
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        invalid = '<>:"|?*'
+        reserved = {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{number}" for number in range(1, 10)),
+            *(f"LPT{number}" for number in range(1, 10)),
+        }
+        for part in value.replace("\\", "/").split("/"):
+            if any(character in part for character in invalid) or part.endswith((" ", ".")):
+                raise SourceSafetyError(f"{context} path is invalid on this platform: {value!r}")
+            if part.split(".", 1)[0].upper() in reserved:
+                raise SourceSafetyError(f"{context} path is invalid on this platform: {value!r}")
+
+
 def normalize_source_relative(value: object, *, context: str) -> PurePosixPath:
     """Validate one portable plugin-root-relative path value."""
     if not isinstance(value, str):
         raise SourceSafetyError(f"{context} path must be a string")
+    _validate_platform_path(value, context=context)
     if not value or "\\" in value:
         raise SourceSafetyError(
             f"{context} path must be a non-empty POSIX relative path: {value!r}"
@@ -45,51 +72,110 @@ def normalize_source_relative(value: object, *, context: str) -> PurePosixPath:
     return path
 
 
+_OPEN_BASE = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+_OPEN_DIRECTORY = _OPEN_BASE | getattr(os, "O_DIRECTORY", 0)
+_OPEN_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_SECURE_DESCRIPTOR_APIS = (
+    os.name == "posix"
+    and _OPEN_NOFOLLOW != 0
+    and os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+)
+
+
 class ContainedSource:
-    """Resolve and read source entries without following in-root symlinks."""
+    """Read source entries through a retained root descriptor without following links.
+
+    POSIX traversal starts at ``/`` and opens every lexical root and source component
+    relative to its already-open parent with ``O_NOFOLLOW``. Platforms without the
+    required descriptor APIs fail closed rather than falling back to pathname reads.
+    """
 
     def __init__(self, root: Path) -> None:
-        supplied = root.expanduser().absolute()
         try:
-            root_stat = supplied.lstat()
-        except OSError as error:
+            supplied = root.expanduser().absolute()
+            _validate_platform_path(os.fspath(supplied), context="Plugin source root")
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            if isinstance(error, SourceSafetyError):
+                raise
+            raise SourceSafetyError(f"Plugin source root is invalid: {root!s}: {error}") from error
+        if not _SECURE_DESCRIPTOR_APIS:
             raise SourceSafetyError(
-                f"Plugin source root is unreadable: {supplied}: {error}"
+                "Secure descriptor-relative source reads are unavailable on this platform"
+            )
+        self.root = supplied
+        self._root_fd: int = self._open_absolute_directory(supplied)
+
+    def __del__(self) -> None:
+        root_fd = getattr(self, "_root_fd", None)
+        if root_fd is not None:
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _raise_open_error(error: OSError, *, context: str, relative: PurePosixPath) -> None:
+        display = relative.as_posix()
+        if error.errno == errno.ENOENT:
+            raise SourceMissingError(f"{context} path does not exist: {display}") from error
+        if error.errno in {errno.ELOOP, errno.EMLINK}:
+            raise SourceSafetyError(f"{context} path contains a symlink: {display}") from error
+        if error.errno == errno.ENOTDIR:
+            raise SourceSafetyError(
+                f"{context} path has a symlink or non-directory ancestor: {display}"
             ) from error
-        if stat.S_ISLNK(root_stat.st_mode):
-            raise SourceSafetyError(f"Plugin source root must not be a symlink: {supplied}")
-        if not stat.S_ISDIR(root_stat.st_mode):
-            raise SourceSafetyError(f"Plugin source root is not a directory: {supplied}")
-        self.root = supplied.resolve(strict=True)
+        raise SourceSafetyError(f"{context} path is unreadable: {display}: {error}") from error
+
+    def _open_absolute_directory(self, root: Path) -> int:
+        current = os.open(os.path.sep, _OPEN_DIRECTORY)
+        traversed = PurePosixPath(".")
+        try:
+            for part in root.parts[1:]:
+                traversed /= part
+                try:
+                    child = os.open(part, _OPEN_DIRECTORY | _OPEN_NOFOLLOW, dir_fd=current)
+                except OSError as error:
+                    self._raise_open_error(error, context="Plugin source root", relative=traversed)
+                os.close(current)
+                current = child
+            root_stat = os.fstat(current)
+            if not stat.S_ISDIR(root_stat.st_mode):
+                raise SourceSafetyError(f"Plugin source root is not a directory: {root}")
+            return current
+        except Exception:
+            os.close(current)
+            raise
 
     def relative(self, value: object, *, context: str) -> PurePosixPath:
         return normalize_source_relative(value, context=context)
 
-    def _lstat(self, relative: PurePosixPath, *, context: str) -> os.stat_result:
-        current = self.root
-        for index, part in enumerate(relative.parts):
-            current = current / part
-            try:
-                item_stat = current.lstat()
-            except FileNotFoundError as error:
-                raise SourceMissingError(
-                    f"{context} path does not exist: {relative.as_posix()}"
-                ) from error
-            except OSError as error:
-                raise SourceSafetyError(
-                    f"{context} path is unreadable: {relative.as_posix()}: {error}"
-                ) from error
-            if stat.S_ISLNK(item_stat.st_mode):
-                raise SourceSafetyError(f"{context} path contains a symlink: {relative.as_posix()}")
-            if index < len(relative.parts) - 1 and not stat.S_ISDIR(item_stat.st_mode):
-                raise SourceSafetyError(
-                    f"{context} path has a non-directory ancestor: {relative.as_posix()}"
-                )
-        return item_stat
+    def _open_entry(self, relative: PurePosixPath, *, context: str, directory: bool = False) -> int:
+        current = os.dup(self._root_fd)
+        try:
+            for index, part in enumerate(relative.parts):
+                final = index == len(relative.parts) - 1
+                flags = _OPEN_BASE | _OPEN_NOFOLLOW
+                if not final or directory:
+                    flags |= getattr(os, "O_DIRECTORY", 0)
+                try:
+                    child = os.open(part, flags, dir_fd=current)
+                except OSError as error:
+                    self._raise_open_error(error, context=context, relative=relative)
+                os.close(current)
+                current = child
+            return current
+        except Exception:
+            os.close(current)
+            raise
 
     def kind(self, relative: PurePosixPath, *, context: str) -> str:
-        """Return ``file`` or ``directory`` after validating every component."""
-        item_stat = self._lstat(relative, context=context)
+        """Return ``file`` or ``directory`` from an opened, no-follow descriptor."""
+        fd = self._open_entry(relative, context=context)
+        try:
+            item_stat = os.fstat(fd)
+        finally:
+            os.close(fd)
         if stat.S_ISREG(item_stat.st_mode):
             return "file"
         if stat.S_ISDIR(item_stat.st_mode):
@@ -103,105 +189,157 @@ class ContainedSource:
         context: str,
         reject_hardlinks: bool = False,
     ) -> SourceFile:
-        """Read one validated regular file without accepting links or special files."""
-        item_stat = self._lstat(relative, context=context)
-        if not stat.S_ISREG(item_stat.st_mode):
-            raise SourceSafetyError(f"{context} path is not a regular file: {relative}")
-        if reject_hardlinks and item_stat.st_nlink != 1:
-            raise SourceSafetyError(f"{context} path must not be a hardlink: {relative}")
-        path = self.root.joinpath(*relative.parts)
+        """Read one regular file from a no-follow descriptor and verify its snapshot."""
+        fd = self._open_entry(relative, context=context)
         try:
-            content = path.read_bytes()
-            after = path.lstat()
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise SourceSafetyError(f"{context} path is not a regular file: {relative}")
+            if reject_hardlinks and before.st_nlink != 1:
+                raise SourceSafetyError(f"{context} path must not be a hardlink: {relative}")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(fd)
         except OSError as error:
             raise SourceSafetyError(f"{context} path is unreadable: {relative}: {error}") from error
-        if stat.S_ISLNK(after.st_mode) or not stat.S_ISREG(after.st_mode):
+        finally:
+            os.close(fd)
+
+        def identity(value: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+            return (
+                value.st_dev,
+                value.st_ino,
+                value.st_mode,
+                value.st_nlink,
+                value.st_size,
+                value.st_mtime_ns,
+                value.st_ctime_ns,
+            )
+
+        if identity(before) != identity(after):
             raise SourceSafetyError(f"{context} path changed while being read: {relative}")
-        if (item_stat.st_dev, item_stat.st_ino, item_stat.st_size) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-        ):
+        content = b"".join(chunks)
+        if len(content) != after.st_size:
             raise SourceSafetyError(f"{context} path changed while being read: {relative}")
         return SourceFile(relative, content, bool(after.st_mode & 0o111))
 
-    def walk_files(self, relative: PurePosixPath, *, context: str) -> Iterator[PurePosixPath]:
-        """Yield regular files below a validated directory, rejecting unsafe entries."""
-        if self.kind(relative, context=context) != "directory":
-            raise SourceSafetyError(f"{context} path is not a directory: {relative}")
-
-        def walk(directory: PurePosixPath) -> Iterator[PurePosixPath]:
-            disk_dir = self.root.joinpath(*directory.parts)
+    def _walk_directory(
+        self,
+        directory_fd: int,
+        directory: PurePosixPath,
+        *,
+        context: str,
+        isolate_errors: bool,
+        files: list[PurePosixPath],
+        errors: list[str],
+    ) -> None:
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError as error:
+            message = f"{context} directory is unreadable: {directory}: {error}"
+            if isolate_errors:
+                errors.append(message)
+                return
+            raise SourceSafetyError(message) from error
+        for name in names:
+            child = directory / name
             try:
-                entries = sorted(os.scandir(disk_dir), key=lambda entry: entry.name)
-            except OSError as error:
-                raise SourceSafetyError(
-                    f"{context} directory is unreadable: {directory}: {error}"
-                ) from error
-            for entry in entries:
-                child = directory / entry.name
-                try:
-                    child_stat = entry.stat(follow_symlinks=False)
-                except OSError as error:
-                    raise SourceSafetyError(
-                        f"{context} entry is unreadable: {child}: {error}"
-                    ) from error
-                if stat.S_ISLNK(child_stat.st_mode):
+                item_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISLNK(item_stat.st_mode):
                     raise SourceSafetyError(f"{context} contains a symlink: {child}")
-                if stat.S_ISDIR(child_stat.st_mode):
-                    yield from walk(child)
-                elif stat.S_ISREG(child_stat.st_mode):
-                    yield child
+                if stat.S_ISDIR(item_stat.st_mode):
+                    child_fd = os.open(name, _OPEN_DIRECTORY | _OPEN_NOFOLLOW, dir_fd=directory_fd)
+                    try:
+                        self._walk_directory(
+                            child_fd,
+                            child,
+                            context=context,
+                            isolate_errors=isolate_errors,
+                            files=files,
+                            errors=errors,
+                        )
+                    finally:
+                        os.close(child_fd)
+                elif stat.S_ISREG(item_stat.st_mode):
+                    # Open now to ensure the scanned name still identifies a regular no-follow file.
+                    file_fd = os.open(name, _OPEN_BASE | _OPEN_NOFOLLOW, dir_fd=directory_fd)
+                    try:
+                        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                            raise SourceSafetyError(
+                                f"{context} contains a non-regular file: {child}"
+                            )
+                    finally:
+                        os.close(file_fd)
+                    files.append(child)
                 else:
                     raise SourceSafetyError(f"{context} contains a non-regular file: {child}")
+            except (OSError, SourceSafetyError) as error:
+                if isinstance(error, OSError):
+                    if error.errno in {errno.ELOOP, errno.EMLINK}:
+                        message = f"{context} contains a symlink: {child}"
+                    else:
+                        message = f"{context} entry is unreadable: {child}: {error}"
+                else:
+                    message = str(error)
+                if isolate_errors:
+                    errors.append(message)
+                    continue
+                raise SourceSafetyError(message) from error
 
-        yield from walk(relative)
+    def walk_files(self, relative: PurePosixPath, *, context: str) -> Iterator[PurePosixPath]:
+        """Yield regular files below a descriptor-opened directory."""
+        directory_fd = self._open_entry(relative, context=context, directory=True)
+        files: list[PurePosixPath] = []
+        try:
+            self._walk_directory(
+                directory_fd,
+                relative,
+                context=context,
+                isolate_errors=False,
+                files=files,
+                errors=[],
+            )
+        finally:
+            os.close(directory_fd)
+        yield from files
 
     def scan_files(
         self, relative: PurePosixPath, *, context: str
     ) -> tuple[list[PurePosixPath], list[str]]:
         """Collect safe files while isolating unsafe sibling entries."""
-        if self.kind(relative, context=context) != "directory":
-            raise SourceSafetyError(f"{context} path is not a directory: {relative}")
+        directory_fd = self._open_entry(relative, context=context, directory=True)
         files: list[PurePosixPath] = []
         errors: list[str] = []
-
-        def scan(directory: PurePosixPath) -> None:
-            disk_dir = self.root.joinpath(*directory.parts)
-            try:
-                entries = sorted(os.scandir(disk_dir), key=lambda entry: entry.name)
-            except OSError as error:
-                errors.append(f"{context} directory is unreadable: {directory}: {error}")
-                return
-            for entry in entries:
-                child = directory / entry.name
-                try:
-                    child_stat = entry.stat(follow_symlinks=False)
-                except OSError as error:
-                    errors.append(f"{context} entry is unreadable: {child}: {error}")
-                    continue
-                if stat.S_ISLNK(child_stat.st_mode):
-                    errors.append(f"{context} contains a symlink: {child}")
-                elif stat.S_ISDIR(child_stat.st_mode):
-                    scan(child)
-                elif stat.S_ISREG(child_stat.st_mode):
-                    files.append(child)
-                else:
-                    errors.append(f"{context} contains a non-regular file: {child}")
-
-        scan(relative)
+        try:
+            self._walk_directory(
+                directory_fd,
+                relative,
+                context=context,
+                isolate_errors=True,
+                files=files,
+                errors=errors,
+            )
+        finally:
+            os.close(directory_fd)
         return files, errors
 
     def walk_all_files(self, *, context: str) -> Iterator[PurePosixPath]:
-        """Yield every regular file in the source root with the same safety rules."""
-        for entry in sorted(os.scandir(self.root), key=lambda item: item.name):
-            child = PurePosixPath(entry.name)
-            item_stat = entry.stat(follow_symlinks=False)
-            if stat.S_ISLNK(item_stat.st_mode):
-                raise SourceSafetyError(f"{context} contains a symlink: {child}")
-            if stat.S_ISDIR(item_stat.st_mode):
-                yield from self.walk_files(child, context=context)
-            elif stat.S_ISREG(item_stat.st_mode):
-                yield child
-            else:
-                raise SourceSafetyError(f"{context} contains a non-regular file: {child}")
+        """Yield every regular file below the retained source-root descriptor."""
+        files: list[PurePosixPath] = []
+        root_fd = os.dup(self._root_fd)
+        try:
+            self._walk_directory(
+                root_fd,
+                PurePosixPath("."),
+                context=context,
+                isolate_errors=False,
+                files=files,
+                errors=[],
+            )
+        finally:
+            os.close(root_fd)
+        yield from files

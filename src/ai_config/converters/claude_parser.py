@@ -23,7 +23,6 @@ from ai_config.converters.ir import (
     HookEvent,
     HookHandler,
     HookHandlerType,
-    IncludeKind,
     LspServer,
     McpServer,
     McpTransport,
@@ -430,18 +429,10 @@ class ClaudePluginParser:
                     component_ref=f"skill:{skill_name}",
                 )
                 return None
-            try:
-                source_file.content.decode("utf-8")
-            except UnicodeDecodeError:
-                kind = IncludeKind.BINARY
-            else:
-                kind = IncludeKind.TEXT
             includes.append(
                 SkillInclude(
                     source_relative_path=logical,
-                    projected_path=f"_shared/{logical}",
                     content=source_file.content,
-                    kind=kind,
                     executable=source_file.executable,
                 )
             )

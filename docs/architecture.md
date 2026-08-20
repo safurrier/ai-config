@@ -22,7 +22,7 @@ flowchart LR
 | Claude runtime access | [Claude adapter](https://github.com/safurrier/ai-config/blob/main/src/ai_config/adapters/claude.py) | List and mutate Claude marketplaces and plugins. |
 | Sync planning | `sync_pipeline.py` | Transform desired state, runtime snapshot, and resolved sources into an ordered immutable plan without mutation. |
 | Observation and execution | `sync_orchestration.py` | Collect state, validate plan preconditions, execute authorized actions, and report partial progress. |
-| Conversion source safety | `source_safety.py` | Resolve and read plugin-root-contained regular files without following final or in-root ancestor links; source hashing uses the same boundary. |
+| Conversion source safety | `source_safety.py` | Traverse and read plugin-root-contained regular files through retained no-follow descriptors; source hashing uses the same boundary. |
 | Conversion orchestration | [Sync conversion](https://github.com/safurrier/ai-config/blob/main/src/ai_config/sync_conversion.py), [conversion entry point](https://github.com/safurrier/ai-config/blob/main/src/ai_config/converters/convert.py) | Resolve source plugins, parse once, select emitters, and retain per-target results. |
 | Skill projection | `converters/skill_projection.py` | Purely materialize immutable shared include records, exact instruction rewrites, and per-copy evidence for every target. |
 | Target semantics | [Target emitters](https://github.com/safurrier/ai-config/blob/main/src/ai_config/converters/emitters.py), target validators | Map IR components to each target and report native, transformed, degraded, or unsupported behavior. |
@@ -47,6 +47,8 @@ Marketplace actions precede dependent Claude plugin actions. Conversion follows 
 
 The parser and emit-time source support readers share the same fail-closed containment authority. The
 IR carries include bytes so emitters never reopen include source paths. Sync's source digest walks the
-same regular-file universe and becomes unreadable if a symlink or special file could bypass it.
+same regular-file universe and becomes unreadable if a symlink or special file could bypass it. This
+source-read boundary does not remove the separate pre-existing check-then-write race at the validated
+output path; output containment is not an atomic writer or additional ownership proof.
 
 See [Sync and Conversion Pipelines](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/conversion-pipeline.md) for implementation detail and [Target Compatibility Baseline](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md) for runtime-specific evidence.

@@ -184,14 +184,7 @@ def _convert_to_target(
         )
 
     for evidence in result.include_evidence:
-        report.add_include(
-            source_relative_path=evidence.source_relative_path,
-            consumer_skill=evidence.consumer_skill,
-            target_path=evidence.target_path,
-            copy_count=evidence.copy_count,
-            duplicated_bytes=evidence.duplicated_bytes,
-            direct_rewrite_count=evidence.direct_rewrite_count,
-        )
+        report.add_include(evidence)
 
     if result.has_errors() and not best_effort:
         return report
