@@ -121,9 +121,16 @@ x-ai-config-includes:
 Run `${CLAUDE_PLUGIN_ROOT}/shared/analyze.py`.
 ```
 
-Conversion captures each declared regular file once in IR and materializes byte-preserved copies at
-`_shared/shared/analyze.py` and `_shared/shared/schema.json` inside that generated skill. Exact
-declared root references in instruction Markdown become skill-root-relative `_shared/...` references.
+Conversion captures each declared regular file once in IR and materializes byte-preserved copies
+inside that generated skill at these illustrative locations:
+
+```text
+_shared/shared/analyze.py
+_shared/shared/schema.json
+```
+
+Exact declared root references in instruction Markdown become paths relative to the generated
+`_shared` directory.
 The generated `SKILL.md` omits `x-ai-config-includes`. If two skills consume the same source, each
 receives an independent regular-file copy; this intentional distribution-time duplication keeps every
 skill self-contained on Codex, Cursor, OpenCode, and Pi.
