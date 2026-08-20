@@ -63,11 +63,20 @@ class ClaudePluginParser:
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
         try:
-            self.source = ContainedSource(self.plugin_path)
+            source = ContainedSource(self.plugin_path)
         except SourceSafetyError as error:
             return self._error_ir(f"Could not find plugin.json manifest: {error}")
-        self.plugin_path = self.source.root
+        with source:
+            self.source = source
+            self.plugin_path = source.root
+            try:
+                return self._parse_open_source()
+            finally:
+                self.source = None
 
+    def _parse_open_source(self) -> PluginIR:
+        """Parse while the source authority's root descriptor is retained."""
+        assert self.source is not None
         manifest_path = self._find_manifest()
         if not manifest_path:
             return self._error_ir("Could not find plugin.json manifest")

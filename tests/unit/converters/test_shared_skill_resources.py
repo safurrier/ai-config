@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_config.converters.claude_parser import parse_claude_plugin
-from ai_config.converters.convert import convert_plugin
+from ai_config.converters.convert import convert_plugin, convert_plugin_simple
 from ai_config.converters.emitters import CodexEmitter, CursorEmitter, OpenCodeEmitter, PiEmitter
 from ai_config.converters.ir import MappingStatus, McpServer, PluginIdentity, PluginIR, TargetTool
 from ai_config.pi_ownership import load_pi_ownership
@@ -173,6 +173,49 @@ def test_target_native_skill_override_rechecks_invariants_and_updates_evidence(
     assert unsafe.has_errors()
     assert any("build metadata" in item.message for item in unsafe.diagnostics)
     assert any("CLAUDE_PLUGIN_ROOT" in item.message for item in unsafe.diagnostics)
+    restored_skill = next(
+        item for item in unsafe.files if item.path == _skill_roots(target)[0] / "SKILL.md"
+    )
+    assert "x-ai-config-includes" not in restored_skill.content
+    assert "CLAUDE_PLUGIN_ROOT" not in restored_skill.content
+    assert any(item.consumer_skill == "alpha" for item in unsafe.include_evidence)
+
+
+@pytest.mark.parametrize("target", [TargetTool.CURSOR, TargetTool.PI])
+@pytest.mark.parametrize("simple", [False, True], ids=["best-effort", "simple"])
+def test_mutating_conversion_never_writes_unsafe_target_native_skill(
+    target: TargetTool, simple: bool, tmp_path: Path
+) -> None:
+    plugin = tmp_path / "plugin"
+    shutil.copytree(FIXTURE, plugin)
+    native_skill = plugin / _target_native_alpha_skill(target) / "SKILL.md"
+    native_skill.parent.mkdir(parents=True)
+    native_skill.write_text(
+        "---\nname: unsafe\ndescription: unsafe\nx-ai-config-includes: [shared/data.txt]\n"
+        "---\n\n${CLAUDE_PLUGIN_ROOT}/shared/data.txt\n"
+    )
+    output = tmp_path / "output"
+
+    if simple:
+        result = convert_plugin_simple(plugin, target, output)
+        assert result.has_errors()
+    else:
+        report = convert_plugin(
+            plugin,
+            [target],
+            output_dir=output,
+            best_effort=True,
+        )[target]
+        assert report.errors
+
+    alpha, beta = _skill_roots(target)
+    assert (output / alpha / "SKILL.md").is_file()
+    assert (output / beta / "SKILL.md").is_file()
+    emitted_bytes = b"\n".join(
+        path.read_bytes() for path in sorted(output.rglob("*")) if path.is_file()
+    )
+    assert b"x-ai-config-includes" not in emitted_bytes
+    assert b"CLAUDE_PLUGIN_ROOT" not in emitted_bytes
 
 
 def test_target_native_shared_override_removes_original_copy_evidence(tmp_path: Path) -> None:
@@ -325,6 +368,25 @@ def test_special_file_in_skill_is_rejected(tmp_path: Path) -> None:
     assert [skill.name for skill in ir.skills()] == ["good"]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="raw-byte filenames require POSIX")
+def test_hash_handles_non_utf8_posix_filename_deterministically(tmp_path: Path) -> None:
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    raw_path = os.path.join(os.fsencode(plugin), b"raw-\xff")
+    try:
+        descriptor = os.open(raw_path, os.O_WRONLY | os.O_CREAT, 0o600)
+    except OSError as error:
+        pytest.skip(f"filesystem rejects non-UTF-8 filenames: {error}")
+    try:
+        os.write(descriptor, b"payload")
+    finally:
+        os.close(descriptor)
+
+    first = compute_plugin_hash(plugin)
+    assert first is not None
+    assert compute_plugin_hash(plugin) == first
+
+
 def test_hash_includes_shared_bytes_and_fails_closed_on_symlink(tmp_path: Path) -> None:
     plugin = _plugin(tmp_path, ["shared/data.txt"])
     (plugin / "shared").mkdir()
@@ -360,6 +422,77 @@ def test_cache_v7_is_invalidated_for_complete_source_hashing(
         "codex_output_dirs": ["/custom/codex"],
         "pi_output_dirs": ["/custom/pi"],
     }
+
+
+@pytest.mark.parametrize("version", [7, 8])
+@pytest.mark.parametrize("invalid_root", ["relative/root", "~ai_config_no_such_user/root"])
+def test_cache_rejects_nonabsolute_or_unexpandable_output_roots(
+    version: int,
+    invalid_root: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "entries": {},
+                "codex_output_dirs": [invalid_root],
+                "pi_output_dirs": [],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid conversion cache Codex output roots"):
+        load_conversion_cache()
+
+
+@pytest.mark.parametrize("version", [7, 8])
+def test_cache_rejects_symlink_loop_output_root(
+    version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    loop_a = tmp_path / "loop-a"
+    loop_b = tmp_path / "loop-b"
+    loop_a.symlink_to(loop_b.name)
+    loop_b.symlink_to(loop_a.name)
+    cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "entries": {},
+                "codex_output_dirs": [str(loop_a / "output")],
+                "pi_output_dirs": [],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid conversion cache Codex output roots"):
+        load_conversion_cache()
+
+
+@pytest.mark.parametrize("version", [7, 8])
+def test_cache_normalizes_and_deduplicates_preserved_output_roots(
+    version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
+    cache.parent.mkdir(parents=True)
+    canonical = (tmp_path / "outputs").resolve()
+    cache.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "entries": {},
+                "codex_output_dirs": [str(canonical), str(canonical / ".." / "outputs")],
+                "pi_output_dirs": [],
+            }
+        )
+    )
+    assert load_conversion_cache()["codex_output_dirs"] == [str(canonical)]
 
 
 def test_cache_v7_rejects_invalid_preserved_output_roots(

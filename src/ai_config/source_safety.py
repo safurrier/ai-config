@@ -104,15 +104,31 @@ class ContainedSource:
                 "Secure descriptor-relative source reads are unavailable on this platform"
             )
         self.root = supplied
-        self._root_fd: int = self._open_absolute_directory(supplied)
+        self._root_fd: int | None = None
+        self._root_fd = self._open_absolute_directory(supplied)
+
+    def close(self) -> None:
+        """Close the retained root descriptor; repeated calls are harmless."""
+        root_fd = getattr(self, "_root_fd", None)
+        if root_fd is None:
+            return
+        self._root_fd = None
+        try:
+            os.close(root_fd)
+        except OSError:
+            pass
+
+    def __enter__(self) -> ContainedSource:
+        if self._root_fd is None:
+            raise SourceSafetyError("Plugin source is closed")
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
 
     def __del__(self) -> None:
-        root_fd = getattr(self, "_root_fd", None)
-        if root_fd is not None:
-            try:
-                os.close(root_fd)
-            except OSError:
-                pass
+        """Best-effort fallback for callers that did not close deterministically."""
+        self.close()
 
     @staticmethod
     def _raise_open_error(error: OSError, *, context: str, relative: PurePosixPath) -> None:
@@ -150,8 +166,21 @@ class ContainedSource:
     def relative(self, value: object, *, context: str) -> PurePosixPath:
         return normalize_source_relative(value, context=context)
 
+    def _validated_relative(self, relative: PurePosixPath, *, context: str) -> PurePosixPath:
+        """Validate direct public path arguments inside the source authority."""
+        if not isinstance(relative, PurePosixPath):
+            raise SourceSafetyError(f"{context} path must be a POSIX relative path")
+        return normalize_source_relative(relative.as_posix(), context=context)
+
+    def _root_descriptor(self) -> int:
+        root_fd = self._root_fd
+        if root_fd is None:
+            raise SourceSafetyError("Plugin source is closed")
+        return root_fd
+
     def _open_entry(self, relative: PurePosixPath, *, context: str, directory: bool = False) -> int:
-        current = os.dup(self._root_fd)
+        relative = self._validated_relative(relative, context=context)
+        current = os.dup(self._root_descriptor())
         try:
             for index, part in enumerate(relative.parts):
                 final = index == len(relative.parts) - 1
@@ -171,6 +200,7 @@ class ContainedSource:
 
     def kind(self, relative: PurePosixPath, *, context: str) -> str:
         """Return ``file`` or ``directory`` from an opened, no-follow descriptor."""
+        relative = self._validated_relative(relative, context=context)
         fd = self._open_entry(relative, context=context)
         try:
             item_stat = os.fstat(fd)
@@ -190,6 +220,7 @@ class ContainedSource:
         reject_hardlinks: bool = False,
     ) -> SourceFile:
         """Read one regular file from a no-follow descriptor and verify its snapshot."""
+        relative = self._validated_relative(relative, context=context)
         fd = self._open_entry(relative, context=context)
         try:
             before = os.fstat(fd)
@@ -292,6 +323,7 @@ class ContainedSource:
 
     def walk_files(self, relative: PurePosixPath, *, context: str) -> Iterator[PurePosixPath]:
         """Yield regular files below a descriptor-opened directory."""
+        relative = self._validated_relative(relative, context=context)
         directory_fd = self._open_entry(relative, context=context, directory=True)
         files: list[PurePosixPath] = []
         try:
@@ -311,6 +343,7 @@ class ContainedSource:
         self, relative: PurePosixPath, *, context: str
     ) -> tuple[list[PurePosixPath], list[str]]:
         """Collect safe files while isolating unsafe sibling entries."""
+        relative = self._validated_relative(relative, context=context)
         directory_fd = self._open_entry(relative, context=context, directory=True)
         files: list[PurePosixPath] = []
         errors: list[str] = []
@@ -330,7 +363,7 @@ class ContainedSource:
     def walk_all_files(self, *, context: str) -> Iterator[PurePosixPath]:
         """Yield every regular file below the retained source-root descriptor."""
         files: list[PurePosixPath] = []
-        root_fd = os.dup(self._root_fd)
+        root_fd = os.dup(self._root_descriptor())
         try:
             self._walk_directory(
                 root_fd,

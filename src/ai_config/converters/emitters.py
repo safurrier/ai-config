@@ -200,18 +200,28 @@ class EmitResult:
             return
 
         target_relative = Path("targets") / target.value
+        original_files = list(self.files)
+        original_evidence = list(self.include_evidence)
+        original_mapping_count = len(self.mappings)
         try:
-            source_root = ContainedSource(plugin_root)
-            source_root.kind(
-                source_root.relative(target_relative.as_posix(), context="target-native"),
-                context="target-native",
-            )
-            sources = list(
-                source_root.walk_files(
-                    source_root.relative(target_relative.as_posix(), context="target-native"),
-                    context="target-native",
+            with ContainedSource(plugin_root) as source_root:
+                target_source = source_root.relative(
+                    target_relative.as_posix(), context="target-native"
                 )
-            )
+                source_root.kind(target_source, context="target-native")
+                source_paths = list(source_root.walk_files(target_source, context="target-native"))
+                sources = []
+                for source_relative in source_paths:
+                    try:
+                        sources.append(
+                            source_root.read_file(source_relative, context="target-native")
+                        )
+                    except SourceSafetyError as error:
+                        self.add_diagnostic(
+                            Severity.ERROR,
+                            str(error),
+                            component_ref=f"file:{source_relative.as_posix()}",
+                        )
         except SourceMissingError:
             return
         except SourceSafetyError as error:
@@ -225,22 +235,14 @@ class EmitResult:
             )
             return
 
-        for source_relative in sources:
+        for source in sources:
+            source_relative = source.relative_path
             relpath = Path(*source_relative.parts[len(target_relative.parts) :])
             target_path = base_dir / relpath
             if not _is_safe_relative_path(target_path):
                 self.add_diagnostic(
                     Severity.ERROR,
                     f"Unsafe target-native output path: {target_path.as_posix()}",
-                    component_ref=f"file:{source_relative.as_posix()}",
-                )
-                continue
-            try:
-                source = source_root.read_file(source_relative, context="target-native")
-            except SourceSafetyError as error:
-                self.add_diagnostic(
-                    Severity.ERROR,
-                    str(error),
                     component_ref=f"file:{source_relative.as_posix()}",
                 )
                 continue
@@ -310,10 +312,53 @@ class EmitResult:
                 + (" and overrides generated output" if replaced else ""),
             )
 
-        self._validate_final_generated_skills()
+        invalid_skill_dirs = self._validate_final_generated_skills()
+        if invalid_skill_dirs:
+            self._restore_generated_skills_after_unsafe_override(
+                invalid_skill_dirs,
+                original_files=original_files,
+                original_evidence=original_evidence,
+                original_mapping_count=original_mapping_count,
+            )
+            # The restored generated projection must still satisfy both the byte
+            # invariants and its include-evidence correspondence.
+            self._validate_final_generated_skills()
 
-    def _validate_final_generated_skills(self) -> None:
-        """Recheck generated skill invariants after target-native precedence is final."""
+    def _restore_generated_skills_after_unsafe_override(
+        self,
+        invalid_skill_dirs: set[Path],
+        *,
+        original_files: list[EmittedFile],
+        original_evidence: list[IncludeResult],
+        original_mapping_count: int,
+    ) -> None:
+        """Roll back every target-native change below an invalid generated skill."""
+
+        def belongs_to_invalid_skill(path: Path) -> bool:
+            return any(
+                path == skill_dir or skill_dir in path.parents for skill_dir in invalid_skill_dirs
+            )
+
+        self.files = [
+            emitted for emitted in self.files if not belongs_to_invalid_skill(emitted.path)
+        ] + [emitted for emitted in original_files if belongs_to_invalid_skill(emitted.path)]
+        self.include_evidence = [
+            evidence
+            for evidence in self.include_evidence
+            if not belongs_to_invalid_skill(evidence.target_path)
+        ] + [
+            evidence
+            for evidence in original_evidence
+            if belongs_to_invalid_skill(evidence.target_path)
+        ]
+        self.mappings = self.mappings[:original_mapping_count] + [
+            mapping
+            for mapping in self.mappings[original_mapping_count:]
+            if mapping.target_path is None or not belongs_to_invalid_skill(mapping.target_path)
+        ]
+
+    def _validate_final_generated_skills(self) -> set[Path]:
+        """Recheck generated skill invariants and evidence after native precedence is final."""
         skill_paths = {
             mapping.target_path
             for mapping in self.mappings
@@ -321,6 +366,8 @@ class EmitResult:
             and mapping.target_path.name == "SKILL.md"
             and mapping.component_kind in {"skill", "command"}
         }
+        invalid_skill_dirs: set[Path] = set()
+        emitted_paths = {emitted.path for emitted in self.files}
         for skill_path in sorted(skill_paths, key=lambda path: path.as_posix()):
             skill_dir = skill_path.parent
             files: dict[PurePosixPath, bytes] = {}
@@ -344,12 +391,23 @@ class EmitResult:
                         metadata = parsed
                 except (UnicodeDecodeError, yaml.YAMLError):
                     pass
-            for error in generated_skill_bytes_invariant_errors(files, metadata):
+            errors = generated_skill_bytes_invariant_errors(files, metadata)
+            for evidence in self.include_evidence:
+                if skill_dir not in evidence.target_path.parents:
+                    continue
+                if evidence.target_path not in emitted_paths:
+                    errors.append(
+                        "Generated skill include evidence references a missing copy: "
+                        f"{evidence.target_path.relative_to(skill_dir).as_posix()}"
+                    )
+            for error in errors:
+                invalid_skill_dirs.add(skill_dir)
                 self.add_diagnostic(
                     Severity.ERROR,
                     error,
                     component_ref=f"file:{skill_path.as_posix()}",
                 )
+        return invalid_skill_dirs
 
     def preview(self, output_dir: Path | None = None) -> str:
         """Generate preview of what would be written.
@@ -852,10 +910,22 @@ class CodexEmitter:
         if source_root is None:
             return False
         try:
-            contained = ContainedSource(source_root)
+            with ContainedSource(source_root) as contained:
+                return self._copy_referenced_support_files_from_source(
+                    result, package_root, contained, references
+                )
         except SourceSafetyError as error:
             result.add_diagnostic(Severity.ERROR, str(error), component_ref="hook:source-root")
             return False
+
+    def _copy_referenced_support_files_from_source(
+        self,
+        result: EmitResult,
+        package_root: Path,
+        contained: ContainedSource,
+        references: list[str],
+    ) -> bool:
+        """Copy referenced support files while the source descriptor is open."""
         valid = True
         for reference in references:
             try:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -25,15 +26,36 @@ def conversion_cache_path() -> Path:
 
 
 def _validated_cached_output_dirs(raw: dict, key: str, cache_path: Path) -> list[str]:
+    """Return canonical absolute cached roots or reject the whole cache fail-closed."""
     value = raw.get(key, [])
     label = "Codex" if key == "codex_output_dirs" else "Pi"
-    if not isinstance(value, list) or any(
-        not isinstance(item, str) or not item or "\0" in item for item in value
-    ):
-        raise ValueError(
-            f"Invalid conversion cache {label} output roots at {cache_path}; clear it and retry"
-        )
-    return value
+    message = f"Invalid conversion cache {label} output roots at {cache_path}; clear it and retry"
+    if not isinstance(value, list):
+        raise ValueError(message)
+
+    resolved: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item or "\0" in item:
+            raise ValueError(message)
+        try:
+            expanded = Path(item).expanduser()
+            if not expanded.is_absolute():
+                raise ValueError("output root is not absolute")
+            canonical = expanded.resolve()
+            cursor = Path(canonical.anchor)
+            for part in canonical.parts[1:]:
+                cursor /= part
+                try:
+                    if stat.S_ISLNK(cursor.lstat().st_mode):
+                        raise ValueError("output root contains an unresolved symlink")
+                except FileNotFoundError:
+                    break
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueError(message) from error
+        if not canonical.is_absolute():
+            raise ValueError(message)
+        resolved.add(str(canonical))
+    return sorted(resolved)
 
 
 def load_conversion_cache() -> dict:
@@ -94,16 +116,16 @@ def compute_plugin_hash(plugin_path: Path) -> str | None:
     """Hash every safely readable plugin byte, failing closed on unsafe entries."""
     hasher = hashlib.sha256()
     try:
-        source = ContainedSource(plugin_path)
-        for relative in source.walk_all_files(context="plugin hash"):
-            item = source.read_file(relative, context="plugin hash")
-            hasher.update(relative.as_posix().encode("utf-8"))
-            hasher.update(b"\0")
-            hasher.update(b"x" if item.executable else b"-")
-            hasher.update(len(item.content).to_bytes(8, "big"))
-            hasher.update(item.content)
+        with ContainedSource(plugin_path) as source:
+            for relative in source.walk_all_files(context="plugin hash"):
+                item = source.read_file(relative, context="plugin hash")
+                hasher.update(os.fsencode(relative.as_posix()))
+                hasher.update(b"\0")
+                hasher.update(b"x" if item.executable else b"-")
+                hasher.update(len(item.content).to_bytes(8, "big"))
+                hasher.update(item.content)
         return hasher.hexdigest()
-    except (OSError, SourceSafetyError):
+    except (OSError, SourceSafetyError, UnicodeError):
         return None
 
 

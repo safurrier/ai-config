@@ -21,6 +21,44 @@ def test_root_nul_is_translated_to_source_safety_error() -> None:
         ContainedSource(Path("bad\0root"))
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        PurePosixPath("/outside"),
+        PurePosixPath("../outside"),
+        PurePosixPath("."),
+        PurePosixPath(),
+        PurePosixPath("bad\0name"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["kind", "read_file", "walk_files", "scan_files"])
+def test_public_source_methods_reject_direct_unsafe_paths(
+    invalid: PurePosixPath, operation: str, tmp_path: Path
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"outside")
+    with ContainedSource(root) as source:
+        method = getattr(source, operation)
+        with pytest.raises(SourceSafetyError):
+            result = method(invalid, context="direct hostile path")
+            if operation == "walk_files":
+                list(result)
+
+
+def test_close_is_idempotent_and_context_manager_closes_descriptor(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "payload").write_bytes(b"inside")
+    source = ContainedSource(root)
+    with source as opened:
+        assert opened.kind(PurePosixPath("payload"), context="lifecycle") == "file"
+    source.close()
+    with pytest.raises(SourceSafetyError, match="closed"):
+        source.kind(PurePosixPath("payload"), context="lifecycle")
+
+
 def test_static_final_and_ancestor_symlinks_and_special_files_fail_closed(
     tmp_path: Path,
 ) -> None:

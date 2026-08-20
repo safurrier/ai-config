@@ -71,7 +71,9 @@ def convert_plugin(
     # operation, so only mutating conversions need this separate preflight.
     pi_result: EmitResult | None = None
     if output_dir is not None and not dry_run and TargetTool.PI in targets:
-        pi_result = _preflight_pi_reconciliation(ir, plugin_path, output_dir, scope)
+        pi_result = _preflight_pi_reconciliation(
+            ir, plugin_path, output_dir, scope, best_effort=best_effort
+        )
 
     # Preserve the caller's requested report order after the Pi preflight succeeds.
     reports = {}
@@ -109,11 +111,18 @@ def _pi_reconciliation_inputs(
 
 
 def _preflight_pi_reconciliation(
-    ir: PluginIR, source_path: Path, output_dir: Path, scope: InstallScope
+    ir: PluginIR,
+    source_path: Path,
+    output_dir: Path,
+    scope: InstallScope,
+    *,
+    best_effort: bool,
 ) -> EmitResult:
     """Plan Pi reconciliation without changing disk before other targets write."""
     result = get_emitter(TargetTool.PI, scope).emit(ir)
-    if any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics):
+    if not best_effort and any(
+        diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics
+    ):
         raise ValueError("Pi conversion preflight has blocking emitter diagnostics")
     source_plugin, desired = _pi_reconciliation_inputs(ir, source_path, result)
     apply_pi_reconciliation(
