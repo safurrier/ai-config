@@ -292,10 +292,11 @@ def probe(codex: str) -> dict[str, object]:
                     "Codex did not expose the constructed source-less catalog state: "
                     f"{source_less_catalog_entry}"
                 )
-        elif (version.major, version.minor) == (0, 148):
+        elif (version.major, version.minor) in {(0, 148), (0, 149)}:
             if source_less_catalog_state:
                 raise AssertionError(
-                    "Codex 0.148 unexpectedly exposed directly seeded source-less catalog state"
+                    f"Codex {version.major}.{version.minor} unexpectedly exposed directly seeded "
+                    "source-less catalog state"
                 )
         else:
             raise AssertionError(f"unsupported Codex public-sync probe version: {version_output}")

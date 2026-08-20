@@ -70,7 +70,7 @@ This is ai-config build metadata, not a claim that Claude itself materializes th
 accepts and loads the source skill; ai-config strips the field while producing self-contained target
 skills.
 
-## Codex 0.144.5, 0.145.0, 0.146.0, and 0.148.0 runtime evidence
+## Codex 0.144.5, 0.145.0, 0.146.0, 0.148.0, and 0.149.0 runtime evidence
 
 The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
 
@@ -118,6 +118,22 @@ platform integrity: sha512-xgBPFiF1fHUlRS7HE6wGB56LjBJh16kGD7b4TTbwdVBZNB4QDkTok
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
+The latest lane resolved and passed both complete auth-free probes for Codex 0.149.0 on 2026-08-20:
+
+```text
+resolved package: @openai/codex@0.149.0
+version output:   codex-cli 0.149.0
+main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.149.0.tgz
+main integrity:    sha512-i4dryj2Y1j+00Mb5n+0n71EYnTK9/KDc2cdFo/dXD0d1oTog2bhUssKDEIOnKmnEf51P0Z/HJTWvTKw/UHyOvQ==
+darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.149.0-darwin-arm64.tgz
+platform integrity: sha512-GsZJbzBWiD48RETrO8VHGAQNgfSrUVxItXZFeD87wswatPi0+lKuQo8Dx4nMYmOZhZrVtwr3al/feRrZxnDV8Q==
+install source:    integrity-verified direct npm registry tarball extraction
+```
+
+The 0.149.0 release notes do not describe plugin lifecycle contract changes. The runtime probes
+confirmed the same feature rows and help surfaces shown below, the typed marketplace/plugin JSON
+schemas and identities, lifecycle mutation semantics, and source-less catalog visibility as 0.148.0.
+
 The direct extraction in `tests/probes/probe_latest_codex.sh` is intentional. npm's configured
 install-date cutoff rejected a normal fresh install because 0.144.5 was newer than the cutoff.
 The lane still resolves the live tag, reads each registry URL and integrity value, verifies SHA-512,
@@ -153,6 +169,7 @@ Observed help surfaces:
 Official sources checked through 2026-08-20:
 
 - [Codex changelog](https://developers.openai.com/codex/changelog)
+- [Codex 0.149.0 release](https://github.com/openai/codex/releases/tag/rust-v0.149.0)
 - [Codex 0.148.0 release](https://github.com/openai/codex/releases/tag/rust-v0.148.0)
 - [Codex 0.146.0 release](https://github.com/openai/codex/releases/tag/rust-v0.146.0)
 - [Codex 0.145.0 release](https://github.com/openai/codex/releases/tag/rust-v0.145.0)
@@ -185,8 +202,8 @@ duplicate runtime records, source/path mismatches, and SemVer downgrades fail be
 Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
 by `doctor` and never removed without proof of ownership.
 
-The adapter accepts Codex 0.144.x through 0.148.x contracts. Captured isolated runtime evidence in
-this document extends through 0.148.0. The adapter validates the CLI version plus typed schemas and
+The adapter accepts Codex 0.144.x through 0.149.x contracts. Captured isolated runtime evidence in
+this document extends through 0.149.0. The adapter validates the CLI version plus typed schemas and
 semantic identity for marketplace list/add/remove and plugin list/add/remove responses. Malformed
 JSON, duplicate keys/records, partial output, unknown versions,
 and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
@@ -199,8 +216,8 @@ Codex 0.144.5 can omit `marketplaceSource` from resolved marketplace and plugin 
 configured source corresponds to the resolved marketplace root. The adapter accepts only absence:
 a present value must remain a typed object with a known source type and non-empty source. Installed
 rows without this metadata retain their plugin source but have no inferred marketplace root, so
-desired or previously owned identity collisions still fail before mutation. Codex 0.148.0 no longer
-lists the probe's directly seeded `$CODEX_HOME/.tmp/plugins` source-less catalog. The public-sync probe
+desired or previously owned identity collisions still fail before mutation. Codex 0.148.0 and 0.149.0
+do not list the probe's directly seeded `$CODEX_HOME/.tmp/plugins` source-less catalog. The public-sync probe
 therefore records its initial CLI visibility and exact files, then requires both to remain unchanged;
 configured marketplace and plugin add/list/remove schemas and semantics remain compatible.
 

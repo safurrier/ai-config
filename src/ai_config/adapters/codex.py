@@ -15,8 +15,8 @@ from pathlib import Path
 
 from ai_config.semver import SemanticVersion
 
-_SUPPORTED_CODEX_MAJOR_MINORS = {(0, 144), (0, 145), (0, 146), (0, 147), (0, 148)}
-_SUPPORTED_CODEX_CONTRACT = "0.144.x, 0.145.x, 0.146.x, 0.147.x, or 0.148.x"
+_SUPPORTED_CODEX_MAJOR_MINORS = {(0, 144), (0, 145), (0, 146), (0, 147), (0, 148), (0, 149)}
+_SUPPORTED_CODEX_CONTRACT = "0.144.x, 0.145.x, 0.146.x, 0.147.x, 0.148.x, or 0.149.x"
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _TERMINATION_GRACE_SECONDS = 0.5
 _REAP_TIMEOUT_SECONDS = 0.5

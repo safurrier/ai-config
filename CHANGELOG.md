@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Conversion cache version 8 invalidates content entries after expanding source hashing while
   preserving validated tracked Codex and Pi output roots for cleanup discovery.
-- Accept the repository-tested Codex plugin lifecycle schema/version contract through 0.148.x;
-  captured auth-free real-runtime package and public-sync probes now extend through 0.148.0.
+- Accept the repository-tested Codex plugin lifecycle schema/version contract through 0.149.x;
+  captured auth-free real-runtime package and public-sync probes now extend through 0.149.0.
 
 ### Fixed
 
