@@ -7,12 +7,11 @@ the right shape satisfies the Emitter interface.
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import shutil
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, replace
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -20,7 +19,6 @@ import yaml
 from ai_config.converters.claude_parser import normalize_portable_name
 from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import (
-    BinaryFile,
     Command,
     Diagnostic,
     Hook,
@@ -35,7 +33,11 @@ from ai_config.converters.ir import (
     TargetTool,
     TextFile,
 )
+from ai_config.converters.report import IncludeResult
+from ai_config.converters.skill_projection import project_skill
 from ai_config.output_safety import validated_output_path
+from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
+from ai_config.validators.target.skill_invariants import generated_skill_bytes_invariant_errors
 
 _ENV_VAR_PATTERN = re.compile(
     r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\{env:([A-Za-z_][A-Za-z0-9_]*)\}|\$\{([A-Za-z_][A-Za-z0-9_]*)\}"
@@ -74,6 +76,15 @@ class ComponentMapping:
     lost_features: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _EmittedMarkdownRewriteEvidence:
+    """Internal converter-rewrite evidence after applying a target output root."""
+
+    include_target_path: Path
+    markdown_target_path: Path
+    direct_rewrite_count: int
+
+
 @dataclass
 class EmitResult:
     """Result of emitting a plugin to a target format."""
@@ -83,6 +94,10 @@ class EmitResult:
     mappings: list[ComponentMapping] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     cleanup_paths: list[Path] = field(default_factory=list)
+    include_evidence: list[IncludeResult] = field(default_factory=list)
+    _markdown_rewrite_evidence: list[_EmittedMarkdownRewriteEvidence] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
 
     def add_file(self, path: Path | str, content: str, executable: bool = False) -> None:
         """Add a file to emit."""
@@ -179,6 +194,21 @@ class EmitResult:
             written.append(full_path)
         return written
 
+    def _recompute_include_rewrite_counts(self) -> None:
+        """Refresh public additive totals from final converter-authored Markdown evidence."""
+        totals: dict[Path, int] = {}
+        for evidence in self._markdown_rewrite_evidence:
+            totals[evidence.include_target_path] = (
+                totals.get(evidence.include_target_path, 0) + evidence.direct_rewrite_count
+            )
+        self.include_evidence = [
+            replace(
+                evidence,
+                direct_rewrite_count=totals.get(evidence.target_path, 0),
+            )
+            for evidence in self.include_evidence
+        ]
+
     def apply_target_native_files(
         self,
         *,
@@ -196,41 +226,56 @@ class EmitResult:
         if plugin_root is None:
             return
 
-        target_root = plugin_root / "targets" / target.value
-        if target_root.is_symlink():
+        target_relative = Path("targets") / target.value
+        original_files = list(self.files)
+        original_evidence = list(self.include_evidence)
+        original_rewrite_evidence = list(self._markdown_rewrite_evidence)
+        original_mapping_count = len(self.mappings)
+        try:
+            with ContainedSource(plugin_root) as source_root:
+                target_source = source_root.relative(
+                    target_relative.as_posix(), context="target-native"
+                )
+                source_root.kind(target_source, context="target-native")
+                source_paths = list(source_root.walk_files(target_source, context="target-native"))
+                sources = []
+                for source_relative in source_paths:
+                    try:
+                        sources.append(
+                            source_root.read_file(source_relative, context="target-native")
+                        )
+                    except SourceSafetyError as error:
+                        self.add_diagnostic(
+                            Severity.ERROR,
+                            str(error),
+                            component_ref=f"file:{source_relative.as_posix()}",
+                        )
+        except SourceMissingError:
+            return
+        except SourceSafetyError as error:
+            message = str(error)
+            if "symlink" in message:
+                message = f"Ignoring symlinked target-native directory: {message}"
             self.add_diagnostic(
-                Severity.WARN,
-                f"Ignoring symlinked target-native directory: {target_root}",
+                Severity.ERROR,
+                message,
                 component_ref=f"file:targets/{target.value}",
             )
             return
-        if not target_root.is_dir():
-            return
 
-        for source in sorted(target_root.rglob("*")):
-            if source.is_symlink() or not source.is_file():
-                continue
-
-            relpath = source.relative_to(target_root)
-            if not _is_safe_relative_path(relpath):
-                self.add_diagnostic(
-                    Severity.WARN,
-                    f"Ignoring unsafe target-native file path: {relpath.as_posix()}",
-                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
-                )
-                continue
-
+        for source in sources:
+            source_relative = source.relative_path
+            relpath = Path(*source_relative.parts[len(target_relative.parts) :])
             target_path = base_dir / relpath
             if not _is_safe_relative_path(target_path):
                 self.add_diagnostic(
-                    Severity.WARN,
-                    f"Ignoring target-native file outside output root: {target_path.as_posix()}",
-                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
+                    Severity.ERROR,
+                    f"Unsafe target-native output path: {target_path.as_posix()}",
+                    component_ref=f"file:{source_relative.as_posix()}",
                 )
                 continue
-
-            executable = bool(source.stat().st_mode & 0o111)
-            content_bytes = source.read_bytes()
+            content_bytes = source.content
+            executable = source.executable
 
             conflicts = [
                 (index, emitted)
@@ -239,52 +284,169 @@ class EmitResult:
             ]
             replaced = bool(conflicts)
             exact_conflict = next(
-                (index for index, emitted in conflicts if emitted.path == target_path),
-                None,
+                (index for index, emitted in conflicts if emitted.path == target_path), None
             )
-
-            if exact_conflict is not None and len(conflicts) == 1:
-                try:
-                    content = content_bytes.decode("utf-8")
-                    self.files[exact_conflict] = EmittedFile(
-                        path=target_path,
-                        content=content,
-                        executable=executable,
-                    )
-                except UnicodeDecodeError:
-                    self.files[exact_conflict] = EmittedFile(
-                        path=target_path,
-                        content=content_bytes,
-                        binary=True,
-                        executable=executable,
-                    )
+            if conflicts and (exact_conflict is None or len(conflicts) != 1):
+                self.add_diagnostic(
+                    Severity.ERROR,
+                    "Target-native path conflicts with a generated directory; only exact file "
+                    f"overrides are allowed: {target_path.as_posix()}",
+                    component_ref=f"file:{source_relative.as_posix()}",
+                )
+                continue
+            try:
+                native_file = EmittedFile(
+                    path=target_path,
+                    content=content_bytes.decode("utf-8"),
+                    executable=executable,
+                )
+            except UnicodeDecodeError:
+                native_file = EmittedFile(
+                    path=target_path,
+                    content=content_bytes,
+                    binary=True,
+                    executable=executable,
+                )
+            if exact_conflict is not None:
+                self.files[exact_conflict] = native_file
+                self.include_evidence = [
+                    evidence
+                    for evidence in self.include_evidence
+                    if evidence.target_path != target_path
+                ]
+                self._markdown_rewrite_evidence = [
+                    evidence
+                    for evidence in self._markdown_rewrite_evidence
+                    if evidence.include_target_path != target_path
+                    and evidence.markdown_target_path != target_path
+                ]
+                self._recompute_include_rewrite_counts()
             else:
-                for index, _emitted in reversed(conflicts):
-                    del self.files[index]
-                try:
-                    self.add_file(
-                        target_path,
-                        content_bytes.decode("utf-8"),
-                        executable=executable,
-                    )
-                except UnicodeDecodeError:
-                    self.add_binary_file(target_path, content_bytes, executable=executable)
+                self.files.append(native_file)
 
             if replaced:
                 self.add_diagnostic(
                     Severity.INFO,
                     f"Target-native file overrides generated output: {target_path.as_posix()}",
-                    component_ref=f"file:targets/{target.value}/{relpath.as_posix()}",
+                    component_ref=f"file:{source_relative.as_posix()}",
                 )
-
             self.add_mapping(
                 "file",
-                f"targets/{target.value}/{relpath.as_posix()}",
+                source_relative.as_posix(),
                 MappingStatus.NATIVE,
                 target_path=target_path,
                 notes="Target-native file copied verbatim into converted output"
                 + (" and overrides generated output" if replaced else ""),
             )
+
+        invalid_skill_dirs = self._validate_final_generated_skills()
+        if invalid_skill_dirs:
+            self._restore_generated_skills_after_unsafe_override(
+                invalid_skill_dirs,
+                original_files=original_files,
+                original_evidence=original_evidence,
+                original_rewrite_evidence=original_rewrite_evidence,
+                original_mapping_count=original_mapping_count,
+            )
+            # The restored generated projection must still satisfy both the byte
+            # invariants and its include-evidence correspondence.
+            self._validate_final_generated_skills()
+
+    def _restore_generated_skills_after_unsafe_override(
+        self,
+        invalid_skill_dirs: set[Path],
+        *,
+        original_files: list[EmittedFile],
+        original_evidence: list[IncludeResult],
+        original_rewrite_evidence: list[_EmittedMarkdownRewriteEvidence],
+        original_mapping_count: int,
+    ) -> None:
+        """Roll back every target-native change below an invalid generated skill."""
+
+        def belongs_to_invalid_skill(path: Path) -> bool:
+            return any(
+                path == skill_dir or skill_dir in path.parents for skill_dir in invalid_skill_dirs
+            )
+
+        self.files = [
+            emitted for emitted in self.files if not belongs_to_invalid_skill(emitted.path)
+        ] + [emitted for emitted in original_files if belongs_to_invalid_skill(emitted.path)]
+        self.include_evidence = [
+            evidence
+            for evidence in self.include_evidence
+            if not belongs_to_invalid_skill(evidence.target_path)
+        ] + [
+            evidence
+            for evidence in original_evidence
+            if belongs_to_invalid_skill(evidence.target_path)
+        ]
+        self._markdown_rewrite_evidence = [
+            evidence
+            for evidence in self._markdown_rewrite_evidence
+            if not belongs_to_invalid_skill(evidence.include_target_path)
+        ] + [
+            evidence
+            for evidence in original_rewrite_evidence
+            if belongs_to_invalid_skill(evidence.include_target_path)
+        ]
+        self._recompute_include_rewrite_counts()
+        self.mappings = self.mappings[:original_mapping_count] + [
+            mapping
+            for mapping in self.mappings[original_mapping_count:]
+            if mapping.target_path is None or not belongs_to_invalid_skill(mapping.target_path)
+        ]
+
+    def _validate_final_generated_skills(self) -> set[Path]:
+        """Recheck generated skill invariants and evidence after native precedence is final."""
+        skill_paths = {
+            mapping.target_path
+            for mapping in self.mappings
+            if mapping.target_path is not None
+            and mapping.target_path.name == "SKILL.md"
+            and mapping.component_kind in {"skill", "command"}
+        }
+        invalid_skill_dirs: set[Path] = set()
+        emitted_paths = {emitted.path for emitted in self.files}
+        for skill_path in sorted(skill_paths, key=lambda path: path.as_posix()):
+            skill_dir = skill_path.parent
+            files: dict[PurePosixPath, bytes] = {}
+            for emitted in self.files:
+                if emitted.path != skill_path and skill_dir not in emitted.path.parents:
+                    continue
+                relative = PurePosixPath(emitted.path.relative_to(skill_dir).as_posix())
+                files[relative] = (
+                    emitted.content.encode("utf-8")
+                    if isinstance(emitted.content, str)
+                    else emitted.content
+                )
+            skill_bytes = files.get(PurePosixPath("SKILL.md"))
+            metadata: dict[str, Any] = {}
+            if skill_bytes is not None:
+                try:
+                    text = skill_bytes.decode("utf-8")
+                    parts = text.split("---", 2)
+                    parsed = yaml.safe_load(parts[1]) if len(parts) == 3 else None
+                    if isinstance(parsed, dict):
+                        metadata = parsed
+                except (UnicodeDecodeError, yaml.YAMLError):
+                    pass
+            errors = generated_skill_bytes_invariant_errors(files, metadata)
+            for evidence in self.include_evidence:
+                if skill_dir not in evidence.target_path.parents:
+                    continue
+                if evidence.target_path not in emitted_paths:
+                    errors.append(
+                        "Generated skill include evidence references a missing copy: "
+                        f"{evidence.target_path.relative_to(skill_dir).as_posix()}"
+                    )
+            for error in errors:
+                invalid_skill_dirs.add(skill_dir)
+                self.add_diagnostic(
+                    Severity.ERROR,
+                    error,
+                    component_ref=f"file:{skill_path.as_posix()}",
+                )
+        return invalid_skill_dirs
 
     def preview(self, output_dir: Path | None = None) -> str:
         """Generate preview of what would be written.
@@ -418,9 +580,45 @@ def skill_to_markdown(
     return f"---\n{frontmatter}---\n\n{body}"
 
 
-def _decode_b64_file(file: BinaryFile) -> bytes:
-    """Decode base64 content for BinaryFile."""
-    return base64.b64decode(file.content_b64)
+def _emit_projected_skill(
+    result: EmitResult,
+    skill: Skill,
+    skill_dir: Path,
+    generated_markdown: str,
+) -> bool:
+    """Emit one target-neutral self-contained skill projection."""
+    projection = project_skill(skill, generated_markdown)
+    if projection.errors:
+        for error in projection.errors:
+            result.add_diagnostic(Severity.ERROR, error, component_ref=f"skill:{skill.name}")
+        return False
+    for item in projection.files:
+        target = skill_dir / Path(item.relative_path.as_posix())
+        if isinstance(item.content, bytes):
+            result.add_binary_file(target, item.content, item.executable)
+        else:
+            result.add_file(target, item.content, item.executable)
+    for evidence in projection.include_evidence:
+        include_target = skill_dir / evidence.projected_path
+        result.include_evidence.append(
+            IncludeResult(
+                source_relative_path=evidence.source_relative_path,
+                consumer_skill=skill.name,
+                target_path=include_target,
+                copy_count=1,
+                duplicated_bytes=evidence.duplicated_bytes,
+                direct_rewrite_count=evidence.direct_rewrite_count,
+            )
+        )
+        result._markdown_rewrite_evidence.extend(
+            _EmittedMarkdownRewriteEvidence(
+                include_target_path=include_target,
+                markdown_target_path=skill_dir / item.markdown_relative_path.as_posix(),
+                direct_rewrite_count=item.direct_rewrite_count,
+            )
+            for item in evidence.markdown_rewrites
+        )
+    return True
 
 
 def _transform_env_value(value: str, target: TargetTool) -> str:
@@ -608,30 +806,28 @@ class CodexEmitter:
     def _emit_skill(self, result: EmitResult, skill: Skill, package_root: Path) -> None:
         skill_dir = package_root / "skills" / skill.name
         skill_path = skill_dir / "SKILL.md"
-        result.add_file(skill_path, skill_to_markdown(skill, strip_claude_fields=True))
-        for file in skill.files:
-            if file.relpath == "SKILL.md":
-                continue
-            if isinstance(file, TextFile):
-                result.add_file(skill_dir / file.relpath, file.content, file.executable)
-            elif isinstance(file, BinaryFile):
-                result.add_binary_file(
-                    skill_dir / file.relpath,
-                    _decode_b64_file(file),
-                    file.executable,
-                )
+        if not _emit_projected_skill(
+            result,
+            skill,
+            skill_dir,
+            skill_to_markdown(skill, strip_claude_fields=True),
+        ):
+            return
         lost = (
             ["Claude-only skill execution metadata"]
             if skill.allowed_tools or skill.model or skill.context or skill.agent
             else []
         )
+        transformed = bool(lost or skill.includes)
         result.add_mapping(
             "skill",
             skill.name,
-            MappingStatus.NATIVE if not lost else MappingStatus.TRANSFORM,
+            MappingStatus.TRANSFORM if transformed else MappingStatus.NATIVE,
             target_path=skill_path,
             notes=(
-                "Package-local Agent Skill"
+                "Package-local self-contained skill with shared resources materialized"
+                if skill.includes
+                else "Package-local Agent Skill"
                 if not lost
                 else "Package-local skill with Claude-only fields removed"
             ),
@@ -761,27 +957,51 @@ class CodexEmitter:
             return True
         if source_root is None:
             return False
+        try:
+            with ContainedSource(source_root) as contained:
+                return self._copy_referenced_support_files_from_source(
+                    result, package_root, contained, references
+                )
+        except SourceSafetyError as error:
+            result.add_diagnostic(Severity.ERROR, str(error), component_ref="hook:source-root")
+            return False
+
+    def _copy_referenced_support_files_from_source(
+        self,
+        result: EmitResult,
+        package_root: Path,
+        contained: ContainedSource,
+        references: list[str],
+    ) -> bool:
+        """Copy referenced support files while the source descriptor is open."""
         valid = True
         for reference in references:
-            relative = Path(reference)
-            source = source_root / relative
-            if not _is_safe_relative_path(relative) or source.is_symlink() or not source.is_file():
+            try:
+                relative = contained.relative(reference, context="Codex support file")
+                source = contained.read_file(relative, context="Codex support file")
+            except SourceMissingError as error:
                 result.add_diagnostic(
                     Severity.WARN,
-                    f"Codex hook support file is missing or unsafe: {reference}",
+                    str(error),
                     component_ref=f"hook:file:{reference}",
                 )
                 valid = False
                 continue
-            target = package_root / relative
+            except SourceSafetyError as error:
+                result.add_diagnostic(
+                    Severity.ERROR,
+                    str(error),
+                    component_ref=f"hook:file:{reference}",
+                )
+                valid = False
+                continue
+            target = package_root / Path(relative.as_posix())
             if any(file.path == target for file in result.files):
                 continue
-            content = source.read_bytes()
-            executable = bool(source.stat().st_mode & 0o111)
             try:
-                result.add_file(target, content.decode("utf-8"), executable)
+                result.add_file(target, source.content.decode("utf-8"), source.executable)
             except UnicodeDecodeError:
-                result.add_binary_file(target, content, executable)
+                result.add_binary_file(target, source.content, source.executable)
         return valid
 
     def _build_mcp_servers(
@@ -906,26 +1126,17 @@ class CursorEmitter:
         dir_name = f"{plugin_id}-{skill.name}"
         skill_dir = Path(".cursor") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
-
         content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
-        result.add_file(skill_path, content)
-
-        for f in skill.files:
-            if f.relpath != "SKILL.md":
-                if isinstance(f, TextFile):
-                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
-                elif isinstance(f, BinaryFile):
-                    result.add_binary_file(
-                        skill_dir / f.relpath,
-                        _decode_b64_file(f),
-                        f.executable,
-                    )
-
+        if not _emit_projected_skill(result, skill, skill_dir, content):
+            return
         result.add_mapping(
             "skill",
             skill.name,
-            MappingStatus.NATIVE,
+            MappingStatus.TRANSFORM if skill.includes else MappingStatus.NATIVE,
             target_path=skill_path,
+            notes="Shared resources materialized into a self-contained skill"
+            if skill.includes
+            else None,
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
@@ -1132,26 +1343,17 @@ class OpenCodeEmitter:
         dir_name = f"{plugin_id}-{skill.name}"
         skill_dir = Path(".opencode") / "skills" / dir_name
         skill_path = skill_dir / "SKILL.md"
-
         content = skill_to_markdown(skill, strip_claude_fields=True, name_override=dir_name)
-        result.add_file(skill_path, content)
-
-        for f in skill.files:
-            if f.relpath != "SKILL.md":
-                if isinstance(f, TextFile):
-                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
-                elif isinstance(f, BinaryFile):
-                    result.add_binary_file(
-                        skill_dir / f.relpath,
-                        _decode_b64_file(f),
-                        f.executable,
-                    )
-
+        if not _emit_projected_skill(result, skill, skill_dir, content):
+            return
         result.add_mapping(
             "skill",
             skill.name,
-            MappingStatus.NATIVE,
+            MappingStatus.TRANSFORM if skill.includes else MappingStatus.NATIVE,
             target_path=skill_path,
+            notes="Shared resources materialized into a self-contained skill"
+            if skill.includes
+            else None,
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:
@@ -1375,25 +1577,17 @@ class PiEmitter:
 
         frontmatter = yaml.dump(meta, default_flow_style=False, sort_keys=False)
         content = f"---\n{frontmatter}---\n\n{body}"
-        result.add_file(skill_path, content)
-
-        # Copy other skill files (scripts, references, etc.)
-        for f in skill.files:
-            if f.relpath != "SKILL.md":
-                if isinstance(f, TextFile):
-                    result.add_file(skill_dir / f.relpath, f.content, f.executable)
-                elif isinstance(f, BinaryFile):
-                    result.add_binary_file(
-                        skill_dir / f.relpath,
-                        _decode_b64_file(f),
-                        f.executable,
-                    )
+        if not _emit_projected_skill(result, skill, skill_dir, content):
+            return
 
         result.add_mapping(
             "skill",
             skill.name,
-            MappingStatus.NATIVE,
+            MappingStatus.TRANSFORM if skill.includes else MappingStatus.NATIVE,
             target_path=skill_path,
+            notes="Shared resources materialized into a self-contained skill"
+            if skill.includes
+            else None,
         )
 
     def _emit_command(self, result: EmitResult, cmd: Command, plugin_id: str) -> None:

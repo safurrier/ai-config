@@ -611,6 +611,7 @@ class TestConversionCache:
             "version": _CONVERSION_CACHE_VERSION,
             "entries": {},
             "codex_output_dirs": [],
+            "pi_output_dirs": [],
         }
 
     def test_current_conversion_cache_corruption_fails_closed(
@@ -1184,6 +1185,74 @@ class TestSyncTarget:
             assert result.success is True
             assert result.errors == []
             assert mock_convert.call_args.kwargs["plugin_path"] == plugin_dir.resolve()
+
+    def test_sync_rejects_symlinked_local_marketplace_plugin_root(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A manifest-selected symlink cannot launder an external conversion root."""
+        marketplace_dir = tmp_path / "marketplace"
+        external = tmp_path / "external-plugin"
+        (external / ".claude-plugin").mkdir(parents=True)
+        (external / ".claude-plugin/plugin.json").write_text('{"name":"plugin1"}')
+        (marketplace_dir / "plugins").mkdir(parents=True)
+        (marketplace_dir / "plugins/plugin-source").symlink_to(external, target_is_directory=True)
+        (marketplace_dir / ".claude-plugin").mkdir()
+        (marketplace_dir / ".claude-plugin/marketplace.json").write_text(
+            '{"plugins":[{"name":"plugin1","source":"./plugins/plugin-source"}]}'
+        )
+        target = TargetConfig(
+            type="claude",
+            config=ClaudeTargetConfig(
+                marketplaces={
+                    "my-marketplace": MarketplaceConfig(
+                        source=PluginSource.LOCAL, path=str(marketplace_dir)
+                    )
+                },
+                plugins=(PluginConfig(id="plugin1@my-marketplace"),),
+                conversion=ConversionConfig(enabled=True, targets=("pi",)),
+            ),
+        )
+        installed = [
+            InstalledPlugin(
+                id="plugin1@my-marketplace",
+                version="1.0.0",
+                scope="user",
+                enabled=True,
+                install_path=str(tmp_path / "missing-cache"),
+            )
+        ]
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+        with (
+            patch(
+                "ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])
+            ),
+            patch(
+                "ai_config.operations.claude.list_installed_marketplaces",
+                return_value=(
+                    [
+                        InstalledMarketplace(
+                            name="my-marketplace",
+                            source=PluginSource.LOCAL,
+                            repo=str(marketplace_dir),
+                            install_location=str(marketplace_dir),
+                        )
+                    ],
+                    [],
+                ),
+            ),
+            patch(
+                "ai_config.sync_state.load_conversion_cache",
+                return_value={"version": 8, "entries": {}},
+            ),
+            patch("ai_config.sync_conversion.convert_plugin") as mock_convert,
+        ):
+            result = sync_target(target, force_convert=True)
+
+        assert not result.success
+        assert any("source" in error.lower() for error in result.errors)
+        mock_convert.assert_not_called()
 
     def test_sync_conversion_reports_missing_plugin_source(
         self,

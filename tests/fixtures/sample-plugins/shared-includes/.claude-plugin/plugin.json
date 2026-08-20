@@ -1,0 +1,7 @@
+{
+  "name": "shared-includes",
+  "version": "1.0.0",
+  "description": "Fixture for per-skill shared resource materialization",
+  "author": {"name": "ai-config tests"},
+  "skills": "./skills"
+}

@@ -105,11 +105,69 @@ targets:
 Reports classify each component independently as native, transform, emulate, fallback/degraded, or
 unsupported. One target's mapping never changes another target's report.
 
+## Shared skill resources
+
+Keep plugin-wide resources DRY and declare each exact consumer in its `SKILL.md`:
+
+```yaml
+---
+name: analyze
+description: Analyze data with the shared helper
+x-ai-config-includes:
+  - shared/analyze.py
+  - shared/schema.json
+---
+
+Run `${CLAUDE_PLUGIN_ROOT}/shared/analyze.py`.
+```
+
+Conversion captures each declared regular file once in IR and materializes byte-preserved copies
+inside that generated skill at these illustrative locations:
+
+```text
+_shared/shared/analyze.py
+_shared/shared/schema.json
+```
+
+Exact declared root references in instruction Markdown become skill-root-relative paths beneath the
+generated `_shared` directory.
+The generated `SKILL.md` omits `x-ai-config-includes`. If two skills consume the same source, each
+receives an independent regular-file copy; this intentional distribution-time duplication keeps every
+skill self-contained on Codex, Cursor, OpenCode, and Pi.
+
+V1 accepts exact plugin-root-relative files only. It rejects globs, directory or recursive declarations,
+absolute paths, empty/dot/dotdot components, backslashes, symlinks, hardlinks, special files, duplicate
+declarations, projected path collisions, and undeclared `${CLAUDE_PLUGIN_ROOT}` references. Declared
+transitive dependencies need no direct Markdown reference and are reported with a zero rewrite count,
+not as unused. Included scripts and binaries are byte-preserved and should locate siblings through
+language mechanisms such as `__file__`.
+
+Reports add one record per include and consumer with its plugin-relative logical source,
+target-relative destination, copy count, duplicated bytes, and direct rewrite count. Pi copies use the
+normal digest ownership ledger. Codex copies stay under the generated package root. Cursor and
+OpenCode write desired copies but do not delete removed copies because containment is not provenance.
+
+## Source safety
+
+Conversion reads manifests, component files, skill assets, includes, Codex support files, and
+target-native files through descriptor-relative, no-follow traversal rooted at one retained plugin
+source descriptor on POSIX. A platform without the required descriptor APIs fails closed before a
+source read rather than claiming equivalent race resistance. Absolute/traversing paths, final or
+in-root ancestor symlinks, resolved escapes,
+and non-regular files fail closed before bytes are read. Unsafe components may be isolated with
+`--best-effort`; unrelated safe components can continue. During sync, the cache digest covers every
+safely readable plugin file, including shared and target-native bytes, and is rechecked as an execution
+precondition. Standalone `convert` does not compute a digest, and the sync digest and later conversion
+reads are separate contained passes rather than one immutable filesystem snapshot.
+
 ## Target-native files
 
 Put hand-written files under `targets/<target>/`. They are copied into the target's natural output
-root and override a generated file at the same path. For Codex, the natural root is the generated
-plugin package—not shared `.codex` config.
+root and override a generated regular file at the exact same path. File/directory conflicts are
+rejected. Final generated skills are rechecked after overrides, so native files cannot reintroduce
+`x-ai-config-includes` or unresolved `${CLAUDE_PLUGIN_ROOT}` references. When an override replaces
+`SKILL.md` or an included `_shared` copy, report evidence describes only the final emitted projection.
+For Codex, the natural root is the generated plugin package—not shared `.codex` config.
 
 ## Options
 
@@ -146,7 +204,8 @@ Every Codex subprocess has a finite timeout. On POSIX, each command starts in a 
 group; after a bounded SIGTERM grace period, timeout cleanup inspects and kills any remaining group
 even when the direct child exited first, then performs a bounded reap of the direct child. Non-POSIX
 platforms receive direct-child timeout cleanup only; ai-config 0.6.0 does not claim descendant
-cleanup there. The adapter accepts only the validated Codex 0.144.x and 0.145.x JSON contracts:
-malformed, partial, duplicate, inconsistent, or unknown version responses fail closed. Lifecycle
+cleanup there. The adapter accepts the repository-supported Codex 0.144.x through 0.149.x JSON
+contracts. Runtime probe evidence in the compatibility baseline currently extends through 0.149.0.
+Malformed, partial, duplicate, inconsistent, or unknown version responses fail closed. Lifecycle
 failures retain ownership for retry, sanitize child output, name the exact stage and command,
 include remediation, and report completed and failed actions.

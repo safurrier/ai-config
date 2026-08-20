@@ -10,7 +10,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ai_config.source_safety import normalize_source_relative
 
 
 class TargetTool(str, Enum):
@@ -111,6 +113,30 @@ class BinaryFile(BaseModel):
 AnyFile = TextFile | BinaryFile
 
 
+class SkillInclude(BaseModel):
+    """Immutable plugin-root file captured for one generated skill."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_relative_path: str
+    content: bytes
+    executable: bool = False
+
+    @field_validator("source_relative_path")
+    @classmethod
+    def validate_source_relative_path(cls, value: str) -> str:
+        """Require a canonical safe plugin-relative path in direct IR construction."""
+        normalized = normalize_source_relative(value, context="skill include").as_posix()
+        if normalized != value:
+            raise ValueError(f"skill include path must be canonical: {value!r}")
+        return normalized
+
+    @property
+    def projected_path(self) -> str:
+        """Derive the reserved per-skill projection path from the safe source path."""
+        return f"_shared/{self.source_relative_path}"
+
+
 # --- Component Types ---
 
 
@@ -123,6 +149,7 @@ class Skill(BaseModel):
     scope_hint: InstallScope = InstallScope.USER
     entrypoint: str = "SKILL.md"
     files: list[AnyFile] = Field(default_factory=list)
+    includes: tuple[SkillInclude, ...] = ()
 
     # Claude-specific fields that may not convert
     allowed_tools: list[str] | None = None

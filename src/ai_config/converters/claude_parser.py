@@ -9,7 +9,7 @@ import base64
 import hashlib
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -30,8 +30,11 @@ from ai_config.converters.ir import (
     PluginIR,
     Severity,
     Skill,
+    SkillInclude,
     TextFile,
 )
+from ai_config.converters.skill_projection import project_skill
+from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
 
 
 def normalize_portable_name(value: str, fallback_prefix: str, max_len: int | None = None) -> str:
@@ -53,20 +56,40 @@ class ClaudePluginParser:
     """Parses Claude Code plugins into IR format."""
 
     def __init__(self, plugin_path: Path) -> None:
-        self.plugin_path = plugin_path.resolve()
+        self.plugin_path = plugin_path.expanduser().absolute()
         self.diagnostics: list[Diagnostic] = []
+        self.source: ContainedSource | None = None
 
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
-        # Find and parse plugin.json
+        try:
+            source = ContainedSource(self.plugin_path)
+        except SourceSafetyError as error:
+            return self._error_ir(f"Could not find plugin.json manifest: {error}")
+        with source:
+            self.source = source
+            self.plugin_path = source.root
+            try:
+                return self._parse_open_source()
+            finally:
+                self.source = None
+
+    def _parse_open_source(self) -> PluginIR:
+        """Parse while the source authority's root descriptor is retained."""
+        assert self.source is not None
         manifest_path = self._find_manifest()
         if not manifest_path:
             return self._error_ir("Could not find plugin.json manifest")
 
         try:
-            manifest = json.loads(manifest_path.read_text())
-        except json.JSONDecodeError as e:
+            manifest_bytes = self.source.read_file(manifest_path, context="manifest").content
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
             return self._error_ir(f"Invalid JSON in plugin.json: {e}")
+        except SourceSafetyError as error:
+            return self._error_ir(str(error))
+        if not isinstance(manifest, dict):
+            return self._error_ir("plugin.json manifest must contain a JSON object")
 
         # Extract identity
         identity = self._parse_identity(manifest)
@@ -88,7 +111,11 @@ class ClaudePluginParser:
         self._parse_mcp_servers(ir, manifest)
         self._parse_lsp_servers(ir, manifest)
         self._diagnose_known_unparsed_fields(ir, manifest)
-
+        # Pydantic copies the diagnostic list passed at construction; publish
+        # component-scoped diagnostics accumulated during the complete parse.
+        ir.diagnostics = list(self.diagnostics) + [
+            item for item in ir.diagnostics if item not in self.diagnostics
+        ]
         return ir
 
     def _diagnose_known_unparsed_fields(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
@@ -109,23 +136,32 @@ class ClaudePluginParser:
                     )
                 )
 
-    def _find_manifest(self) -> Path | None:
-        """Find plugin.json in standard locations."""
-        # Standard: .claude-plugin/plugin.json
-        standard = self.plugin_path / ".claude-plugin" / "plugin.json"
-        if standard.exists():
-            return standard
+    def _find_manifest(self) -> PurePosixPath | None:
+        """Find plugin.json in standard locations without following links."""
+        assert self.source is not None
+        standard = PurePosixPath(".claude-plugin/plugin.json")
+        try:
+            if self.source.kind(standard, context="manifest") == "file":
+                return standard
+        except SourceMissingError:
+            pass
+        except SourceSafetyError as error:
+            self._add_diagnostic(Severity.ERROR, str(error), component_ref="manifest:plugin.json")
+            return None
 
-        # Alternative: plugin.json at root
-        root = self.plugin_path / "plugin.json"
-        if root.exists():
-            self._add_diagnostic(
-                Severity.WARN,
-                "plugin.json found at root instead of .claude-plugin/",
-                source_path=root,
-            )
-            return root
-
+        root = PurePosixPath("plugin.json")
+        try:
+            if self.source.kind(root, context="manifest") == "file":
+                self._add_diagnostic(
+                    Severity.WARN,
+                    "plugin.json found at root instead of .claude-plugin/",
+                    source_path=self.plugin_path / "plugin.json",
+                )
+                return root
+        except SourceMissingError:
+            pass
+        except SourceSafetyError as error:
+            self._add_diagnostic(Severity.ERROR, str(error), component_ref="manifest:plugin.json")
         return None
 
     def _parse_identity(self, manifest: dict[str, Any]) -> PluginIdentity | None:
@@ -158,69 +194,100 @@ class ClaudePluginParser:
             )
             return None
 
-    def _resolve_paths(self, manifest: dict[str, Any], key: str) -> list[Path]:
-        """Resolve component paths from manifest."""
+    def _resolve_paths(self, manifest: dict[str, Any], key: str) -> list[PurePosixPath]:
+        """Resolve component paths through the contained-source authority."""
+        assert self.source is not None
         value = manifest.get(key)
-        if not value:
-            # Check default directory
-            default_dir = self.plugin_path / key
-            if default_dir.is_dir():
-                return [default_dir]
+        if value is None or value == "" or value == []:
+            default = PurePosixPath(key)
+            try:
+                return [default] if self.source.kind(default, context=key) == "directory" else []
+            except SourceMissingError:
+                return []
+            except SourceSafetyError as error:
+                self._add_diagnostic(Severity.ERROR, str(error), component_ref=f"{key}:{key}")
+                return []
+
+        raw_paths = (
+            [value] if isinstance(value, str) else value if isinstance(value, list) else None
+        )
+        if raw_paths is None:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Manifest field '{key}' must be a string or list of strings",
+                component_ref=f"manifest:{key}",
+            )
             return []
 
-        if isinstance(value, str):
-            paths = [value]
-        elif isinstance(value, list):
-            paths = value
-        else:
-            return []
-
-        resolved = []
-        for p in paths:
-            # Handle relative paths (./path)
-            if p.startswith("./"):
-                p = p[2:]
-            full_path = self.plugin_path / p
-            if full_path.exists():
-                resolved.append(full_path)
-            else:
+        resolved: list[PurePosixPath] = []
+        for raw in raw_paths:
+            try:
+                relative = self.source.relative(raw, context=key)
+                self.source.kind(relative, context=key)
+            except SourceMissingError:
                 self._add_diagnostic(
                     Severity.WARN,
-                    f"Path does not exist: {p}",
-                    component_ref=f"{key}:{p}",
+                    f"Path does not exist: {raw}",
+                    component_ref=f"{key}:{raw}",
                 )
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR,
+                    str(error),
+                    component_ref=f"{key}:{raw!r}",
+                )
+            else:
+                resolved.append(relative)
         return resolved
 
     def _parse_skills(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
-        """Parse skill directories.
+        """Parse every safely contained SKILL.md below configured skill roots."""
+        assert self.source is not None
+        for skill_path in self._resolve_paths(manifest, "skills"):
+            try:
+                kind = self.source.kind(skill_path, context="skills")
+                if kind == "file":
+                    candidates = [skill_path] if skill_path.name == "SKILL.md" else []
+                    scan_errors: list[str] = []
+                else:
+                    scanned, scan_errors = self.source.scan_files(skill_path, context="skills")
+                    candidates = [item for item in scanned if item.name == "SKILL.md"]
+                for error in scan_errors:
+                    self._add_diagnostic(
+                        Severity.ERROR, error, component_ref=f"skills:{skill_path}"
+                    )
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR, str(error), component_ref=f"skills:{skill_path}"
+                )
+                continue
+            for skill_md in candidates:
+                skill = self._parse_skill(skill_md.parent, skill_md)
+                if skill:
+                    ir.components.append(skill)
 
-        Recursively searches for SKILL.md files at any depth.
-        Supports nested directory structures like:
-            skills/category/my-skill/SKILL.md
-            skills/my-skill/SKILL.md
-            skills/SKILL.md
-        """
-        skill_paths = self._resolve_paths(manifest, "skills")
-
-        for skill_path in skill_paths:
-            if skill_path.is_dir():
-                # Recursively find all SKILL.md files
-                for skill_md in skill_path.rglob("SKILL.md"):
-                    skill_dir = skill_md.parent
-                    skill = self._parse_skill(skill_dir, skill_md)
-                    if skill:
-                        ir.components.append(skill)
-
-    def _parse_skill(self, skill_dir: Path, skill_md: Path) -> Skill | None:
-        """Parse a single SKILL.md file."""
-        content = skill_md.read_text()
-        frontmatter, body = self._split_frontmatter(content)
+    def _parse_skill(self, skill_dir: PurePosixPath, skill_md: PurePosixPath) -> Skill | None:
+        """Parse one skill and capture all bytes it can emit."""
+        assert self.source is not None
+        try:
+            content = self.source.read_file(
+                skill_md, context=f"skill:{skill_dir.name}"
+            ).content.decode("utf-8")
+        except (SourceSafetyError, UnicodeDecodeError) as error:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Unsafe or non-text SKILL.md: {error}",
+                component_ref=f"skill:{skill_dir.name}",
+                source_path=self.plugin_path / skill_md,
+            )
+            return None
+        frontmatter, _body = self._split_frontmatter(content)
 
         if not frontmatter:
             self._add_diagnostic(
                 Severity.ERROR,
                 "SKILL.md missing YAML frontmatter",
-                source_path=skill_md,
+                source_path=self.plugin_path / skill_md,
             )
             return None
 
@@ -230,11 +297,26 @@ class ClaudePluginParser:
             self._add_diagnostic(
                 Severity.ERROR,
                 f"Invalid YAML frontmatter: {e}",
-                source_path=skill_md,
+                source_path=self.plugin_path / skill_md,
+            )
+            return None
+        if not isinstance(meta, dict):
+            self._add_diagnostic(
+                Severity.ERROR,
+                "SKILL.md frontmatter must be a mapping",
+                source_path=self.plugin_path / skill_md,
             )
             return None
 
         raw_name = meta.get("name", skill_dir.name)
+        if not isinstance(raw_name, str):
+            self._add_diagnostic(
+                Severity.ERROR,
+                "Skill name must be a string",
+                component_ref=f"skill:{skill_dir.name}",
+                source_path=self.plugin_path / skill_md,
+            )
+            return None
         description = meta.get("description")
         name = self._slugify(raw_name, "skill", max_len=64)
         if name != raw_name:
@@ -242,38 +324,51 @@ class ClaudePluginParser:
                 Severity.WARN,
                 f"Normalized skill name '{raw_name}' → '{name}' for portability",
                 component_ref=f"skill:{raw_name}",
-                source_path=skill_md,
+                source_path=self.plugin_path / skill_md,
             )
 
-        # Collect all files in the skill directory
         files: list[TextFile | BinaryFile] = []
-        for file_path in skill_dir.rglob("*"):
-            if file_path.is_file():
-                relpath = str(file_path.relative_to(skill_dir))
+        try:
+            skill_files = list(self.source.walk_files(skill_dir, context=f"skill:{name}"))
+            for source_path in skill_files:
+                source_file = self.source.read_file(source_path, context=f"skill:{name}")
+                relpath = source_path.relative_to(skill_dir).as_posix()
                 try:
-                    content = file_path.read_text()
-                    files.append(
-                        TextFile(
-                            relpath=relpath,
-                            content=content,
-                            executable=file_path.stat().st_mode & 0o111 != 0,
-                        )
-                    )
+                    text = source_file.content.decode("utf-8")
                 except UnicodeDecodeError:
-                    content_b64 = base64.b64encode(file_path.read_bytes()).decode("ascii")
                     files.append(
                         BinaryFile(
                             relpath=relpath,
-                            content_b64=content_b64,
-                            executable=file_path.stat().st_mode & 0o111 != 0,
+                            content_b64=base64.b64encode(source_file.content).decode("ascii"),
+                            executable=source_file.executable,
                         )
                     )
+                else:
+                    files.append(
+                        TextFile(
+                            relpath=relpath,
+                            content=text,
+                            executable=source_file.executable,
+                        )
+                    )
+            includes = self._parse_skill_includes(meta, name)
+        except SourceSafetyError as error:
+            self._add_diagnostic(
+                Severity.ERROR,
+                str(error),
+                component_ref=f"skill:{name}",
+                source_path=self.plugin_path / skill_md,
+            )
+            return None
+        if includes is None:
+            return None
 
         try:
-            return Skill(
+            skill = Skill(
                 name=name,
                 description=description,
                 files=files,
+                includes=includes,
                 allowed_tools=self._parse_allowed_tools(meta.get("allowed-tools")),
                 model=meta.get("model"),
                 context=meta.get("context"),
@@ -286,9 +381,71 @@ class ClaudePluginParser:
                 Severity.ERROR,
                 f"Invalid skill definition: {e}",
                 component_ref=f"skill:{raw_name}",
-                source_path=skill_md,
+                source_path=self.plugin_path / skill_md,
             )
             return None
+
+        # Run the target-neutral projection as a parser-time invariant check.
+        projection = project_skill(skill, content)
+        if projection.errors:
+            for error in projection.errors:
+                self._add_diagnostic(
+                    Severity.ERROR,
+                    error,
+                    component_ref=f"skill:{name}",
+                    source_path=self.plugin_path / skill_md,
+                )
+            return None
+        return skill
+
+    def _parse_skill_includes(
+        self, meta: dict[str, Any], skill_name: str
+    ) -> tuple[SkillInclude, ...] | None:
+        """Parse exact plugin-relative regular files from skill build metadata."""
+        assert self.source is not None
+        raw = meta.get("x-ai-config-includes")
+        if raw is None:
+            return ()
+        if not isinstance(raw, list):
+            self._add_diagnostic(
+                Severity.ERROR,
+                "x-ai-config-includes must be a list of exact path strings",
+                component_ref=f"skill:{skill_name}",
+            )
+            return None
+        includes: list[SkillInclude] = []
+        seen: set[str] = set()
+        for value in raw:
+            try:
+                if isinstance(value, str) and value.startswith("./"):
+                    raise SourceSafetyError(
+                        f"skill:{skill_name} include path contains a dot component: {value!r}"
+                    )
+                relative = self.source.relative(value, context=f"skill:{skill_name} include")
+                logical = relative.as_posix()
+                if logical in seen:
+                    raise SourceSafetyError(f"duplicate include declaration: {logical}")
+                seen.add(logical)
+                source_file = self.source.read_file(
+                    relative,
+                    context=f"skill:{skill_name} include",
+                    reject_hardlinks=True,
+                )
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR,
+                    str(error),
+                    component_ref=f"skill:{skill_name}",
+                )
+                return None
+            includes.append(
+                SkillInclude(
+                    source_relative_path=logical,
+                    content=source_file.content,
+                    executable=source_file.executable,
+                )
+            )
+        return tuple(includes)
 
     def _slugify(self, value: str, fallback_prefix: str, max_len: int | None = None) -> str:
         """Normalize names to lowercase kebab-case with safe fallback."""
@@ -306,23 +463,43 @@ class ClaudePluginParser:
         return None
 
     def _parse_commands(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
-        """Parse command files."""
-        cmd_paths = self._resolve_paths(manifest, "commands")
+        """Parse safely contained command files."""
+        assert self.source is not None
+        for cmd_path in self._resolve_paths(manifest, "commands"):
+            try:
+                kind = self.source.kind(cmd_path, context="commands")
+                if kind == "file":
+                    files = [cmd_path]
+                    scan_errors: list[str] = []
+                else:
+                    scanned, scan_errors = self.source.scan_files(cmd_path, context="commands")
+                    files = [item for item in scanned if item.parent == cmd_path]
+                for error in scan_errors:
+                    self._add_diagnostic(
+                        Severity.ERROR, error, component_ref=f"commands:{cmd_path}"
+                    )
+                for md_file in files:
+                    if md_file.suffix == ".md":
+                        cmd = self._parse_command(md_file)
+                        if cmd:
+                            ir.components.append(cmd)
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR, str(error), component_ref=f"commands:{cmd_path}"
+                )
 
-        for cmd_path in cmd_paths:
-            if cmd_path.is_file() and cmd_path.suffix == ".md":
-                cmd = self._parse_command(cmd_path)
-                if cmd:
-                    ir.components.append(cmd)
-            elif cmd_path.is_dir():
-                for md_file in cmd_path.glob("*.md"):
-                    cmd = self._parse_command(md_file)
-                    if cmd:
-                        ir.components.append(cmd)
-
-    def _parse_command(self, cmd_path: Path) -> Command | None:
+    def _parse_command(self, cmd_path: PurePosixPath) -> Command | None:
         """Parse a single command markdown file."""
-        content = cmd_path.read_text()
+        assert self.source is not None
+        try:
+            content = self.source.read_file(
+                cmd_path, context=f"command:{cmd_path.stem}"
+            ).content.decode("utf-8")
+        except (SourceSafetyError, UnicodeDecodeError) as error:
+            self._add_diagnostic(
+                Severity.ERROR, str(error), component_ref=f"command:{cmd_path.stem}"
+            )
+            return None
         frontmatter, body = self._split_frontmatter(content)
 
         meta = {}
@@ -349,23 +526,43 @@ class ClaudePluginParser:
         )
 
     def _parse_agents(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
-        """Parse agent definition files."""
-        agent_paths = self._resolve_paths(manifest, "agents")
+        """Parse safely contained agent definition files."""
+        assert self.source is not None
+        for agent_path in self._resolve_paths(manifest, "agents"):
+            try:
+                kind = self.source.kind(agent_path, context="agents")
+                if kind == "file":
+                    files = [agent_path]
+                    scan_errors: list[str] = []
+                else:
+                    scanned, scan_errors = self.source.scan_files(agent_path, context="agents")
+                    files = [item for item in scanned if item.parent == agent_path]
+                for error in scan_errors:
+                    self._add_diagnostic(
+                        Severity.ERROR, error, component_ref=f"agents:{agent_path}"
+                    )
+                for md_file in files:
+                    if md_file.suffix == ".md":
+                        agent = self._parse_agent(md_file)
+                        if agent:
+                            ir.components.append(agent)
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR, str(error), component_ref=f"agents:{agent_path}"
+                )
 
-        for agent_path in agent_paths:
-            if agent_path.is_file() and agent_path.suffix == ".md":
-                agent = self._parse_agent(agent_path)
-                if agent:
-                    ir.components.append(agent)
-            elif agent_path.is_dir():
-                for md_file in agent_path.glob("*.md"):
-                    agent = self._parse_agent(md_file)
-                    if agent:
-                        ir.components.append(agent)
-
-    def _parse_agent(self, agent_path: Path) -> Agent | None:
+    def _parse_agent(self, agent_path: PurePosixPath) -> Agent | None:
         """Parse a single agent markdown file."""
-        content = agent_path.read_text()
+        assert self.source is not None
+        try:
+            content = self.source.read_file(
+                agent_path, context=f"agent:{agent_path.stem}"
+            ).content.decode("utf-8")
+        except (SourceSafetyError, UnicodeDecodeError) as error:
+            self._add_diagnostic(
+                Severity.ERROR, str(error), component_ref=f"agent:{agent_path.stem}"
+            )
+            return None
         frontmatter, body = self._split_frontmatter(content)
 
         meta = {}
@@ -383,38 +580,68 @@ class ClaudePluginParser:
             capabilities=meta.get("capabilities", []),
         )
 
+    def _load_json_component(
+        self,
+        value: Any,
+        *,
+        default_path: str,
+        context: str,
+    ) -> dict[str, Any] | None:
+        """Load an inline object or one safe plugin-relative JSON file."""
+        assert self.source is not None
+        if value is None or value == "":
+            try:
+                relative = self.source.relative(default_path, context=context)
+                source_file = self.source.read_file(relative, context=context)
+            except SourceMissingError:
+                return None
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR, str(error), component_ref=f"{context}:{default_path}"
+                )
+                return None
+        elif isinstance(value, str):
+            try:
+                relative = self.source.relative(value, context=context)
+                source_file = self.source.read_file(relative, context=context)
+            except SourceSafetyError as error:
+                self._add_diagnostic(
+                    Severity.ERROR, str(error), component_ref=f"{context}:{value!r}"
+                )
+                return None
+        elif isinstance(value, dict):
+            return value
+        else:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Manifest field '{context}' must be a path string or object",
+                component_ref=f"manifest:{context}",
+            )
+            return None
+        try:
+            parsed = json.loads(source_file.content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"Invalid JSON in {context} config: {error}",
+                component_ref=f"{context}:{relative}",
+            )
+            return None
+        if not isinstance(parsed, dict):
+            self._add_diagnostic(
+                Severity.ERROR,
+                f"{context} config must contain a JSON object",
+                component_ref=f"{context}:{relative}",
+            )
+            return None
+        return parsed
+
     def _parse_hooks(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
         """Parse hooks configuration."""
-        hooks_value = manifest.get("hooks")
-        if not hooks_value:
-            # Check default location
-            default_hooks = self.plugin_path / "hooks" / "hooks.json"
-            if default_hooks.exists():
-                hooks_value = str(default_hooks.relative_to(self.plugin_path))
-            else:
-                return
-
-        # Load hooks config
-        if isinstance(hooks_value, str):
-            # Handle ./ prefix carefully
-            clean_path = hooks_value
-            if clean_path.startswith("./"):
-                clean_path = clean_path[2:]
-            hooks_path = self.plugin_path / clean_path
-            if not hooks_path.exists():
-                return
-            try:
-                hooks_config = json.loads(hooks_path.read_text())
-            except json.JSONDecodeError as e:
-                self._add_diagnostic(
-                    Severity.ERROR,
-                    f"Invalid JSON in hooks config: {e}",
-                    source_path=hooks_path,
-                )
-                return
-        elif isinstance(hooks_value, dict):
-            hooks_config = hooks_value
-        else:
+        hooks_config = self._load_json_component(
+            manifest.get("hooks"), default_path="hooks/hooks.json", context="hooks"
+        )
+        if hooks_config is None:
             return
 
         # Parse hooks
@@ -455,36 +682,10 @@ class ClaudePluginParser:
 
     def _parse_mcp_servers(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
         """Parse MCP server configuration."""
-        mcp_value = manifest.get("mcpServers")
-        if not mcp_value:
-            # Check default location
-            default_mcp = self.plugin_path / ".mcp.json"
-            if default_mcp.exists():
-                mcp_value = ".mcp.json"
-            else:
-                return
-
-        # Load MCP config
-        if isinstance(mcp_value, str):
-            # Handle ./ prefix carefully - don't strip the leading dot from filenames
-            clean_path = mcp_value
-            if clean_path.startswith("./"):
-                clean_path = clean_path[2:]
-            mcp_path = self.plugin_path / clean_path
-            if not mcp_path.exists():
-                return
-            try:
-                mcp_config = json.loads(mcp_path.read_text())
-            except json.JSONDecodeError as e:
-                self._add_diagnostic(
-                    Severity.ERROR,
-                    f"Invalid JSON in MCP config: {e}",
-                    source_path=mcp_path,
-                )
-                return
-        elif isinstance(mcp_value, dict):
-            mcp_config = mcp_value
-        else:
+        mcp_config = self._load_json_component(
+            manifest.get("mcpServers"), default_path=".mcp.json", context="mcpServers"
+        )
+        if mcp_config is None:
             return
 
         # Parse servers
@@ -513,36 +714,10 @@ class ClaudePluginParser:
 
     def _parse_lsp_servers(self, ir: PluginIR, manifest: dict[str, Any]) -> None:
         """Parse LSP server configuration."""
-        lsp_value = manifest.get("lspServers")
-        if not lsp_value:
-            # Check default location
-            default_lsp = self.plugin_path / ".lsp.json"
-            if default_lsp.exists():
-                lsp_value = ".lsp.json"
-            else:
-                return
-
-        # Load LSP config
-        if isinstance(lsp_value, str):
-            # Handle ./ prefix carefully - don't strip the leading dot from filenames
-            clean_path = lsp_value
-            if clean_path.startswith("./"):
-                clean_path = clean_path[2:]
-            lsp_path = self.plugin_path / clean_path
-            if not lsp_path.exists():
-                return
-            try:
-                lsp_config = json.loads(lsp_path.read_text())
-            except json.JSONDecodeError as e:
-                self._add_diagnostic(
-                    Severity.ERROR,
-                    f"Invalid JSON in LSP config: {e}",
-                    source_path=lsp_path,
-                )
-                return
-        elif isinstance(lsp_value, dict):
-            lsp_config = lsp_value
-        else:
+        lsp_config = self._load_json_component(
+            manifest.get("lspServers"), default_path=".lsp.json", context="lspServers"
+        )
+        if lsp_config is None:
             return
 
         # Parse servers
@@ -597,9 +772,12 @@ class ClaudePluginParser:
 
     def _error_ir(self, message: str) -> PluginIR:
         """Create an error IR with no components."""
+        diagnostics = list(self.diagnostics)
+        diagnostics.append(Diagnostic(severity=Severity.ERROR, message=message))
         return PluginIR(
             identity=PluginIdentity(plugin_id="error", name="error"),
-            diagnostics=[Diagnostic(severity=Severity.ERROR, message=message)],
+            diagnostics=diagnostics,
+            source_path=self.plugin_path,
         )
 
 

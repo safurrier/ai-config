@@ -18,6 +18,7 @@ else:
 from ai_config.converters.codex_package import CODEX_OUTPUT_ROOT
 from ai_config.semver import SemanticVersion
 from ai_config.validators.base import ValidationResult
+from ai_config.validators.target.skill_invariants import generated_skill_invariant_errors
 
 VALID_CODEX_HOOK_EVENTS = {
     "SessionStart",
@@ -165,6 +166,9 @@ class CodexOutputValidator:
             ]
         if not isinstance(description, str) or not description.strip():
             return [self._result(check, "fail", f"Skill '{name}' needs a description")]
+        invariant_errors = generated_skill_invariant_errors(skill_dir, metadata)
+        if invariant_errors:
+            return [self._result(check, "fail", message) for message in invariant_errors]
         return [self._result(check, "pass", f"Package skill '{name}' is valid")]
 
     def _package_reference(self, package_root: Path, reference: str) -> Path | None:

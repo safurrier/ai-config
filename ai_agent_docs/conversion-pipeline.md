@@ -44,21 +44,42 @@ Unavailable configured sources are represented separately from resolved sources.
 materialized as a reported (non-blocking) conversion error, so earlier independent marketplace and
 plugin actions retain historical progress while conversion mutation is skipped and prior proven-owned
 state is retained. Disabled or removed sources can request cleanup only through the existing Codex or
-Pi ownership ledgers. Cache and ownership formats are unchanged.
+Pi ownership ledgers. Cache version 8 invalidates content entries while preserving validated tracked
+Codex and Pi output roots so cleanup can still discover prior custom roots; ownership formats are
+unchanged.
 
 ## Plugin conversion
 
 ai-config converts Claude plugins through a target-independent IR:
 
 ```text
-Claude plugin directory -> ClaudePluginParser -> PluginIR -> target emitter -> EmitResult/report
+Claude plugin directory -> contained source reader -> ClaudePluginParser -> PluginIR
+                        -> pure skill projection -> target emitter -> EmitResult/report
 ```
 
 ## Ownership boundaries
 
 `PluginIR` carries identity, skills, commands, hooks, MCP servers, agents, LSP servers, source paths,
-and diagnostics. Emitters do not mutate the IR. Each target owns an independent `EmitResult`,
-component mappings, diagnostics, and output paths.
+and diagnostics. Skill include records are immutable and contain the plugin-relative source path,
+canonically derived projected `_shared/` path, captured bytes, and executable mode. Rewrite counts and
+duplication bytes belong to projection/report evidence rather than IR. Emitters do not mutate the IR
+or reopen include sources. Each target owns an independent `EmitResult`, component mappings,
+diagnostics, and output paths.
+
+`source_safety.py` is the canonical authority for conversion source reads. It validates portable
+plugin-relative paths, rejects final and in-root ancestor symlinks, traversal, special files, and
+resolved escape before reading. Manifests, components, skill assets, includes, Codex support files,
+and target-native files use this descriptor-relative, no-follow boundary. `compute_plugin_hash()`
+walks the same fail-closed source universe. Sync rehashes that universe before conversion as a stale
+plan precondition, but digesting and conversion remain separate contained passes. Standalone
+`convert` does not compute a digest. Cache version 8 invalidates older content signatures while
+preserving validated tracked Codex and Pi output roots.
+
+`skill_projection.py` is pure and shared by all four emitters. It rewrites only exact declared
+`${CLAUDE_PLUGIN_ROOT}/<path>` occurrences in instruction Markdown, always to a skill-root-relative
+`_shared/<path>` even when the Markdown is nested. It copies captured bytes into each consumer,
+blocks remaining undeclared placeholders and projected collisions, and returns additive per-copy
+evidence. A zero direct rewrite count is valid for a transitive dependency.
 
 | Emitter | Primary output | Shared-state behavior |
 |---|---|---|
@@ -67,9 +88,12 @@ component mappings, diagnostics, and output paths.
 | `OpenCodeEmitter` | `.opencode/`, `opencode.json`, `opencode.lsp.json` | writes target files |
 | `PiEmitter` | project `.pi/` or user `.pi/agent/` | writes target files/extensions |
 
-`EmitResult` contains emitted files, independent component mappings, diagnostics, and proven-owned
-cleanup paths. `write_to()` removes only explicit owned cleanup paths before writing. Target-native
-files under `targets/<target>/` override generated files at the target's natural root.
+`EmitResult` contains emitted files, independent component mappings, diagnostics, additive include
+evidence, and proven-owned cleanup paths. `write_to()` removes only explicit owned cleanup paths
+before writing. Target-native files under `targets/<target>/` override generated files at the target's
+natural root. Pi's normal desired-file ledger owns included copies. Codex keeps them under its owned
+package. Cursor and OpenCode do not add cleanup paths for removed includes because they have no
+provenance ledger.
 
 ## Codex package and lifecycle seam
 

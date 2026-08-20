@@ -8,24 +8,66 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 from ai_config.adapters import claude
 from ai_config.converters.codex_package import CodexPackageSpec
 from ai_config.pi_ownership import load_pi_ownership
+from ai_config.source_safety import ContainedSource, SourceSafetyError
 from ai_config.types import ClaudeTargetConfig, ConversionConfig, PluginConfig, PluginSource
 
-_CONVERSION_CACHE_VERSION = 7
+_CONVERSION_CACHE_VERSION = 8
 
 
 def conversion_cache_path() -> Path:
     return Path.home() / ".ai-config" / "cache" / "conversion-hashes.json"
 
 
+def _validated_cached_output_dirs(raw: dict, key: str, cache_path: Path) -> list[str]:
+    """Return canonical absolute cached roots or reject the whole cache fail-closed."""
+    value = raw.get(key, [])
+    label = "Codex" if key == "codex_output_dirs" else "Pi"
+    message = f"Invalid conversion cache {label} output roots at {cache_path}; clear it and retry"
+    if not isinstance(value, list):
+        raise ValueError(message)
+
+    resolved: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item or "\0" in item:
+            raise ValueError(message)
+        try:
+            expanded = Path(item).expanduser()
+            if not expanded.is_absolute():
+                raise ValueError("output root is not absolute")
+            canonical = expanded.resolve()
+            cursor = Path(canonical.anchor)
+            for part in canonical.parts[1:]:
+                cursor /= part
+                try:
+                    if stat.S_ISLNK(cursor.lstat().st_mode):
+                        raise ValueError("output root contains an unresolved symlink")
+                except FileNotFoundError:
+                    break
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueError(message) from error
+        if not canonical.is_absolute():
+            raise ValueError(message)
+        resolved.add(str(canonical))
+    return sorted(resolved)
+
+
 def load_conversion_cache() -> dict:
     cache_path = conversion_cache_path()
+    empty = {
+        "version": _CONVERSION_CACHE_VERSION,
+        "entries": {},
+        "codex_output_dirs": [],
+        "pi_output_dirs": [],
+    }
     if not cache_path.exists():
-        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}, "codex_output_dirs": []}
+        return empty
     try:
         raw = json.loads(cache_path.read_text())
     except (OSError, json.JSONDecodeError) as error:
@@ -34,24 +76,22 @@ def load_conversion_cache() -> dict:
         ) from error
     if not isinstance(raw, dict):
         raise ValueError(f"Invalid conversion cache object at {cache_path}; clear it and retry")
+    codex_dirs = _validated_cached_output_dirs(raw, "codex_output_dirs", cache_path)
+    pi_dirs = _validated_cached_output_dirs(raw, "pi_output_dirs", cache_path)
+    if raw.get("version") == 7:
+        # Content hashes changed in v8, but ownership cleanup still needs prior custom roots.
+        return {
+            "version": _CONVERSION_CACHE_VERSION,
+            "entries": {},
+            "codex_output_dirs": codex_dirs,
+            "pi_output_dirs": pi_dirs,
+        }
     if raw.get("version") != _CONVERSION_CACHE_VERSION:
-        return {"version": _CONVERSION_CACHE_VERSION, "entries": {}, "codex_output_dirs": []}
+        return empty
     if not isinstance(raw.get("entries"), dict):
         raise ValueError(f"Invalid conversion cache entries at {cache_path}; clear it and retry")
-    output_dirs = raw.get("codex_output_dirs")
-    if not isinstance(output_dirs, list) or any(
-        not isinstance(output_dir, str) or not output_dir for output_dir in output_dirs
-    ):
-        raise ValueError(
-            f"Invalid conversion cache Codex output roots at {cache_path}; clear it and retry"
-        )
-    pi_dirs = raw.get("pi_output_dirs", [])
-    if not isinstance(pi_dirs, list) or any(
-        not isinstance(item, str) or not item for item in pi_dirs
-    ):
-        raise ValueError(
-            f"Invalid conversion cache Pi output roots at {cache_path}; clear the cache and retry"
-        )
+    raw["codex_output_dirs"] = codex_dirs
+    raw["pi_output_dirs"] = pi_dirs
     return raw
 
 
@@ -73,23 +113,32 @@ def conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str:
 
 
 def compute_plugin_hash(plugin_path: Path) -> str | None:
-    if not plugin_path.is_dir():
-        return None
+    """Hash every safely readable plugin byte, failing closed on unsafe entries."""
     hasher = hashlib.sha256()
     try:
-        for file_path in sorted(plugin_path.rglob("*")):
-            if not file_path.is_file() or file_path.is_symlink():
-                continue
-            relpath = file_path.relative_to(plugin_path).as_posix()
-            hasher.update(relpath.encode("utf-8"))
-            hasher.update(b"\0")
-            hasher.update(b"x" if file_path.stat().st_mode & 0o111 else b"-")
-            data = file_path.read_bytes()
-            hasher.update(len(data).to_bytes(8, "big"))
-            hasher.update(data)
+        with ContainedSource(plugin_path) as source:
+            for relative in source.walk_all_files(context="plugin hash"):
+                item = source.read_file(relative, context="plugin hash")
+                hasher.update(os.fsencode(relative.as_posix()))
+                hasher.update(b"\0")
+                hasher.update(b"x" if item.executable else b"-")
+                hasher.update(len(item.content).to_bytes(8, "big"))
+                hasher.update(item.content)
         return hasher.hexdigest()
-    except OSError:
+    except (OSError, SourceSafetyError, UnicodeError):
         return None
+
+
+def _lexical_regular_directory(path: Path) -> Path | None:
+    """Return an absolute lexical directory path, rejecting a symlink at the selection root."""
+    try:
+        selected = path.expanduser().absolute()
+        selected_stat = selected.lstat()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if stat.S_ISLNK(selected_stat.st_mode) or not stat.S_ISDIR(selected_stat.st_mode):
+        return None
+    return selected
 
 
 def resolve_local_marketplace_plugin_path(marketplace_root: Path, plugin_name: str) -> Path | None:
@@ -101,7 +150,7 @@ def resolve_local_marketplace_plugin_path(marketplace_root: Path, plugin_name: s
             continue
         try:
             manifest = json.loads(manifest_path.read_text())
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError):
             continue
         plugins = manifest.get("plugins", [])
         if not isinstance(plugins, list):
@@ -110,15 +159,18 @@ def resolve_local_marketplace_plugin_path(marketplace_root: Path, plugin_name: s
             if not isinstance(entry, dict) or entry.get("name") != plugin_name:
                 continue
             source = entry.get("source")
-            if not isinstance(source, str):
+            if not isinstance(source, str) or "\0" in source:
                 continue
-            source_path = Path(source).expanduser()
+            try:
+                source_path = Path(source).expanduser()
+            except (RuntimeError, ValueError):
+                continue
             if not source_path.is_absolute():
                 source_path = marketplace_root / source_path
-            if source_path.is_dir():
-                return source_path.resolve()
-    fallback_path = marketplace_root / plugin_name
-    return fallback_path if fallback_path.is_dir() else None
+            selected = _lexical_regular_directory(source_path)
+            if selected is not None:
+                return selected
+    return _lexical_regular_directory(marketplace_root / plugin_name)
 
 
 def resolve_plugin_conversion_path(

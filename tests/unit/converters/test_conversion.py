@@ -834,8 +834,8 @@ class TestPiEmitter:
             for diagnostic in result.diagnostics
         )
 
-    def test_target_native_file_overrides_generated_directory(self, tmp_path: Path) -> None:
-        """Target-native files cleanly replace generated output directories."""
+    def test_target_native_file_cannot_override_generated_directory(self, tmp_path: Path) -> None:
+        """ADR 0003 permits exact file overrides, not file/directory replacement."""
         plugin_dir = tmp_path / "native-plugin"
         native_skill_path = plugin_dir / "targets" / "pi" / "skills" / "native-plugin-review"
         native_skill_path.parent.mkdir(parents=True)
@@ -861,13 +861,12 @@ class TestPiEmitter:
         result.write_to(tmp_path)
 
         output_path = tmp_path / ".pi" / "skills" / "native-plugin-review"
-        assert output_path.is_file()
-        assert output_path.read_text() == native_skill_path.read_text()
-        assert not (output_path / "SKILL.md").exists()
+        assert output_path.is_dir()
+        assert (output_path / "SKILL.md").is_file()
         assert any(
-            "overrides generated output" in (mapping.notes or "")
-            for mapping in result.mappings
-            if mapping.component_kind == "file"
+            diagnostic.severity.value == "error"
+            and "only exact file overrides" in diagnostic.message
+            for diagnostic in result.diagnostics
         )
 
     def test_target_native_files_override_generated_output(self, tmp_path: Path) -> None:

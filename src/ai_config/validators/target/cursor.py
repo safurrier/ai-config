@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from ai_config.validators.base import ValidationResult
+from ai_config.validators.target.skill_invariants import generated_skill_invariant_errors
 
 # Cursor hook events (valid event types)
 VALID_HOOK_EVENTS = frozenset(
@@ -172,6 +173,17 @@ class CursorOutputValidator:
                         check_name=f"cursor_skill_{skill_name}_description_length",
                         status="warn",
                         message=f"Description exceeds {MAX_DESCRIPTION_LENGTH} chars",
+                    )
+                )
+
+            for index, message in enumerate(
+                generated_skill_invariant_errors(skill_dir, frontmatter)
+            ):
+                results.append(
+                    ValidationResult(
+                        check_name=f"cursor_skill_{skill_name}_generated_{index}",
+                        status="fail",
+                        message=message,
                     )
                 )
 
