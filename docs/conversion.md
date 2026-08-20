@@ -129,8 +129,8 @@ _shared/shared/analyze.py
 _shared/shared/schema.json
 ```
 
-Exact declared root references in instruction Markdown become paths relative to the generated
-`_shared` directory.
+Exact declared root references in instruction Markdown become skill-root-relative paths beneath the
+generated `_shared` directory.
 The generated `SKILL.md` omits `x-ai-config-includes`. If two skills consume the same source, each
 receives an independent regular-file copy; this intentional distribution-time duplication keeps every
 skill self-contained on Codex, Cursor, OpenCode, and Pi.
