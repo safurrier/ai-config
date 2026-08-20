@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Shared-resource reports now retain per-Markdown rewrite evidence through target-native
+  overrides, so additive rewrite totals describe only the final converter-emitted projection.
 - Claude cache clearing now respects `CLAUDE_CONFIG_DIR`, so fresh syncs for
   alternate profiles remove the intended profile cache without affecting the
   default profile.

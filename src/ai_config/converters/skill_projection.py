@@ -22,6 +22,14 @@ class ProjectedSkillFile:
 
 
 @dataclass(frozen=True)
+class MarkdownRewriteEvidence:
+    """Direct converter rewrites for one emitted Markdown file."""
+
+    markdown_relative_path: PurePosixPath
+    direct_rewrite_count: int
+
+
+@dataclass(frozen=True)
 class IncludeProjectionEvidence:
     """Per-include projection facts independent of a target output root."""
 
@@ -29,6 +37,7 @@ class IncludeProjectionEvidence:
     projected_path: str
     duplicated_bytes: int
     direct_rewrite_count: int
+    markdown_rewrites: tuple[MarkdownRewriteEvidence, ...]
 
 
 @dataclass(frozen=True)
@@ -72,7 +81,9 @@ def project_skill(skill: Skill, generated_skill_markdown: str) -> SkillProjectio
                 ProjectedSkillFile(path, base64.b64decode(item.content_b64), item.executable)
             )
 
-    evidence_counts = {item.source_relative_path: 0 for item in skill.includes}
+    rewrite_evidence: dict[str, list[MarkdownRewriteEvidence]] = {
+        item.source_relative_path: [] for item in skill.includes
+    }
     rewritten_files: list[ProjectedSkillFile] = []
     for item in source_files:
         content = item.content
@@ -81,7 +92,9 @@ def project_skill(skill: Skill, generated_skill_markdown: str) -> SkillProjectio
                 content, count = _rewrite_declared(
                     content, include.source_relative_path, include.projected_path
                 )
-                evidence_counts[include.source_relative_path] += count
+                rewrite_evidence[include.source_relative_path].append(
+                    MarkdownRewriteEvidence(item.relative_path, count)
+                )
         rewritten_files.append(ProjectedSkillFile(item.relative_path, content, item.executable))
 
     errors: list[str] = []
@@ -111,7 +124,10 @@ def project_skill(skill: Skill, generated_skill_markdown: str) -> SkillProjectio
             source_relative_path=include.source_relative_path,
             projected_path=include.projected_path,
             duplicated_bytes=len(include.content),
-            direct_rewrite_count=evidence_counts[include.source_relative_path],
+            direct_rewrite_count=sum(
+                item.direct_rewrite_count for item in rewrite_evidence[include.source_relative_path]
+            ),
+            markdown_rewrites=tuple(rewrite_evidence[include.source_relative_path]),
         )
         for include in skill.includes
     )

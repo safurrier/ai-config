@@ -76,6 +76,15 @@ class ComponentMapping:
     lost_features: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _EmittedMarkdownRewriteEvidence:
+    """Internal converter-rewrite evidence after applying a target output root."""
+
+    include_target_path: Path
+    markdown_target_path: Path
+    direct_rewrite_count: int
+
+
 @dataclass
 class EmitResult:
     """Result of emitting a plugin to a target format."""
@@ -86,6 +95,9 @@ class EmitResult:
     diagnostics: list[Diagnostic] = field(default_factory=list)
     cleanup_paths: list[Path] = field(default_factory=list)
     include_evidence: list[IncludeResult] = field(default_factory=list)
+    _markdown_rewrite_evidence: list[_EmittedMarkdownRewriteEvidence] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
 
     def add_file(self, path: Path | str, content: str, executable: bool = False) -> None:
         """Add a file to emit."""
@@ -182,6 +194,21 @@ class EmitResult:
             written.append(full_path)
         return written
 
+    def _recompute_include_rewrite_counts(self) -> None:
+        """Refresh public additive totals from final converter-authored Markdown evidence."""
+        totals: dict[Path, int] = {}
+        for evidence in self._markdown_rewrite_evidence:
+            totals[evidence.include_target_path] = (
+                totals.get(evidence.include_target_path, 0) + evidence.direct_rewrite_count
+            )
+        self.include_evidence = [
+            replace(
+                evidence,
+                direct_rewrite_count=totals.get(evidence.target_path, 0),
+            )
+            for evidence in self.include_evidence
+        ]
+
     def apply_target_native_files(
         self,
         *,
@@ -202,6 +229,7 @@ class EmitResult:
         target_relative = Path("targets") / target.value
         original_files = list(self.files)
         original_evidence = list(self.include_evidence)
+        original_rewrite_evidence = list(self._markdown_rewrite_evidence)
         original_mapping_count = len(self.mappings)
         try:
             with ContainedSource(plugin_root) as source_root:
@@ -286,14 +314,13 @@ class EmitResult:
                     for evidence in self.include_evidence
                     if evidence.target_path != target_path
                 ]
-                if target_path.name == "SKILL.md":
-                    skill_dir = target_path.parent
-                    self.include_evidence = [
-                        replace(evidence, direct_rewrite_count=0)
-                        if skill_dir in evidence.target_path.parents
-                        else evidence
-                        for evidence in self.include_evidence
-                    ]
+                self._markdown_rewrite_evidence = [
+                    evidence
+                    for evidence in self._markdown_rewrite_evidence
+                    if evidence.include_target_path != target_path
+                    and evidence.markdown_target_path != target_path
+                ]
+                self._recompute_include_rewrite_counts()
             else:
                 self.files.append(native_file)
 
@@ -318,6 +345,7 @@ class EmitResult:
                 invalid_skill_dirs,
                 original_files=original_files,
                 original_evidence=original_evidence,
+                original_rewrite_evidence=original_rewrite_evidence,
                 original_mapping_count=original_mapping_count,
             )
             # The restored generated projection must still satisfy both the byte
@@ -330,6 +358,7 @@ class EmitResult:
         *,
         original_files: list[EmittedFile],
         original_evidence: list[IncludeResult],
+        original_rewrite_evidence: list[_EmittedMarkdownRewriteEvidence],
         original_mapping_count: int,
     ) -> None:
         """Roll back every target-native change below an invalid generated skill."""
@@ -351,6 +380,16 @@ class EmitResult:
             for evidence in original_evidence
             if belongs_to_invalid_skill(evidence.target_path)
         ]
+        self._markdown_rewrite_evidence = [
+            evidence
+            for evidence in self._markdown_rewrite_evidence
+            if not belongs_to_invalid_skill(evidence.include_target_path)
+        ] + [
+            evidence
+            for evidence in original_rewrite_evidence
+            if belongs_to_invalid_skill(evidence.include_target_path)
+        ]
+        self._recompute_include_rewrite_counts()
         self.mappings = self.mappings[:original_mapping_count] + [
             mapping
             for mapping in self.mappings[original_mapping_count:]
@@ -560,15 +599,24 @@ def _emit_projected_skill(
         else:
             result.add_file(target, item.content, item.executable)
     for evidence in projection.include_evidence:
+        include_target = skill_dir / evidence.projected_path
         result.include_evidence.append(
             IncludeResult(
                 source_relative_path=evidence.source_relative_path,
                 consumer_skill=skill.name,
-                target_path=skill_dir / evidence.projected_path,
+                target_path=include_target,
                 copy_count=1,
                 duplicated_bytes=evidence.duplicated_bytes,
                 direct_rewrite_count=evidence.direct_rewrite_count,
             )
+        )
+        result._markdown_rewrite_evidence.extend(
+            _EmittedMarkdownRewriteEvidence(
+                include_target_path=include_target,
+                markdown_target_path=skill_dir / item.markdown_relative_path.as_posix(),
+                direct_rewrite_count=item.direct_rewrite_count,
+            )
+            for item in evidence.markdown_rewrites
         )
     return True
 

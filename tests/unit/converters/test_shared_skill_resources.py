@@ -152,6 +152,11 @@ def test_target_native_skill_override_rechecks_invariants_and_updates_evidence(
 ) -> None:
     plugin = tmp_path / "plugin"
     shutil.copytree(FIXTURE, plugin)
+    nested = plugin / "skills/alpha/references/guide.md"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("`${CLAUDE_PLUGIN_ROOT}/shared/data.txt`")
+    original = emitter.emit(parse_claude_plugin(plugin))  # type: ignore[union-attr]
+
     native_skill = plugin / _target_native_alpha_skill(target) / "SKILL.md"
     native_skill.parent.mkdir(parents=True)
     native_skill.write_text(
@@ -161,10 +166,17 @@ def test_target_native_skill_override_rechecks_invariants_and_updates_evidence(
     )
     result = emitter.emit(parse_claude_plugin(plugin))  # type: ignore[union-attr]
     assert not result.has_errors()
-    alpha_evidence = [item for item in result.include_evidence if item.consumer_skill == "alpha"]
-    assert alpha_evidence
-    assert all(item.direct_rewrite_count == 0 for item in alpha_evidence)
+    alpha_evidence = {
+        item.source_relative_path: item
+        for item in result.include_evidence
+        if item.consumer_skill == "alpha"
+    }
+    assert alpha_evidence["shared/data.txt"].direct_rewrite_count == 1
+    assert alpha_evidence["shared/run.sh"].direct_rewrite_count == 0
 
+    native_nested = plugin / _target_native_alpha_skill(target) / "references/guide.md"
+    native_nested.parent.mkdir(parents=True, exist_ok=True)
+    native_nested.write_text("Authored `_shared/shared/data.txt` reference")
     native_skill.write_text(
         "---\nname: unsafe\ndescription: unsafe\nx-ai-config-includes: [shared/data.txt]\n"
         "---\n\n${CLAUDE_PLUGIN_ROOT}/shared/data.txt\n"
@@ -178,7 +190,22 @@ def test_target_native_skill_override_rechecks_invariants_and_updates_evidence(
     )
     assert "x-ai-config-includes" not in restored_skill.content
     assert "CLAUDE_PLUGIN_ROOT" not in restored_skill.content
-    assert any(item.consumer_skill == "alpha" for item in unsafe.include_evidence)
+    restored_nested = next(
+        item
+        for item in unsafe.files
+        if item.path == _skill_roots(target)[0] / "references/guide.md"
+    )
+    assert restored_nested.content == "`_shared/shared/data.txt`"
+    assert sorted(unsafe.include_evidence, key=lambda item: item.target_path.as_posix()) == sorted(
+        original.include_evidence, key=lambda item: item.target_path.as_posix()
+    )
+    assert sorted(
+        unsafe._markdown_rewrite_evidence,
+        key=lambda item: (item.include_target_path, item.markdown_target_path),
+    ) == sorted(
+        original._markdown_rewrite_evidence,
+        key=lambda item: (item.include_target_path, item.markdown_target_path),
+    )
 
 
 @pytest.mark.parametrize("target", [TargetTool.CURSOR, TargetTool.PI])
@@ -229,6 +256,49 @@ def test_target_native_shared_override_removes_original_copy_evidence(tmp_path: 
     emitted = next(item for item in result.files if item.path == target)
     assert emitted.content == "native payload"
     assert not any(item.target_path == target for item in result.include_evidence)
+
+
+@pytest.mark.parametrize(
+    ("target", "emitter"),
+    [
+        (TargetTool.CODEX, CodexEmitter()),
+        (TargetTool.CURSOR, CursorEmitter()),
+        (TargetTool.OPENCODE, OpenCodeEmitter()),
+        (TargetTool.PI, PiEmitter()),
+    ],
+)
+def test_target_native_nested_markdown_override_removes_only_its_rewrite_evidence(
+    target: TargetTool, emitter: object, tmp_path: Path
+) -> None:
+    plugin = tmp_path / "plugin"
+    shutil.copytree(FIXTURE, plugin)
+    first = plugin / "skills/alpha/references/first.md"
+    first.parent.mkdir(parents=True)
+    first.write_text("`${CLAUDE_PLUGIN_ROOT}/shared/data.txt`")
+    second = plugin / "skills/alpha/references/second.markdown"
+    second.write_text(
+        "`${CLAUDE_PLUGIN_ROOT}/shared/data.txt` and `${CLAUDE_PLUGIN_ROOT}/shared/data.txt`"
+    )
+    native = plugin / _target_native_alpha_skill(target) / "references/first.md"
+    native.parent.mkdir(parents=True)
+    native.write_text("Authored `_shared/shared/data.txt` and `_shared/shared/data.txt` references")
+
+    result = emitter.emit(parse_claude_plugin(plugin))  # type: ignore[union-attr]
+
+    assert not result.has_errors()
+    data_evidence = next(
+        item
+        for item in result.include_evidence
+        if item.consumer_skill == "alpha" and item.source_relative_path == "shared/data.txt"
+    )
+    assert data_evidence.direct_rewrite_count == 3
+    alpha_root = _skill_roots(target)[0]
+    positive_by_markdown = {
+        item.markdown_target_path.relative_to(alpha_root).as_posix(): item.direct_rewrite_count
+        for item in result._markdown_rewrite_evidence
+        if item.include_target_path == data_evidence.target_path and item.direct_rewrite_count > 0
+    }
+    assert positive_by_markdown == {"SKILL.md": 1, "references/second.markdown": 2}
 
 
 def test_nested_markdown_rewrites_from_skill_root_not_nested_file(tmp_path: Path) -> None:
@@ -588,6 +658,45 @@ def test_codex_removed_include_copy_stays_within_rebuilt_package_root(tmp_path: 
     convert_plugin(plugin, [TargetTool.CODEX], output_dir=output)
     assert not old_copy.exists()
     assert unrelated.read_text() == "keep"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI],
+)
+def test_reports_match_final_projection_after_native_markdown_override(
+    target: TargetTool, tmp_path: Path
+) -> None:
+    plugin = tmp_path / "plugin"
+    shutil.copytree(FIXTURE, plugin)
+    nested = plugin / "skills/alpha/references/guide.md"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("`${CLAUDE_PLUGIN_ROOT}/shared/data.txt`")
+    native_skill = plugin / _target_native_alpha_skill(target) / "SKILL.md"
+    native_skill.parent.mkdir(parents=True)
+    native_skill.write_text(
+        "---\nname: "
+        + ("alpha" if target == TargetTool.CODEX else "shared-includes-alpha")
+        + "\ndescription: native safe override\n---\n\nAuthored `_shared/shared/data.txt`.\n"
+    )
+
+    report = convert_plugin(plugin, [target], output_dir=tmp_path / "output")[target]
+
+    assert not report.errors
+    payload = next(
+        item
+        for item in report.to_dict()["includes"]
+        if item["consumer_skill"] == "alpha" and item["source"] == "shared/data.txt"
+    )
+    assert payload["direct_rewrite_count"] == 1
+    expected_line = (
+        f"`shared/data.txt` → `{payload['target_path']}` for `alpha` "
+        f"(1 copy, {payload['duplicated_bytes']:,} bytes, 1 direct rewrites)"
+    )
+    assert expected_line in report.to_markdown()
+    alpha_root = tmp_path / "output" / _skill_roots(target)[0]
+    assert "Authored `_shared/shared/data.txt`" in (alpha_root / "SKILL.md").read_text()
+    assert (alpha_root / "references/guide.md").read_text() == "`_shared/shared/data.txt`"
 
 
 def test_report_contains_additive_relative_include_evidence(tmp_path: Path) -> None:
