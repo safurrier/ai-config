@@ -70,7 +70,7 @@ This is ai-config build metadata, not a claim that Claude itself materializes th
 accepts and loads the source skill; ai-config strips the field while producing self-contained target
 skills.
 
-## Codex 0.144.5, 0.145.0, and 0.146.0 runtime evidence; 0.147.x repository support
+## Codex 0.144.5, 0.145.0, 0.146.0, and 0.148.0 runtime evidence
 
 The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
 
@@ -106,6 +106,18 @@ darwin-arm64 integrity: sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+u
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
+The latest lane resolved and passed both complete auth-free probes for Codex 0.148.0 on 2026-08-20:
+
+```text
+resolved package: @openai/codex@0.148.0
+version output:   codex-cli 0.148.0
+main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz
+main integrity:    sha512-bh5kH9+BMrFaHGmLeoSansPdfRksvr4UXzjQInns/KRO7r8VJ+6AAW+SqUsE8XcG3+OW/mI4EEy8Gpo9UDXGvQ==
+darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.148.0-darwin-arm64.tgz
+platform integrity: sha512-xgBPFiF1fHUlRS7HE6wGB56LjBJh16kGD7b4TTbwdVBZNB4QDkTok+vdkAGrfpVkfKcwGNhPSKDgCw+KMZOVug==
+install source:    integrity-verified direct npm registry tarball extraction
+```
+
 The direct extraction in `tests/probes/probe_latest_codex.sh` is intentional. npm's configured
 install-date cutoff rejected a normal fresh install because 0.144.5 was newer than the cutoff.
 The lane still resolves the live tag, reads each registry URL and integrity value, verifies SHA-512,
@@ -133,14 +145,15 @@ Observed help surfaces:
 | `codex plugin list --help` | List plugins available from configured marketplace snapshots |
 | `codex plugin remove --help` | Remove an installed plugin from local config and cache. |
 | `codex plugin marketplace --help` | Add, list, upgrade, or remove configured plugin marketplaces |
-| `codex plugin marketplace add --help` | Add a local or Git marketplace to configured sources |
-| `codex plugin marketplace list --help` | List configured marketplaces and roots |
+| `codex plugin marketplace add --help` | Add a local or Git marketplace to the configured marketplace sources |
+| `codex plugin marketplace list --help` | List plugin marketplaces Codex is currently considering and their roots |
 | `codex plugin marketplace upgrade --help` | Refresh configured Git marketplace snapshots. |
 | `codex plugin marketplace remove --help` | Remove a configured marketplace source by name |
 
-Official sources checked through 2026-07-29:
+Official sources checked through 2026-08-20:
 
 - [Codex changelog](https://developers.openai.com/codex/changelog)
+- [Codex 0.148.0 release](https://github.com/openai/codex/releases/tag/rust-v0.148.0)
 - [Codex 0.146.0 release](https://github.com/openai/codex/releases/tag/rust-v0.146.0)
 - [Codex 0.145.0 release](https://github.com/openai/codex/releases/tag/rust-v0.145.0)
 - [Plugins](https://learn.chatgpt.com/docs/plugins)
@@ -172,11 +185,10 @@ duplicate runtime records, source/path mismatches, and SemVer downgrades fail be
 Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
 by `doctor` and never removed without proof of ownership.
 
-The adapter accepts Codex 0.144.x, 0.145.x, 0.146.x, and 0.147.x contracts. Captured isolated
-runtime evidence in this document extends through 0.146.0; 0.147.x is covered by the repository's
-version gate and schema tests and is not presented here as a completed runtime probe. The adapter
-validates the CLI version plus typed schemas and semantic identity for marketplace list/add/remove and plugin
-list/add/remove responses. Malformed JSON, duplicate keys/records, partial output, unknown versions,
+The adapter accepts Codex 0.144.x through 0.148.x contracts. Captured isolated runtime evidence in
+this document extends through 0.148.0. The adapter validates the CLI version plus typed schemas and
+semantic identity for marketplace list/add/remove and plugin list/add/remove responses. Malformed
+JSON, duplicate keys/records, partial output, unknown versions,
 and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
 control characters from error output. POSIX calls start a separate process group; after a bounded
 SIGTERM grace period, timeout cleanup inspects and kills any remaining group even if the direct child
@@ -187,7 +199,10 @@ Codex 0.144.5 can omit `marketplaceSource` from resolved marketplace and plugin 
 configured source corresponds to the resolved marketplace root. The adapter accepts only absence:
 a present value must remain a typed object with a known source type and non-empty source. Installed
 rows without this metadata retain their plugin source but have no inferred marketplace root, so
-desired or previously owned identity collisions still fail before mutation.
+desired or previously owned identity collisions still fail before mutation. Codex 0.148.0 no longer
+lists the probe's directly seeded `$CODEX_HOME/.tmp/plugins` source-less catalog. The public-sync probe
+therefore records its initial CLI visibility and exact files, then requires both to remain unchanged;
+configured marketplace and plugin add/list/remove schemas and semantics remain compatible.
 
 ## Isolated runtime probe
 
