@@ -15,4 +15,6 @@ Sync first observes desired configuration, runtime state, source state, cache, a
 
 ## Consequences
 
-Dry-run and real execution share one authorization artifact, and target-specific planners remain responsible for their domains. The design adds explicit snapshot and action records, but makes state drift, partial progress, and checkpoint eligibility observable. Real `--fresh` cache clearing remains outside the pure transform because it changes subsequent observation; fresh dry-run remains mutation-free.
+Dry-run and each real execution stage share an immutable authorization artifact, and target-specific planners remain responsible for their domains. The design adds explicit snapshot and action records, but makes state drift, partial progress, and checkpoint eligibility observable. Real `--fresh` cache clearing remains outside the pure transform because it changes subsequent observation; fresh dry-run remains mutation-free.
+
+[ADR 0008](0008-bounded-sync-convergence-stages.md) permits one explicit re-observation barrier after a successfully applied Claude prerequisite plan. It does not permit apply-time replanning: the conversion stage receives a new snapshot and separately validated immutable plan, and the operation remains bounded.

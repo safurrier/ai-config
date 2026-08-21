@@ -16,7 +16,8 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 ## Requirements
 
 - The system MUST accept config version 1 with `claude` as its top-level target type and validate marketplace, plugin, scope, and conversion settings before mutation.
-- `sync` MUST observe runtime and source state, create an ordered plan, validate its preconditions, and apply only that plan.
+- `sync` MUST observe runtime and source state, create an ordered plan, validate its preconditions, and apply only that plan. It MAY cross one explicit prerequisite barrier by applying an immutable Claude-only plan, re-observing once, and applying a separately validated conversion-only plan; it MUST NOT recursively sync until quiet or derive replacement actions during apply.
+- A configured local marketplace MUST remain the conversion-source authority after Claude installation. Missing or unsafe configured local sources MUST remain unavailable rather than falling back to Claude's installed cache. Remote and marketplace-less sources MAY use safely observed installed paths.
 - A dry run MUST avoid state-changing runtime calls, filesystem writes, cache writes, and ownership writes, except for an explicitly requested `convert --report PATH` artifact.
 - The conversion pipeline MUST parse a Claude Code plugin into a target-neutral IR before invoking an independent target emitter.
 - Every source byte consumed by conversion MUST be read through a fail-closed plugin-root containment boundary; absolute/traversing paths, resolved escape, final or in-root ancestor symlinks, and non-regular files MUST NOT be read or emitted. Sync source hashing MAY retain metadata for the exact repository context mirror `CLAUDE.md -> AGENTS.md` when both entries are siblings and the target is a no-follow regular file; hashing MUST NOT read through that link, and every other symlink shape MUST make the source unreadable. Sync MUST hash the complete safely readable tree plus validated mirror metadata and recheck that digest as a precondition before conversion; standalone `convert` does not compute a source digest, and digesting plus conversion are not one immutable filesystem snapshot.
@@ -29,6 +30,8 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - Cursor and OpenCode conversion MUST remain path-contained, but callers MUST NOT interpret path containment as proof that a pre-existing file is ai-config-owned.
 - `status` MUST report installed state without requiring config; config drift comparison MUST occur only when config or verification is requested.
 - `update` MUST operate on named installed plugins or all installed plugins and MUST NOT imply config reconciliation.
+- The conversion cache MUST use configured plugin selectors and conversion settings as logical identity while retaining source provenance, physical path, source digest, and generated Codex digest as cache-hit observations. Cache migration MUST preserve only validated tracked output roots needed for ownership cleanup.
+- `sync --verify` MUST perform its read-only verification plan only after every requested apply stage succeeds. An intentionally empty isolated `CODEX_HOME` is a valid initial state.
 - The system SHOULD make unchanged sync and conversion runs no-ops.
 - A caller MAY request project or user conversion scope and MAY provide an explicit output directory.
 
@@ -50,7 +53,7 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - The same materialized sync plan authorizes dry-run rendering and real execution.
 - Target emitters do not mutate the parsed plugin IR or another target's result.
 - Shared include records in IR are immutable, and one pure target-neutral projection supplies all target emitters without rereading include sources.
-- Marketplace actions precede dependent Claude plugin actions, and conversion actions follow them.
+- Marketplace actions precede dependent Claude plugin actions, and conversion actions follow them. A staged conversion plan contains no marketplace or plugin action; unmet prerequisites block that stage.
 - Failed or stale preconditions prevent the affected mutation and prevent unsupported cache or ownership checkpoints.
 - Missing or temporarily unavailable sources do not authorize deletion of their prior proven-owned output.
 - Generated Codex and Pi cleanup never crosses the validated ownership root.
@@ -64,6 +67,7 @@ ai-config is a declarative manager for Claude Code plugin marketplaces and insta
 - `uv run pytest tests/unit/ -v` passes the unit contract for config parsing, planning, conversion, target validation, lifecycle, and ownership behavior.
 - `uv run mkdocs build --strict` resolves and renders the public documentation.
 - Docker E2E lanes exercise supported tool surfaces, while isolated Codex and Pi probes verify real lifecycle behavior without using the caller's runtime homes or credentials.
-- `sync --dry-run` and the corresponding real sync expose the same planned action ordering for unchanged evidence.
+- `sync --dry-run` and the corresponding first real stage expose the same planned action ordering for unchanged evidence; unavailable remote conversion is reported as deferred rather than speculated before installation.
+- A fresh isolated local-marketplace `sync --force --verify` converges in one invocation without false Codex refresh drift, and a fresh remote source requires at most one Claude prerequisite apply plus one conversion apply.
 - Repeated sync converges without mutation, and tamper/removal tests prove cleanup stays within recorded target ownership.
 - Shared-resource fixtures prove two consumers receive independent byte-exact copies for all four emitters, with no build metadata or unresolved Claude root placeholder.

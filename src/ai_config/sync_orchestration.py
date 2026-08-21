@@ -23,6 +23,7 @@ from ai_config.sync_pipeline import (
     ResolvedPluginSource,
     RuntimeSnapshot,
     SourceBatch,
+    SourceProvenance,
     SyncPlan,
     TargetActionBatch,
     UnavailablePluginSource,
@@ -79,20 +80,51 @@ def _source_batch(
         if not plugin.enabled:
             continue
         installed = installed_by_id.get(plugin.id)
+        configured_marketplace = (
+            config.marketplaces.get(plugin.marketplace) if plugin.marketplace is not None else None
+        )
+        configured_local = (
+            configured_marketplace is not None
+            and configured_marketplace.source == PluginSource.LOCAL
+        )
         path = state.resolve_plugin_conversion_path(config, plugin, installed)
-        if (path is None or not path.is_dir()) and plugin.marketplace is not None:
+        provenance: SourceProvenance = (
+            "configured_local" if configured_local else "installed_plugin"
+        )
+        if (
+            (path is None or not path.is_dir())
+            and plugin.marketplace is not None
+            and not configured_local
+        ):
             observed_marketplace = marketplaces_by_name.get(plugin.marketplace)
             if observed_marketplace is not None and observed_marketplace.install_location:
                 path = state.resolve_local_marketplace_plugin_path(
                     Path(observed_marketplace.install_location), plugin.plugin_name
                 )
+                if path is not None:
+                    provenance = "observed_remote_marketplace"
         if path is not None and path.is_dir():
-            resolved.append(ResolvedPluginSource(plugin.id, path, state.compute_plugin_hash(path)))
+            resolved.append(
+                ResolvedPluginSource(
+                    plugin.id,
+                    path,
+                    state.compute_plugin_hash(path),
+                    provenance,
+                )
+            )
         else:
+            unavailable_provenance: SourceProvenance = (
+                "unavailable_configured_local"
+                if configured_local
+                else "unavailable_remote"
+                if plugin.marketplace is not None
+                else "unavailable_marketplace_less"
+            )
             unavailable.append(
                 UnavailablePluginSource(
                     plugin.id,
                     installed.install_path if installed is not None else "<unavailable>",
+                    unavailable_provenance,
                 )
             )
     return SourceBatch(resolved=tuple(resolved), unavailable=tuple(unavailable))
@@ -109,6 +141,23 @@ def build_sync_plan(target: TargetConfig, *, force_convert: bool = False) -> Syn
     plugins, plugin_errors = claude.list_installed_plugins()
     installed_plugins = tuple(sorted(plugins, key=lambda item: item.id))
     observation_errors = [*marketplace_errors, *plugin_errors]
+    configured_ids = [item.id for item in target.config.plugins]
+    duplicate_configured = sorted(
+        plugin_id for plugin_id in set(configured_ids) if configured_ids.count(plugin_id) > 1
+    )
+    installed_ids = [item.id for item in installed_plugins]
+    duplicate_installed = sorted(
+        plugin_id for plugin_id in set(installed_ids) if installed_ids.count(plugin_id) > 1
+    )
+    if duplicate_configured:
+        observation_errors.append(
+            "Duplicate configured plugin selectors: " + ", ".join(duplicate_configured)
+        )
+    if duplicate_installed:
+        observation_errors.append(
+            "Claude reported duplicate installed plugin selectors: "
+            + ", ".join(duplicate_installed)
+        )
     cache: dict = {}
     codex_roots: tuple[Path, ...] = ()
     pi_roots: tuple[Path, ...] = ()
@@ -164,7 +213,7 @@ def build_sync_plan(target: TargetConfig, *, force_convert: bool = False) -> Syn
             force_convert=force_convert,
             installed_plugins=installed_plugins,
             cache_snapshot=cache,
-            resolved_sources={item.config_id: item.path for item in sources.resolved},
+            resolved_sources={item.config_id: item for item in sources.resolved},
         )
         conversion_plan = conversion_result.plan
         conversion_actions = conversion_result.actions
@@ -214,6 +263,22 @@ def build_sync_plan(target: TargetConfig, *, force_convert: bool = False) -> Syn
         target_batches=target_batches,
         checkpoints=checkpoints,
         conversion=conversion_plan,
+    )
+
+
+def requires_source_reobservation(plan: SyncPlan) -> bool:
+    """Return whether one Claude apply may reveal a deferred non-local source."""
+    conversion = plan.desired.conversion
+    eligible = any(
+        item.provenance in {"unavailable_remote", "unavailable_marketplace_less"}
+        for item in plan.sources.unavailable
+    )
+    return bool(
+        conversion is not None
+        and conversion.enabled
+        and eligible
+        and plan.reported_diagnostics
+        and any(item.phase in {"marketplace", "plugin"} for item in plan.actions)
     )
 
 

@@ -66,8 +66,11 @@ def test_pi_cli_verify_and_json_report_no_false_drift(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Drive sync/status verification through Click with actual Pi output and only CLI inventory patched."""
-    source = tmp_path / "source"
+    marketplace = tmp_path / "marketplace"
+    source = marketplace / "dev-tools"
     shutil.copytree(Path(__file__).parents[1] / "fixtures/sample-plugins/complete-plugin", source)
+    installed_source = tmp_path / "installed-cache" / "dev-tools"
+    shutil.copytree(source, installed_source)
     output = tmp_path / "output"
     config = tmp_path / "config.yaml"
     config.write_text(
@@ -79,7 +82,7 @@ def test_pi_cli_verify_and_json_report_no_false_drift(
               marketplaces:
                 local:
                   source: local
-                  path: {source}
+                  path: {marketplace}
               plugins:
                 - id: dev-tools@local
                   scope: project
@@ -91,13 +94,13 @@ def test_pi_cli_verify_and_json_report_no_false_drift(
         """)
     )
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(source))]
+    installed = [InstalledPlugin("dev-tools@local", "1", "project", True, str(installed_source))]
     with (
         patch("ai_config.operations.claude.list_installed_plugins", return_value=(installed, [])),
         patch(
             "ai_config.operations.claude.list_installed_marketplaces",
             return_value=(
-                [InstalledMarketplace("local", PluginSource.LOCAL, "", str(source))],
+                [InstalledMarketplace("local", PluginSource.LOCAL, "", str(marketplace))],
                 [],
             ),
         ),
@@ -199,6 +202,39 @@ class TestSyncCommand:
             "remove_codex_marketplace"
         ]
         assert payload["planned_actions"] == []
+
+    def test_sync_text_skips_verification_after_apply_failure(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult(success=False, errors=["apply failed"])
+        with (
+            patch("ai_config.cli.sync_config", return_value={"claude": sync_result}),
+            patch("ai_config.cli.verify_sync") as verify,
+        ):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--verify"])
+
+        assert result.exit_code == 1
+        assert "apply failed" in result.output
+        verify.assert_not_called()
+
+    def test_sync_json_skips_verification_after_apply_failure(
+        self, runner: CliRunner, config_file: Path
+    ) -> None:
+        sync_result = SyncResult(success=False, errors=["apply failed"])
+        with (
+            patch("ai_config.cli.sync_config", return_value={"claude": sync_result}),
+            patch("ai_config.cli.verify_sync") as verify,
+        ):
+            result = runner.invoke(main, ["sync", "-c", str(config_file), "--verify", "--json"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["verification"] == {
+            "requested": True,
+            "performed": False,
+            "discrepancies": [],
+        }
+        verify.assert_not_called()
 
     def test_sync_with_errors(self, runner: CliRunner, config_file: Path) -> None:
         """Shows errors from sync."""

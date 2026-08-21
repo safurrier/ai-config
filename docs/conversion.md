@@ -189,16 +189,31 @@ ai-config doctor --target all ./output-dir
 ai-config sync --force-convert
 ```
 
-Sync hashes plugin source, conversion settings, and owned generated marketplace bytes. A cache hit
-is accepted only while the package and marketplace still exist without symlinks and match the saved
-fingerprint, so normal sync repairs deleted or tampered output. Dry-run and JSON output distinguish
-planned, completed, and failed actions. `status --config ... --json` exits non-zero when lifecycle
-planning finds a non-no-op action or an inspection error.
+Sync keys conversion cache entries by configured plugin selector and conversion settings. Source
+provenance, physical path, complete safe source digest, and owned generated Codex bytes remain
+required observations for a cache hit. A changed source path refreshes output because target files
+may contain resolved plugin-root paths. Legacy path-keyed entries are discarded while validated
+tracked output roots remain available for ownership cleanup. Normal sync therefore repairs deleted
+or tampered output without treating an incidental path as logical plugin identity.
 
-Configured sources are tracked separately as desired, temporarily unavailable, or disabled. A
-temporarily unavailable source retains prior ownership; a disabled/removed source is cleaned up.
-Removing or disabling the Codex target also reconciles prior owned roots, including a prior custom
-`output_dir` recorded in the conversion cache.
+Configured local marketplaces are strict conversion-source authorities, including after Claude
+installs a cached copy. If that configured tree is missing or unsafe, sync retains prior ownership
+and reports it unavailable rather than converting stale installed bytes. Remote and
+marketplace-less plugins may use safely observed installed sources.
+
+A fresh remote plugin may require Claude installation before its source can be inspected. Real sync
+applies one immutable Claude prerequisite plan, re-observes once, and then applies a separately
+validated conversion-only plan. It never retries Claude actions or recursively syncs until quiet.
+Dry-run reports the exact prerequisite actions and deferred source without speculating about the
+second stage. If post-install parsing or conversion fails, completed Claude actions remain visible,
+conversion exits non-zero, and verification is skipped.
+
+Dry-run and JSON output distinguish planned, completed, and failed actions. `sync --verify` performs
+one read-only verification only after all apply stages succeed; an empty isolated `CODEX_HOME` is a
+supported initial state. `status --config ... --json` exits non-zero when lifecycle planning finds a
+non-no-op action or an inspection error. A temporarily unavailable source retains prior ownership;
+a disabled/removed source is cleaned up. Removing or disabling the Codex target also reconciles
+prior owned roots, including a prior custom `output_dir` recorded in the conversion cache.
 
 Every Codex subprocess has a finite timeout. On POSIX, each command starts in a separate process
 group; after a bounded SIGTERM grace period, timeout cleanup inspects and kills any remaining group

@@ -499,8 +499,9 @@ def test_hash_includes_shared_bytes_and_fails_closed_on_symlink(tmp_path: Path) 
     assert compute_plugin_hash(plugin) is None
 
 
-def test_cache_v7_is_invalidated_for_complete_source_hashing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("legacy_version", [7, 8])
+def test_legacy_cache_entries_are_invalidated_for_logical_source_identity(
+    legacy_version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
@@ -508,7 +509,7 @@ def test_cache_v7_is_invalidated_for_complete_source_hashing(
     cache.write_text(
         json.dumps(
             {
-                "version": 7,
+                "version": legacy_version,
                 "entries": {"old": {}},
                 "codex_output_dirs": ["/custom/codex"],
                 "pi_output_dirs": ["/custom/pi"],
@@ -517,14 +518,34 @@ def test_cache_v7_is_invalidated_for_complete_source_hashing(
     )
     loaded = load_conversion_cache()
     assert loaded == {
-        "version": 8,
+        "version": 9,
         "entries": {},
         "codex_output_dirs": ["/custom/codex"],
         "pi_output_dirs": ["/custom/pi"],
     }
 
 
-@pytest.mark.parametrize("version", [7, 8])
+def test_cache_v9_rejects_malformed_logical_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache = tmp_path / ".ai-config/cache/conversion-hashes.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text(
+        json.dumps(
+            {
+                "version": 9,
+                "entries": {"demo@market": {"not-json": {"hash": "digest"}}},
+                "codex_output_dirs": [],
+                "pi_output_dirs": [],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid conversion cache entries"):
+        load_conversion_cache()
+
+
+@pytest.mark.parametrize("version", [7, 8, 9])
 @pytest.mark.parametrize("invalid_root", ["relative/root", "~ai_config_no_such_user/root"])
 def test_cache_rejects_nonabsolute_or_unexpandable_output_roots(
     version: int,
@@ -549,7 +570,7 @@ def test_cache_rejects_nonabsolute_or_unexpandable_output_roots(
         load_conversion_cache()
 
 
-@pytest.mark.parametrize("version", [7, 8])
+@pytest.mark.parametrize("version", [7, 8, 9])
 def test_cache_rejects_symlink_loop_output_root(
     version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -574,7 +595,7 @@ def test_cache_rejects_symlink_loop_output_root(
         load_conversion_cache()
 
 
-@pytest.mark.parametrize("version", [7, 8])
+@pytest.mark.parametrize("version", [7, 8, 9])
 def test_cache_normalizes_and_deduplicates_preserved_output_roots(
     version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

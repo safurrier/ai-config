@@ -24,6 +24,7 @@ MkDocs owns this directory's public structure. Keep `docs/index.md` as the human
 | `adr/0005-proven-output-ownership.md` | Why destructive cleanup requires target-specific ownership proof. |
 | `adr/0006-observe-plan-apply-sync.md` | Why sync separates observation, planning, and application. |
 | `adr/0007-materialize-shared-skill-resources.md` | Why shared plugin files are materialized into self-contained generated skills. |
+| `adr/0008-bounded-sync-convergence-stages.md` | Why fresh remote sync uses at most one prerequisite plan and one conversion plan. |
 
 ## Entry point
 

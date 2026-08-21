@@ -64,7 +64,7 @@ ai-config sync
 |--------|-------------|
 | `-c, --config PATH` | Path to config file |
 | `--dry-run` | Show what would change without doing it |
-| `--fresh`, `--force` | Full rebuild: clear cache + reconvert everything |
+| `--fresh`, `--force` | Clear Claude's plugin cache and reconvert configured outputs; preserve target homes and ownership ledgers |
 | `--force-convert` | Reconvert only (without clearing plugin cache) |
 | `--verify` | Verify sync state after completion |
 | `--json` | Output planned/completed actions and reasons as JSON |

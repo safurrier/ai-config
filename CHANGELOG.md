@@ -15,13 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conversion source reads now use one fail-closed plugin-root containment boundary for manifests,
   components, skill assets, includes, Codex support files, and target-native files.
 - Current system specification, architecture overview, project-evolution timeline,
-  and six evidence-backed architecture decisions for plugin source, target-neutral
-  IR, target-native overrides, Codex packages, ownership, and observe-plan-apply sync.
+  and evidence-backed architecture decisions for plugin source, target-neutral IR,
+  target-native overrides, Codex packages, ownership, sync planning, shared resources,
+  and bounded convergence stages.
 
 ### Changed
 
-- Conversion cache version 8 invalidates content entries after expanding source hashing while
-  preserving validated tracked Codex and Pi output roots for cleanup discovery.
+- Conversion cache version 9 keys entries by configured plugin selector instead of physical source
+  path, records source provenance, and invalidates legacy content entries while preserving validated
+  tracked Codex and Pi output roots for cleanup discovery.
+- Sync may apply one immutable Claude prerequisite plan and one separately observed conversion plan,
+  allowing fresh remote plugins to install and convert in one bounded invocation without apply-time
+  replanning or recursive retries.
 - Accept the repository-tested Codex plugin lifecycle schema/version contract through 0.149.x;
   captured auth-free real-runtime package and public-sync probes now extend through 0.149.0.
 
@@ -30,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sync source hashing now accepts the repository-standard `CLAUDE.md -> AGENTS.md`
   sibling mirror while continuing to reject every other symlink, allowing safe local
   plugin marketplaces to participate in immutable observe-plan-apply snapshots.
+- Configured local marketplaces remain conversion-source authorities after Claude installation, so
+  fresh isolated `sync --force --verify` no longer reports false Codex refresh drift or converts a
+  stale installed copy.
+- JSON and text sync skip verification consistently after apply failure; JSON reports verification
+  as requested but not performed.
 - Shared-resource reports now retain per-Markdown rewrite evidence through target-native
   overrides, so additive rewrite totals describe only the final converter-emitted projection.
 - Claude cache clearing now respects `CLAUDE_CONFIG_DIR`, so fresh syncs for

@@ -136,7 +136,7 @@ Relative local marketplace paths and conversion output paths are resolved from t
 | Apply and verify sync | `ai-config sync --verify` | Installs/uninstalls plugins and runs configured conversion. |
 | See installed state | `ai-config status` | Add `--verify` to compare against config. |
 | Validate config or output | `ai-config doctor` | Use `--target codex`, `--target cursor`, `--target opencode`, or `--target pi` for converted output. |
-| Rebuild stale output | `ai-config sync --fresh` | Clears cache and re-converts everything. |
+| Rebuild stale output | `ai-config sync --fresh` | Clears Claude's plugin cache and reconverts configured outputs while preserving target homes and ownership ledgers. |
 | Re-run conversion only | `ai-config sync --force-convert` | Useful after changing conversion targets. |
 | Develop local plugins | `ai-config watch` | Add `--dry-run` if you only want file-change reports. |
 
@@ -168,7 +168,7 @@ just check
 ai-config sync --dry-run
 ```
 
-**DO use `--fresh` when cached plugins or converted output look stale, NOT hand-delete random target files first, BECAUSE sync knows the cache and conversion state.**
+**DO use `--fresh` when Claude's cached plugins or converted output look stale, NOT hand-delete random target files first, BECAUSE sync preserves and reconciles its target ownership state.**
 
 ```bash
 ai-config sync --fresh
