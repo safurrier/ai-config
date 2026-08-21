@@ -87,7 +87,7 @@ def main() -> None:
     "  ai-config sync --dry-run --json Machine-readable actions and reasons\n"
     "  ai-config sync                  Apply changes\n"
     "  ai-config sync --verify         Apply and verify result\n"
-    "  ai-config sync --force          Full rebuild: clear cache + reconvert all\n"
+    "  ai-config sync --force          Clear Claude plugin cache + reconvert all\n"
     "  ai-config sync --force-convert   Reconvert only (skip cache clear)",
 )
 @click.option(
@@ -99,7 +99,10 @@ def main() -> None:
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be done without making changes.")
 @click.option(
-    "--fresh", "--force", is_flag=True, help="Full clean rebuild: clear cache + reconvert all."
+    "--fresh",
+    "--force",
+    is_flag=True,
+    help="Clear Claude's plugin cache and reconvert all configured outputs.",
 )
 @click.option(
     "--force-convert",
@@ -158,8 +161,14 @@ def sync(
             progress.add_task("Syncing plugins...", total=None)
             results = sync_config(config, dry_run=dry_run, fresh=fresh, force_convert=force_convert)
 
+    apply_succeeded = all(
+        result.success and not result.actions_failed and not result.errors
+        for result in results.values()
+    )
+
     if as_json:
-        discrepancies = verify_sync(config) if verify and not dry_run else []
+        verification_performed = verify and not dry_run and apply_succeeded
+        discrepancies = verify_sync(config) if verification_performed else []
         output = {
             "dry_run": dry_run,
             "targets": {
@@ -202,7 +211,7 @@ def sync(
             },
             "verification": {
                 "requested": verify,
-                "performed": verify and not dry_run,
+                "performed": verification_performed,
                 "discrepancies": discrepancies,
             },
         }

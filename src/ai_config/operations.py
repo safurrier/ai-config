@@ -6,8 +6,10 @@ from ai_config.adapters import claude
 from ai_config.sync_orchestration import (
     apply_sync_plan,
     build_sync_plan,
+    requires_source_reobservation,
     sync_result_from_execution,
 )
+from ai_config.sync_pipeline import conversion_stage_plan, prerequisite_sync_plan
 from ai_config.types import (
     AIConfig,
     PluginStatus,
@@ -42,11 +44,29 @@ def sync_target(
     plan = build_sync_plan(target, force_convert=force_convert)
     if dry_run:
         plan_errors = [item.message for item in (*plan.diagnostics, *plan.reported_diagnostics)]
+        rendered_plan = (
+            prerequisite_sync_plan(plan) if requires_source_reobservation(plan) else plan
+        )
         result = SyncResult(
             success=not plan_errors,
-            actions_taken=[item.action for item in plan.actions],
+            actions_taken=[item.action for item in rendered_plan.actions],
             errors=plan_errors,
         )
+    elif requires_source_reobservation(plan):
+        prerequisite = sync_result_from_execution(apply_sync_plan(prerequisite_sync_plan(plan)))
+        if not prerequisite.success or prerequisite.actions_failed or prerequisite.errors:
+            result = prerequisite
+        else:
+            reobserved = build_sync_plan(target, force_convert=force_convert)
+            converged = sync_result_from_execution(
+                apply_sync_plan(conversion_stage_plan(reobserved))
+            )
+            result = SyncResult(
+                success=converged.success,
+                actions_taken=[*prerequisite.actions_taken, *converged.actions_taken],
+                actions_failed=[*prerequisite.actions_failed, *converged.actions_failed],
+                errors=[*prerequisite.errors, *converged.errors],
+            )
     else:
         result = sync_result_from_execution(apply_sync_plan(plan))
     if fresh_errors:
@@ -66,7 +86,7 @@ def sync_config(
     Args:
         config: Configuration to sync.
         dry_run: If True, only report what would be done.
-        fresh: If True, clear cache before syncing.
+        fresh: If True, clear Claude's plugin cache before syncing.
         force_convert: If True, bypass conversion hash cache.
 
     Returns:

@@ -31,9 +31,11 @@ flowchart LR
 
 ## Sync flow
 
-Marketplace actions precede dependent Claude plugin actions. Conversion follows Claude reconciliation because conversion sources may come from installed or local marketplace plugins. The executor rechecks observed preconditions before mutation. It records completed and failed actions separately and commits cache or ownership checkpoints only where the plan permits them.
+Marketplace actions precede dependent Claude plugin actions. Configured local marketplaces remain the strict conversion-source authority after installation; remote and marketplace-less plugins may use safely observed installed sources.
 
-`--dry-run` renders the same materialized plan without runtime, cache, ownership, or filesystem mutation, except for a report explicitly requested with `convert --report PATH`. A real `--fresh` clears Claude's cache before observation; a fresh dry-run does not, because its mutation-free contract is stronger than simulating that altered observation.
+When a fresh remote source does not exist until Claude installs it, the public operation coordinates two bounded immutable plans. It first applies only the exact Claude prerequisite prefix, re-observes once, then applies a conversion-only projection of the second plan. The second plan is blocked if it still requires Claude reconciliation. Executors never replan, and sync never recursively runs until quiet. Each executor rechecks its plan's runtime, source, cache, and ownership preconditions, records completed and failed actions separately, and commits checkpoints only where that plan permits them.
+
+`--dry-run` renders the initial materialized plan without runtime, cache, ownership, or filesystem mutation, except for a report explicitly requested with `convert --report PATH`. Deferred remote conversion remains explicit because dry-run cannot inspect a source that installation has not materialized. A real `--fresh` clears Claude's plugin cache before observation and forces configured conversion; it does not clear target homes or ownership ledgers. A fresh dry-run does not clear anything because its mutation-free contract is stronger than simulating that altered observation. Optional verification performs one final read-only plan only after every apply stage succeeds.
 
 ## Conversion flow
 

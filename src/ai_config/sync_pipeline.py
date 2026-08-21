@@ -22,6 +22,14 @@ from ai_config.types import (
 )
 
 SyncPhase = Literal["marketplace", "plugin", "conversion"]
+SourceProvenance = Literal[
+    "configured_local",
+    "installed_plugin",
+    "observed_remote_marketplace",
+    "unavailable_configured_local",
+    "unavailable_remote",
+    "unavailable_marketplace_less",
+]
 
 
 @dataclass(frozen=True)
@@ -90,7 +98,8 @@ class ResolvedPluginSource:
 
     config_id: str
     path: Path
-    digest: str | None = None
+    digest: str | None
+    provenance: SourceProvenance
 
 
 @dataclass(frozen=True)
@@ -99,6 +108,7 @@ class UnavailablePluginSource:
 
     config_id: str
     install_path: str
+    provenance: SourceProvenance
 
 
 @dataclass(frozen=True)
@@ -197,6 +207,7 @@ class ConversionCandidatePlan:
     source_plugin_id: str
     source_path: Path
     source_digest: str | None
+    source_provenance: SourceProvenance
     refresh: bool
     codex_spec: CodexPackageSpec | None = None
 
@@ -336,6 +347,23 @@ def validate_sync_plan(plan: SyncPlan) -> tuple[BlockingDiagnostic, ...]:
             BlockingDiagnostic("conversion", "Materialized conversion plan is inconsistent")
         )
 
+    if plan.conversion is not None:
+        observed_sources = {item.config_id: item for item in plan.sources.resolved}
+        for candidate in plan.conversion.candidates:
+            observed = observed_sources.get(candidate.source_plugin_id)
+            if observed is None or (
+                observed.path != candidate.source_path
+                or observed.digest != candidate.source_digest
+                or observed.provenance != candidate.source_provenance
+            ):
+                diagnostics.append(
+                    BlockingDiagnostic(
+                        "conversion",
+                        f"Conversion candidate source snapshot is inconsistent for "
+                        f"{candidate.source_plugin_id}",
+                    )
+                )
+
     seen_emissions: set[tuple[str, str]] = set()
     for batch in plan.sources.emitted.batches:
         key = (batch.source_plugin_id, batch.target)
@@ -389,6 +417,49 @@ def materialize_plan_validation(plan: SyncPlan) -> SyncPlan:
     if not validation:
         return plan
     return replace(plan, diagnostics=(*plan.diagnostics, *validation))
+
+
+def prerequisite_sync_plan(plan: SyncPlan) -> SyncPlan:
+    """Project an immutable plan to its exact Claude prerequisite prefix."""
+    sources = replace(
+        plan.sources,
+        parsed=ParsedPluginBatch(),
+        emitted=EmittedArtifactBatch(),
+    )
+    return materialize_plan_validation(
+        replace(
+            plan,
+            sources=sources,
+            actions=tuple(item for item in plan.actions if item.phase != "conversion"),
+            diagnostics=tuple(item for item in plan.diagnostics if item.phase != "conversion"),
+            reported_diagnostics=(),
+            target_batches=(),
+            checkpoints=(),
+            conversion=None,
+        )
+    )
+
+
+def conversion_stage_plan(plan: SyncPlan) -> SyncPlan:
+    """Project a re-observed plan to conversion only, blocking unmet prerequisites."""
+    prerequisite_actions = tuple(item for item in plan.actions if item.phase != "conversion")
+    diagnostics = plan.diagnostics
+    if prerequisite_actions:
+        diagnostics = (
+            *diagnostics,
+            BlockingDiagnostic(
+                "conversion",
+                "Claude prerequisites did not converge after one apply; "
+                "no conversion action was executed",
+            ),
+        )
+    return materialize_plan_validation(
+        replace(
+            plan,
+            actions=tuple(item for item in plan.actions if item.phase == "conversion"),
+            diagnostics=diagnostics,
+        )
+    )
 
 
 def plan_sync(

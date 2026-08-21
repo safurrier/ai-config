@@ -861,8 +861,10 @@ class TestSyncTarget:
             assert call_args["output_dir"] == Path(tmp_path / "home")
             assert isolate_codex_lifecycle.call_count == 2
 
-    def test_sync_skips_conversion_when_hash_unchanged(
+    @pytest.mark.parametrize("same_source_path", [True, False])
+    def test_sync_cache_requires_matching_logical_source_observations(
         self,
+        same_source_path: bool,
         mock_installed_plugins: list[InstalledPlugin],
         mock_installed_marketplaces: list[InstalledMarketplace],
         monkeypatch: pytest.MonkeyPatch,
@@ -892,9 +894,13 @@ class TestSyncTarget:
         cache = {
             "version": _CONVERSION_CACHE_VERSION,
             "entries": {
-                str(plugin_path): {
+                "plugin1@my-marketplace": {
                     signature: {
                         "hash": "abc123",
+                        "source_path": str(
+                            plugin_path if same_source_path else tmp_path / "previous-source"
+                        ),
+                        "source_provenance": "installed_plugin",
                         "codex_output_hash": "generated123",
                     },
                 }
@@ -921,7 +927,10 @@ class TestSyncTarget:
             result = sync_target(target)
 
             assert result.success is True
-            mock_convert.assert_not_called()
+            if same_source_path:
+                mock_convert.assert_not_called()
+            else:
+                mock_convert.assert_called()
 
     def test_sync_force_convert_ignores_cache(
         self,
@@ -1038,19 +1047,25 @@ class TestSyncTarget:
             assert result.success is True
             assert saved_cache["codex_output_dirs"] == [str(output_dir.resolve())]
             assert "entries" in saved_cache
-            assert str(plugin_path) in saved_cache["entries"]
-            assert signature in saved_cache["entries"][str(plugin_path)]
+            assert "plugin1@my-marketplace" in saved_cache["entries"]
+            entry = saved_cache["entries"]["plugin1@my-marketplace"][signature]
+            assert entry["source_path"] == str(plugin_path)
 
-    def test_sync_conversion_uses_local_marketplace_when_install_path_missing(
+    def test_sync_conversion_keeps_configured_local_marketplace_authoritative(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Conversion falls back to local marketplace source when Claude cache path is stale."""
+        """Configured local source stays authoritative after Claude installs a cached copy."""
         plugin_dir = tmp_path / "marketplace" / "plugin1"
         plugin_dir.mkdir(parents=True)
         (plugin_dir / ".claude-plugin").mkdir()
         (plugin_dir / ".claude-plugin" / "plugin.json").write_text('{"name":"plugin1"}')
+        installed_cache = tmp_path / "installed-cache"
+        (installed_cache / ".claude-plugin").mkdir(parents=True)
+        (installed_cache / ".claude-plugin/plugin.json").write_text(
+            '{"name":"plugin1","description":"stale installed copy"}'
+        )
         conversion = ConversionConfig(
             enabled=True,
             targets=("pi",),
@@ -1074,7 +1089,7 @@ class TestSyncTarget:
                 version="1.0.0",
                 scope="user",
                 enabled=True,
-                install_path=str(tmp_path / "missing-cache"),
+                install_path=str(installed_cache),
             )
         ]
 
@@ -1296,7 +1311,17 @@ class TestSyncTarget:
             ),
             patch(
                 "ai_config.operations.claude.list_installed_marketplaces",
-                return_value=([], []),
+                return_value=(
+                    [
+                        InstalledMarketplace(
+                            name="my-marketplace",
+                            source=PluginSource.LOCAL,
+                            repo=str(tmp_path / "marketplace"),
+                            install_location=str(tmp_path / "marketplace"),
+                        )
+                    ],
+                    [],
+                ),
             ),
             patch(
                 "ai_config.sync_state.load_conversion_cache",
@@ -1542,12 +1567,13 @@ class TestSyncTarget:
             patch(
                 "ai_config.operations.claude.install_plugin",
                 return_value=CommandResult(True, "", "", 0),
-            ),
+            ) as install,
         ):
             result = sync_target(target)
 
         assert result.success is False
-        assert any("temporarily unavailable" in error for error in result.errors)
+        assert any("prerequisites did not converge" in error for error in result.errors)
+        install.assert_called_once_with("missing-plugin@market", "user")
         retained = isolate_codex_lifecycle.call_args.kwargs["retained_plugin_ids"]
         assert retained == {"missing-plugin@ai-config-missing-plugin"}
 
@@ -1671,8 +1697,13 @@ class TestSyncTarget:
         cache = {
             "version": _CONVERSION_CACHE_VERSION,
             "entries": {
-                str(plugin_path): {
-                    signature: {"hash": "abc123", "codex_output_hash": "generated123"}
+                "plugin1@my-marketplace": {
+                    signature: {
+                        "hash": "abc123",
+                        "source_path": str(plugin_path),
+                        "source_provenance": "installed_plugin",
+                        "codex_output_hash": "generated123",
+                    }
                 }
             },
         }

@@ -18,7 +18,7 @@ from ai_config.pi_ownership import load_pi_ownership
 from ai_config.source_safety import ContainedSource, SourceSafetyError
 from ai_config.types import ClaudeTargetConfig, ConversionConfig, PluginConfig, PluginSource
 
-_CONVERSION_CACHE_VERSION = 8
+_CONVERSION_CACHE_VERSION = 9
 
 
 def conversion_cache_path() -> Path:
@@ -58,6 +58,40 @@ def _validated_cached_output_dirs(raw: dict, key: str, cache_path: Path) -> list
     return sorted(resolved)
 
 
+def _validate_cache_entries(
+    entries: object, cache_path: Path
+) -> dict[str, dict[str, dict[str, object]]]:
+    message = f"Invalid conversion cache entries at {cache_path}; clear it and retry"
+    if not isinstance(entries, dict):
+        raise ValueError(message)
+    validated: dict[str, dict[str, dict[str, object]]] = {}
+    for selector, signatures in entries.items():
+        if not isinstance(selector, str) or not selector or not isinstance(signatures, dict):
+            raise ValueError(message)
+        validated_signatures: dict[str, dict[str, object]] = {}
+        for signature, value in signatures.items():
+            if not isinstance(signature, str) or not isinstance(value, dict):
+                raise ValueError(message)
+            value_map = {str(key): item for key, item in value.items()}
+            try:
+                settings = json.loads(signature)
+            except json.JSONDecodeError as error:
+                raise ValueError(message) from error
+            if not isinstance(settings, dict):
+                raise ValueError(message)
+            required = ("hash", "source_path", "source_provenance", "updated_at")
+            if any(
+                not isinstance(value_map.get(key), str) or not value_map[key] for key in required
+            ):
+                raise ValueError(message)
+            output_hash = value_map.get("codex_output_hash")
+            if output_hash is not None and (not isinstance(output_hash, str) or not output_hash):
+                raise ValueError(message)
+            validated_signatures[signature] = value_map
+        validated[selector] = validated_signatures
+    return validated
+
+
 def load_conversion_cache() -> dict:
     cache_path = conversion_cache_path()
     empty = {
@@ -78,8 +112,9 @@ def load_conversion_cache() -> dict:
         raise ValueError(f"Invalid conversion cache object at {cache_path}; clear it and retry")
     codex_dirs = _validated_cached_output_dirs(raw, "codex_output_dirs", cache_path)
     pi_dirs = _validated_cached_output_dirs(raw, "pi_output_dirs", cache_path)
-    if raw.get("version") == 7:
-        # Content hashes changed in v8, but ownership cleanup still needs prior custom roots.
+    if raw.get("version") in {7, 8}:
+        # v8 content hashes remain valid, but v9 keys entries by configured plugin identity
+        # instead of an incidental source path. Ownership cleanup still needs prior roots.
         return {
             "version": _CONVERSION_CACHE_VERSION,
             "entries": {},
@@ -88,8 +123,7 @@ def load_conversion_cache() -> dict:
         }
     if raw.get("version") != _CONVERSION_CACHE_VERSION:
         return empty
-    if not isinstance(raw.get("entries"), dict):
-        raise ValueError(f"Invalid conversion cache entries at {cache_path}; clear it and retry")
+    raw["entries"] = _validate_cache_entries(raw.get("entries"), cache_path)
     raw["codex_output_dirs"] = codex_dirs
     raw["pi_output_dirs"] = pi_dirs
     return raw
@@ -187,18 +221,24 @@ def resolve_plugin_conversion_path(
     plugin_config: PluginConfig,
     installed: claude.InstalledPlugin | None,
 ) -> Path | None:
+    """Resolve the configured source authority, using installed state only as fallback.
+
+    A configured local marketplace remains authoritative after Claude installs a cached copy.
+    Remote and marketplace-less plugins depend on Claude's installed source instead.
+    """
+    marketplace_name = plugin_config.marketplace
+    marketplace = (
+        config.marketplaces.get(marketplace_name) if marketplace_name is not None else None
+    )
+    if marketplace is not None and marketplace.source == PluginSource.LOCAL:
+        return resolve_local_marketplace_plugin_path(
+            Path(marketplace.path), plugin_config.plugin_name
+        )
+
     installed_path = (
         Path(installed.install_path) if installed is not None and installed.install_path else None
     )
-    if installed_path is not None and installed_path.is_dir():
-        return installed_path
-    marketplace_name = plugin_config.marketplace
-    if marketplace_name is None:
-        return installed_path
-    marketplace = config.marketplaces.get(marketplace_name)
-    if marketplace is None or marketplace.source != PluginSource.LOCAL:
-        return installed_path
-    return resolve_local_marketplace_plugin_path(Path(marketplace.path), plugin_config.plugin_name)
+    return installed_path if installed_path is not None and installed_path.is_dir() else None
 
 
 def compute_owned_codex_hash(spec: CodexPackageSpec) -> str | None:

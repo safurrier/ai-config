@@ -246,11 +246,26 @@ def probe(codex: str) -> dict[str, object]:
         output = root / "output"
         marketplace = root / "claude-marketplace"
         plugin = marketplace / "dev-tools"
+        installed_plugin = root / "claude-cache" / "dev-tools"
         config = root / "config.yaml"
         bin_dir = root / "bin"
         codex_home.mkdir(parents=True)
         bin_dir.mkdir()
         shutil.copytree(source_fixture, plugin)
+        local_skill = plugin / "skills/code-review/SKILL.md"
+        local_skill.write_text(
+            local_skill.read_text().replace(
+                "description: Review code for best practices, security issues, and style violations.",
+                "description: Review code for best practices, security issues, and style violations. LOCAL_AUTHORITY_MARKER.",
+            )
+        )
+        shutil.copytree(plugin, installed_plugin)
+        installed_skill = installed_plugin / "skills/code-review/SKILL.md"
+        installed_skill.write_text(
+            installed_skill.read_text().replace(
+                "LOCAL_AUTHORITY_MARKER", "STALE_INSTALLED_COPY_MARKER"
+            )
+        )
         (marketplace / ".claude-plugin").mkdir()
         (marketplace / ".claude-plugin/marketplace.json").write_text(
             json.dumps(
@@ -260,7 +275,7 @@ def probe(codex: str) -> dict[str, object]:
                 }
             )
         )
-        _write_fake_claude(bin_dir / "claude", plugin, marketplace)
+        _write_fake_claude(bin_dir / "claude", installed_plugin, marketplace)
         _write_config(config, marketplace, output, enabled=True)
         (codex_home / "config.toml").write_text('model = "preserve-public-sync"\n')
 
@@ -301,10 +316,20 @@ def probe(codex: str) -> dict[str, object]:
         else:
             raise AssertionError(f"unsupported Codex public-sync probe version: {version_output}")
 
-        first = _actions(_run_ai_config(config, env))
+        first_payload = _run_ai_config(config, env, "--force", "--verify")
+        first = _actions(first_payload)
         if not {"register_codex_marketplace", "install_codex_plugin"} <= set(first):
             raise AssertionError(f"first public sync actions were incomplete: {first}")
+        verification = first_payload.get("verification")
+        if not isinstance(verification, dict) or verification.get("performed") is not True:
+            raise AssertionError(f"first public sync did not perform verification: {verification}")
+        if verification.get("discrepancies") != []:
+            raise AssertionError(f"first public sync reported false drift: {verification}")
         _assert_prompt_marker(codex, env, output, "dev-tools:code-review")
+        _assert_prompt_marker(codex, env, output, "LOCAL_AUTHORITY_MARKER")
+        prompt = run(codex, ["-C", str(output), "debug", "prompt-input", "probe"], env).stdout
+        if "STALE_INSTALLED_COPY_MARKER" in prompt:
+            raise AssertionError("public sync converted Claude's stale installed copy")
 
         unchanged = _actions(_run_ai_config(config, env))
         if set(unchanged) != {"noop_codex_plugin"}:
@@ -332,7 +357,7 @@ def probe(codex: str) -> dict[str, object]:
         skill_path = plugin / "skills/code-review/SKILL.md"
         skill_path.write_text(
             skill_path.read_text().replace(
-                "description: Review code for best practices, security issues, and style violations.",
+                "description: Review code for best practices, security issues, and style violations. LOCAL_AUTHORITY_MARKER.",
                 "description: PUBLIC_SYNC_UPDATE_MARKER.",
             )
         )
@@ -402,7 +427,7 @@ def probe(codex: str) -> dict[str, object]:
         "binary": str(Path(codex).resolve()),
         "public_command": f"{sys.executable} -m ai_config sync --config <isolated> --json",
         "lifecycle": [
-            "first-sync-register-install",
+            "first-sync-force-verify-local-authority",
             "unchanged-noop",
             "generated-output-integrity-repair",
             "source-refresh-update",

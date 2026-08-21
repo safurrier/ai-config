@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from ai_config.adapters.claude import CommandResult, InstalledMarketplace, InstalledPlugin
-from ai_config.operations import apply_sync_plan, build_sync_plan
+from ai_config.operations import apply_sync_plan, build_sync_plan, sync_target
 from ai_config.sync_pipeline import (
     CacheOwnershipSnapshot,
     DesiredState,
@@ -295,6 +295,183 @@ def test_unavailable_conversion_source_allows_planned_plugin_install() -> None:
     assert [item.action for item in report.completed] == ["install"]
     assert any("temporarily unavailable" in error for error in report.errors)
     install.assert_called_once_with("demo", "user")
+
+
+def test_remote_source_converges_after_one_bounded_reobservation(tmp_path: Path) -> None:
+    source = tmp_path / "installed-plugin"
+    (source / ".claude-plugin").mkdir(parents=True)
+    (source / ".claude-plugin/plugin.json").write_text('{"name":"demo","version":"1.0.0"}')
+    (source / "skills/demo").mkdir(parents=True)
+    (source / "skills/demo/SKILL.md").write_text("---\nname: demo\n---\nBody\n")
+    output = tmp_path / "output"
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            marketplaces={"remote": MarketplaceConfig(PluginSource.GITHUB, repo="owner/plugins")},
+            plugins=(PluginConfig("demo@remote"),),
+            conversion=ConversionConfig(targets=("cursor",), output_dir=str(output)),
+        ),
+    )
+    marketplace = InstalledMarketplace(
+        "remote", PluginSource.GITHUB, "owner/plugins", str(tmp_path / "marketplace")
+    )
+    installed = InstalledPlugin("demo@remote", "1.0.0", "user", True, str(source))
+    cache = {"version": 9, "entries": {}, "codex_output_dirs": [], "pi_output_dirs": []}
+    command = CommandResult(True, "", "", 0)
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=([marketplace], []),
+        ),
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            side_effect=[([], []), ([], []), ([installed], []), ([installed], [])],
+        ),
+        patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+        patch("ai_config.operations.claude.install_plugin", return_value=command) as install,
+        patch("ai_config.sync_state.save_conversion_cache"),
+    ):
+        result = sync_target(target)
+
+    assert result.success
+    assert [action.action for action in result.actions_taken][0] == "install"
+    assert (output / ".cursor/skills/demo-demo/SKILL.md").is_file()
+    install.assert_called_once_with("demo@remote", "user")
+
+
+def test_remote_prerequisite_runs_before_unrelated_conversion_blocker(
+    tmp_path: Path,
+) -> None:
+    malformed = tmp_path / "malformed-plugin"
+    (malformed / ".claude-plugin").mkdir(parents=True)
+    (malformed / ".claude-plugin/plugin.json").write_text("{not-json")
+    deferred = tmp_path / "deferred-plugin"
+    (deferred / ".claude-plugin").mkdir(parents=True)
+    (deferred / ".claude-plugin/plugin.json").write_text('{"name":"deferred","version":"1.0.0"}')
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            marketplaces={"remote": MarketplaceConfig(PluginSource.GITHUB, repo="owner/plugins")},
+            plugins=(PluginConfig("malformed@remote"), PluginConfig("deferred@remote")),
+            conversion=ConversionConfig(targets=("cursor",), output_dir=str(tmp_path / "output")),
+        ),
+    )
+    marketplace = InstalledMarketplace("remote", PluginSource.GITHUB, "owner/plugins", "")
+    malformed_installed = InstalledPlugin("malformed@remote", "1.0.0", "user", True, str(malformed))
+    deferred_installed = InstalledPlugin("deferred@remote", "1.0.0", "user", True, str(deferred))
+    cache = {"version": 9, "entries": {}, "codex_output_dirs": [], "pi_output_dirs": []}
+    command = CommandResult(True, "", "", 0)
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=([marketplace], []),
+        ),
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            side_effect=[
+                ([malformed_installed], []),
+                ([malformed_installed], []),
+                ([malformed_installed, deferred_installed], []),
+            ],
+        ),
+        patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+        patch("ai_config.operations.claude.install_plugin", return_value=command) as install,
+    ):
+        result = sync_target(target)
+
+    assert not result.success
+    assert [action.action for action in result.actions_taken] == ["install"]
+    assert any("Conversion failed for malformed@remote" in error for error in result.errors)
+    install.assert_called_once_with("deferred@remote", "user")
+
+
+def test_deferred_remote_dry_run_reports_only_exact_prerequisite_actions(
+    tmp_path: Path,
+) -> None:
+    available = tmp_path / "available"
+    (available / ".claude-plugin").mkdir(parents=True)
+    (available / ".claude-plugin/plugin.json").write_text('{"name":"available","version":"1.0.0"}')
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            marketplaces={"remote": MarketplaceConfig(PluginSource.GITHUB, repo="owner/plugins")},
+            plugins=(PluginConfig("available@remote"), PluginConfig("deferred@remote")),
+            conversion=ConversionConfig(targets=("cursor",), output_dir=str(tmp_path / "output")),
+        ),
+    )
+    marketplace = InstalledMarketplace("remote", PluginSource.GITHUB, "owner/plugins", "")
+    installed = InstalledPlugin("available@remote", "1.0.0", "user", True, str(available))
+    cache = {"version": 9, "entries": {}, "codex_output_dirs": [], "pi_output_dirs": []}
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=([marketplace], []),
+        ),
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            return_value=([installed], []),
+        ),
+        patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+    ):
+        result = sync_target(target, dry_run=True)
+
+    assert not result.success
+    assert [action.action for action in result.actions_taken] == ["install"]
+    assert result.actions_taken[0].target == "deferred@remote"
+    assert any("temporarily unavailable" in error for error in result.errors)
+
+
+def test_missing_configured_local_source_never_triggers_reobservation(tmp_path: Path) -> None:
+    marketplace_root = tmp_path / "local-marketplace"
+    marketplace_root.mkdir()
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            marketplaces={
+                "local": MarketplaceConfig(PluginSource.LOCAL, path=str(marketplace_root))
+            },
+            plugins=(PluginConfig("demo@local"),),
+            conversion=ConversionConfig(targets=("cursor",), output_dir=str(tmp_path / "output")),
+        ),
+    )
+    marketplace = InstalledMarketplace("local", PluginSource.LOCAL, "", str(marketplace_root))
+    command = CommandResult(True, "", "", 0)
+    cache = {"version": 9, "entries": {}, "codex_output_dirs": [], "pi_output_dirs": []}
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=([marketplace], []),
+        ),
+        patch(
+            "ai_config.operations.claude.list_installed_plugins", return_value=([], [])
+        ) as observe_plugins,
+        patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+        patch("ai_config.operations.claude.install_plugin", return_value=command) as install,
+    ):
+        result = sync_target(target)
+
+    assert not result.success
+    assert any("temporarily unavailable" in error for error in result.errors)
+    assert observe_plugins.call_count == 2
+    install.assert_called_once_with("demo@local", "user")
+
+
+def test_duplicate_configured_selectors_block_before_mutation() -> None:
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            plugins=(PluginConfig("demo"), PluginConfig("demo")),
+        ),
+    )
+    with (
+        patch("ai_config.operations.claude.list_installed_marketplaces", return_value=([], [])),
+        patch("ai_config.operations.claude.list_installed_plugins", return_value=([], [])),
+        patch("ai_config.operations.claude.install_plugin") as install,
+    ):
+        report = apply_sync_plan(build_sync_plan(target))
+
+    assert report.errors == ("Duplicate configured plugin selectors: demo",)
+    install.assert_not_called()
 
 
 def test_cache_checkpoint_failure_is_reported_and_not_committed(tmp_path: Path) -> None:

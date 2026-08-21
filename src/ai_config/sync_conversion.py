@@ -37,6 +37,7 @@ from ai_config.sync_pipeline import (
     EmittedTargetBatch,
     PiRootPlan,
     PlannedCheckpoint,
+    ResolvedPluginSource,
     TargetActionBatch,
 )
 from ai_config.types import (
@@ -156,7 +157,7 @@ def _plan_conversion_pipeline(
     force_convert: bool,
     installed_plugins: tuple[claude.InstalledPlugin, ...],
     cache_snapshot: dict,
-    resolved_sources: dict[str, Path],
+    resolved_sources: dict[str, ResolvedPluginSource],
     planned_batches: list[TargetActionBatch],
     preflight_summary: dict[str, tuple[str, ...]],
     planned_emissions: list[EmittedTargetBatch],
@@ -263,7 +264,8 @@ def _plan_conversion_pipeline(
                 continue
 
             installed = installed_by_id.get(plugin_config.id)
-            plugin_path = resolved_sources.get(plugin_config.id)
+            resolved_source = resolved_sources.get(plugin_config.id)
+            plugin_path = resolved_source.path if resolved_source is not None else None
             if plugin_path is None:
                 if codex_enabled:
                     retained_codex_ids.add(configured_codex_id)
@@ -403,13 +405,19 @@ def _plan_conversion_pipeline(
     candidates_to_convert: list[tuple[_ConversionCandidate, str | None]] = []
     candidate_hashes: dict[str, str | None] = {}
     for candidate in candidates:
-        plugin_hash = state.compute_plugin_hash(candidate.plugin_path)
+        source = resolved_sources[candidate.config_id]
+        plugin_hash = source.digest
         candidate_hashes[candidate.config_id] = plugin_hash
         cache_valid = False
         if not force_convert and plugin_hash is not None:
-            signature_map = cache_entries.get(str(candidate.plugin_path))
+            signature_map = cache_entries.get(candidate.config_id)
             cached = signature_map.get(signature) if isinstance(signature_map, dict) else None
-            cache_valid = isinstance(cached, dict) and cached.get("hash") == plugin_hash
+            cache_valid = (
+                isinstance(cached, dict)
+                and cached.get("hash") == plugin_hash
+                and cached.get("source_path") == str(candidate.plugin_path)
+                and cached.get("source_provenance") == source.provenance
+            )
             if cache_valid and candidate.codex_spec is not None:
                 if not isinstance(cached, dict):
                     cache_valid = False
@@ -576,11 +584,12 @@ def _plan_conversion_pipeline(
             cache_dirty=cache_dirty,
             candidates=tuple(
                 ConversionCandidatePlan(
-                    candidate.config_id,
-                    candidate.plugin_path,
-                    candidate_hashes.get(candidate.config_id),
-                    candidate.config_id in refresh_ids,
-                    candidate.codex_spec,
+                    source_plugin_id=candidate.config_id,
+                    source_path=candidate.plugin_path,
+                    source_digest=candidate_hashes.get(candidate.config_id),
+                    source_provenance=resolved_sources[candidate.config_id].provenance,
+                    refresh=candidate.config_id in refresh_ids,
+                    codex_spec=candidate.codex_spec,
                 )
                 for candidate in candidates
             ),
@@ -604,7 +613,7 @@ def plan_conversions(
     force_convert: bool,
     installed_plugins: tuple[claude.InstalledPlugin, ...],
     cache_snapshot: dict,
-    resolved_sources: dict[str, Path],
+    resolved_sources: dict[str, ResolvedPluginSource],
 ) -> ConversionPlanningResult:
     """Preflight conversion and materialize all emitted and lifecycle decisions."""
     target_batches: list[TargetActionBatch] = []
@@ -797,12 +806,14 @@ def apply_conversion_plan(
                 continue
             refreshed_codex_ids.add(candidate.codex_spec.plugin_id)
         if candidate.source_digest is not None:
-            signature_map = cache_entries.setdefault(str(candidate.source_path), {})
+            signature_map = cache_entries.setdefault(candidate.source_plugin_id, {})
             if not isinstance(signature_map, dict):
                 signature_map = {}
-                cache_entries[str(candidate.source_path)] = signature_map
+                cache_entries[candidate.source_plugin_id] = signature_map
             cache_value: dict[str, str] = {
                 "hash": candidate.source_digest,
+                "source_path": str(candidate.source_path),
+                "source_provenance": candidate.source_provenance,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             if candidate.codex_spec is not None:
