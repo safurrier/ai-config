@@ -117,13 +117,22 @@ def compute_plugin_hash(plugin_path: Path) -> str | None:
     hasher = hashlib.sha256()
     try:
         with ContainedSource(plugin_path) as source:
-            for relative in source.walk_all_files(context="plugin hash"):
+            files, context_mirrors = source.snapshot_files_and_context_mirrors(
+                context="plugin hash"
+            )
+            for relative in files:
                 item = source.read_file(relative, context="plugin hash")
                 hasher.update(os.fsencode(relative.as_posix()))
                 hasher.update(b"\0")
                 hasher.update(b"x" if item.executable else b"-")
                 hasher.update(len(item.content).to_bytes(8, "big"))
                 hasher.update(item.content)
+            for mirror in context_mirrors:
+                target = os.fsencode(mirror.target)
+                hasher.update(os.fsencode(mirror.relative_path.as_posix()))
+                hasher.update(b"\0l")
+                hasher.update(len(target).to_bytes(8, "big"))
+                hasher.update(target)
         return hasher.hexdigest()
     except (OSError, SourceSafetyError, UnicodeError):
         return None

@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sync source hashing now accepts the repository-standard `CLAUDE.md -> AGENTS.md`
+  sibling mirror while continuing to reject every other symlink, allowing safe local
+  plugin marketplaces to participate in immutable observe-plan-apply snapshots.
 - Shared-resource reports now retain per-Markdown rewrite evidence through target-native
   overrides, so additive rewrite totals describe only the final converter-emitted projection.
 - Claude cache clearing now respects `CLAUDE_CONFIG_DIR`, so fresh syncs for
