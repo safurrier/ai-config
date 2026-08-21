@@ -457,6 +457,36 @@ def test_hash_handles_non_utf8_posix_filename_deterministically(tmp_path: Path) 
     assert compute_plugin_hash(plugin) == first
 
 
+def test_hash_accepts_exact_agent_context_mirror_and_tracks_it(tmp_path: Path) -> None:
+    plugin = _plugin(tmp_path, [])
+    agents = plugin / "AGENTS.md"
+    agents.write_text("instructions\n")
+    mirror = plugin / "CLAUDE.md"
+    mirror.symlink_to("AGENTS.md")
+
+    with_mirror = compute_plugin_hash(plugin)
+    assert with_mirror is not None
+    assert compute_plugin_hash(plugin) == with_mirror
+
+    mirror.unlink()
+    without_mirror = compute_plugin_hash(plugin)
+    assert without_mirror is not None
+    assert without_mirror != with_mirror
+
+
+def test_hash_rejects_context_mirror_with_wrong_or_escaping_target(tmp_path: Path) -> None:
+    plugin = _plugin(tmp_path, [])
+    (plugin / "AGENTS.md").write_text("instructions\n")
+    (plugin / "OTHER.md").write_text("other\n")
+    mirror = plugin / "CLAUDE.md"
+    mirror.symlink_to("OTHER.md")
+    assert compute_plugin_hash(plugin) is None
+
+    mirror.unlink()
+    mirror.symlink_to(tmp_path / "outside")
+    assert compute_plugin_hash(plugin) is None
+
+
 def test_hash_includes_shared_bytes_and_fails_closed_on_symlink(tmp_path: Path) -> None:
     plugin = _plugin(tmp_path, ["shared/data.txt"])
     (plugin / "shared").mkdir()

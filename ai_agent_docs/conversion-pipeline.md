@@ -70,10 +70,13 @@ diagnostics, and output paths.
 plugin-relative paths, rejects final and in-root ancestor symlinks, traversal, special files, and
 resolved escape before reading. Manifests, components, skill assets, includes, Codex support files,
 and target-native files use this descriptor-relative, no-follow boundary. `compute_plugin_hash()`
-walks the same fail-closed source universe. Sync rehashes that universe before conversion as a stale
-plan precondition, but digesting and conversion remain separate contained passes. Standalone
-`convert` does not compute a digest. Cache version 8 invalidates older content signatures while
-preserving validated tracked Codex and Pi output roots.
+walks the same regular-file universe and permits one metadata-only exception: the exact sibling
+`CLAUDE.md -> AGENTS.md` repository context mirror whose target opens as a no-follow regular file.
+The digest includes the link path and target text without reading through it; every other symlink
+remains a hard failure. Sync rehashes that universe before conversion as a stale plan precondition,
+but digesting and conversion remain separate contained passes. Standalone `convert` does not compute
+a digest. Cache version 8 invalidates older content signatures while preserving validated tracked
+Codex and Pi output roots.
 
 `skill_projection.py` is pure and shared by all four emitters. It rewrites only exact declared
 `${CLAUDE_PLUGIN_ROOT}/<path>` occurrences in instruction Markdown, always to a skill-root-relative

@@ -27,6 +27,14 @@ class SourceFile:
     executable: bool
 
 
+@dataclass(frozen=True)
+class SourceContextMirror:
+    """One validated repository context mirror kept as symlink metadata."""
+
+    relative_path: PurePosixPath
+    target: str
+
+
 def _validate_platform_path(value: str, *, context: str) -> None:
     """Reject values the host cannot safely pass to filesystem APIs."""
     if "\0" in value:
@@ -258,6 +266,56 @@ class ContainedSource:
             raise SourceSafetyError(f"{context} path changed while being read: {relative}")
         return SourceFile(relative, content, bool(after.st_mode & 0o111))
 
+    def _read_context_mirror(
+        self,
+        directory_fd: int,
+        name: str,
+        relative: PurePosixPath,
+        *,
+        context: str,
+    ) -> SourceContextMirror:
+        """Validate the repository's exact ``CLAUDE.md -> AGENTS.md`` mirror."""
+        if name != "CLAUDE.md":
+            raise SourceSafetyError(f"{context} contains a symlink: {relative}")
+        try:
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            target = os.readlink(name, dir_fd=directory_fd)
+            if target != "AGENTS.md":
+                raise SourceSafetyError(
+                    f"{context} context mirror must target sibling AGENTS.md: {relative}"
+                )
+            target_fd = os.open(target, _OPEN_BASE | _OPEN_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                target_stat = os.fstat(target_fd)
+                if not stat.S_ISREG(target_stat.st_mode):
+                    raise SourceSafetyError(
+                        f"{context} context mirror target is not a regular file: {relative}"
+                    )
+            finally:
+                os.close(target_fd)
+            after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            after_target = os.readlink(name, dir_fd=directory_fd)
+        except OSError as error:
+            raise SourceSafetyError(
+                f"{context} context mirror is unreadable: {relative}: {error}"
+            ) from error
+
+        def identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+            return (
+                value.st_dev,
+                value.st_ino,
+                value.st_mode,
+                value.st_nlink,
+                value.st_mtime_ns,
+                value.st_ctime_ns,
+            )
+
+        if identity(before) != identity(after) or target != after_target:
+            raise SourceSafetyError(
+                f"{context} context mirror changed while being read: {relative}"
+            )
+        return SourceContextMirror(relative, target)
+
     def _walk_directory(
         self,
         directory_fd: int,
@@ -267,6 +325,8 @@ class ContainedSource:
         isolate_errors: bool,
         files: list[PurePosixPath],
         errors: list[str],
+        context_mirrors: list[SourceContextMirror] | None = None,
+        allow_context_mirrors: bool = False,
     ) -> None:
         try:
             names = sorted(os.listdir(directory_fd))
@@ -281,7 +341,17 @@ class ContainedSource:
             try:
                 item_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
                 if stat.S_ISLNK(item_stat.st_mode):
-                    raise SourceSafetyError(f"{context} contains a symlink: {child}")
+                    if not allow_context_mirrors or context_mirrors is None:
+                        raise SourceSafetyError(f"{context} contains a symlink: {child}")
+                    context_mirrors.append(
+                        self._read_context_mirror(
+                            directory_fd,
+                            name,
+                            child,
+                            context=context,
+                        )
+                    )
+                    continue
                 if stat.S_ISDIR(item_stat.st_mode):
                     child_fd = os.open(name, _OPEN_DIRECTORY | _OPEN_NOFOLLOW, dir_fd=directory_fd)
                     try:
@@ -292,6 +362,8 @@ class ContainedSource:
                             isolate_errors=isolate_errors,
                             files=files,
                             errors=errors,
+                            context_mirrors=context_mirrors,
+                            allow_context_mirrors=allow_context_mirrors,
                         )
                     finally:
                         os.close(child_fd)
@@ -376,3 +448,25 @@ class ContainedSource:
         finally:
             os.close(root_fd)
         yield from files
+
+    def snapshot_files_and_context_mirrors(
+        self, *, context: str
+    ) -> tuple[tuple[PurePosixPath, ...], tuple[SourceContextMirror, ...]]:
+        """Collect regular files plus exact repository context mirror metadata."""
+        files: list[PurePosixPath] = []
+        mirrors: list[SourceContextMirror] = []
+        root_fd = os.dup(self._root_descriptor())
+        try:
+            self._walk_directory(
+                root_fd,
+                PurePosixPath("."),
+                context=context,
+                isolate_errors=False,
+                files=files,
+                errors=[],
+                context_mirrors=mirrors,
+                allow_context_mirrors=True,
+            )
+        finally:
+            os.close(root_fd)
+        return tuple(files), tuple(mirrors)
