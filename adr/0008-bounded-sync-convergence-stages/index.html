@@ -12,31 +12,29 @@
         <meta name="author" content="Alex Furrier">
       
       
-        <link rel="canonical" href="https://safurrier.github.io/ai-config/project-evolution/">
+        <link rel="canonical" href="https://safurrier.github.io/ai-config/adr/0008-bounded-sync-convergence-stages/">
       
       
-        <link rel="prev" href="../architecture/">
+        <link rel="prev" href="../0007-materialize-shared-skill-resources/">
       
-      
-        <link rel="next" href="../adr/">
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
     
     
       
-        <title>Project evolution - ai-config</title>
+        <title>Bounded sync convergence - ai-config</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -55,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -82,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#project-evolution" class="md-skip">
+        <a href="#bound-sync-convergence-across-prerequisite-and-conversion-stages" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +96,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="ai-config" class="md-header__button md-logo" aria-label="ai-config" data-md-component="logo">
+    <a href="../.." title="ai-config" class="md-header__button md-logo" aria-label="ai-config" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -118,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Project evolution
+              Bounded sync convergence
             
           </span>
         </div>
@@ -225,7 +223,7 @@
   
   
     <li class="md-tabs__item">
-      <a href=".." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -244,7 +242,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../commands/" class="md-tabs__link">
+      <a href="../../commands/" class="md-tabs__link">
         
   
   
@@ -263,7 +261,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../config/" class="md-tabs__link">
+      <a href="../../config/" class="md-tabs__link">
         
   
   
@@ -282,7 +280,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../conversion/" class="md-tabs__link">
+      <a href="../../conversion/" class="md-tabs__link">
         
   
   
@@ -301,7 +299,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../architecture/" class="md-tabs__link">
+      <a href="../../architecture/" class="md-tabs__link">
         
   
   
@@ -318,11 +316,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href="../../project-evolution/" class="md-tabs__link">
         
   
   
@@ -339,11 +335,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../adr/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -383,7 +381,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="ai-config" class="md-nav__button md-logo" aria-label="ai-config" data-md-component="logo">
+    <a href="../.." title="ai-config" class="md-nav__button md-logo" aria-label="ai-config" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -413,7 +411,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -440,7 +438,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../commands/" class="md-nav__link">
+      <a href="../../commands/" class="md-nav__link">
         
   
   
@@ -467,7 +465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../config/" class="md-nav__link">
+      <a href="../../config/" class="md-nav__link">
         
   
   
@@ -494,7 +492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../conversion/" class="md-nav__link">
+      <a href="../../conversion/" class="md-nav__link">
         
   
   
@@ -521,7 +519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../architecture/" class="md-nav__link">
+      <a href="../../architecture/" class="md-nav__link">
         
   
   
@@ -545,37 +543,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Project evolution
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../project-evolution/" class="md-nav__link">
         
   
   
@@ -591,92 +562,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#declarative-claude-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Declarative Claude management
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cross-tool-conversion-through-an-ir" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cross-tool conversion through an IR
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pi-and-explicit-target-exceptions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Pi and explicit target exceptions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#native-codex-packages" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Native Codex packages
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ownership-becomes-a-destructive-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ownership becomes a destructive boundary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#sync-becomes-observe-plan-apply" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sync becomes observe, plan, apply
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -685,26 +570,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
         
           
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
             
   
   
@@ -722,7 +612,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -740,7 +630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -768,7 +658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0001-claude-plugin-source-model/" class="md-nav__link">
+      <a href="../0001-claude-plugin-source-model/" class="md-nav__link">
         
   
   
@@ -796,7 +686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0002-target-neutral-plugin-ir/" class="md-nav__link">
+      <a href="../0002-target-neutral-plugin-ir/" class="md-nav__link">
         
   
   
@@ -824,7 +714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0003-target-native-overrides/" class="md-nav__link">
+      <a href="../0003-target-native-overrides/" class="md-nav__link">
         
   
   
@@ -852,7 +742,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0004-codex-plugin-packages/" class="md-nav__link">
+      <a href="../0004-codex-plugin-packages/" class="md-nav__link">
         
   
   
@@ -880,7 +770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0005-proven-output-ownership/" class="md-nav__link">
+      <a href="../0005-proven-output-ownership/" class="md-nav__link">
         
   
   
@@ -908,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0006-observe-plan-apply-sync/" class="md-nav__link">
+      <a href="../0006-observe-plan-apply-sync/" class="md-nav__link">
         
   
   
@@ -936,7 +826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adr/0007-materialize-shared-skill-resources/" class="md-nav__link">
+      <a href="../0007-materialize-shared-skill-resources/" class="md-nav__link">
         
   
   
@@ -961,10 +851,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../adr/0008-bounded-sync-convergence-stages/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded sync convergence
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -980,6 +897,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1019,10 +989,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#declarative-claude-management" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Declarative Claude management
+        Context
       
     </span>
   </a>
@@ -1030,10 +1000,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-tool-conversion-through-an-ir" class="md-nav__link">
+  <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross-tool conversion through an IR
+        Decision
       
     </span>
   </a>
@@ -1041,43 +1011,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pi-and-explicit-target-exceptions" class="md-nav__link">
+  <a href="#consequences" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pi and explicit target exceptions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#native-codex-packages" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Native Codex packages
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ownership-becomes-a-destructive-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ownership becomes a destructive boundary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#sync-becomes-observe-plan-apply" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sync becomes observe, plan, apply
+        Consequences
       
     </span>
   </a>
@@ -1104,26 +1041,28 @@
   
 
 
-<h1 id="project-evolution">Project evolution<a class="headerlink" href="#project-evolution" title="Permanent link">&para;</a></h1>
-<p>This timeline records the phases that established today's architecture. Dates refer to the commits merged into <code>main</code>; links point to the original rationale and proof.</p>
-<h2 id="declarative-claude-management">Declarative Claude management<a class="headerlink" href="#declarative-claude-management" title="Permanent link">&para;</a></h2>
-<p>The repository began as a small replacement for manually repeating Claude marketplace and plugin commands across machines. Config version 1 made a Claude target and its marketplaces/plugins the desired-state source. The original scope explicitly deferred other tools rather than pretending they shared one runtime contract.</p>
-<p>Evidence: genesis <code>499cb2b612d26909c6787775401b76e806384310</code> on 2026-02-03 in <code>README.md</code>, <code>src/ai_config/config.py</code>, and <code>src/ai_config/operations.py</code>.</p>
-<h2 id="cross-tool-conversion-through-an-ir">Cross-tool conversion through an IR<a class="headerlink" href="#cross-tool-conversion-through-an-ir" title="Permanent link">&para;</a></h2>
-<p>Research found that skills and MCP concepts traveled reasonably well, while commands, hooks, agents, and LSP support differed. The project added parse → IR → emit conversion, per-target validators, degradation reports, and Docker/Tmux probes instead of coupling the Claude parser directly to every output shape.</p>
-<p>Evidence: <a href="https://github.com/safurrier/ai-config/pull/3">PR #3</a>, merge SHA <code>a11b2c66134b3a6304d23d4dd2daea5910244b2d</code>, on 2026-02-12.</p>
-<h2 id="pi-and-explicit-target-exceptions">Pi and explicit target exceptions<a class="headerlink" href="#pi-and-explicit-target-exceptions" title="Permanent link">&para;</a></h2>
-<p>Pi joined as a conversion target, then sync-driven refresh exposed that conversion caches must account for source and output changes. Target-native overrides followed so a plugin could carry deliberate runtime-specific glue, such as a Pi TypeScript extension, without embedding that logic in the shared IR.</p>
-<p>Evidence: <a href="https://github.com/safurrier/ai-config/pull/8">PR #8</a>, merge SHA <code>83d72b74cce072ddee223ad1b04457fde5393fb8</code>; <a href="https://github.com/safurrier/ai-config/pull/11">PR #11</a>, merge SHA <code>7256360458cf720616ad559b4cd59d26b48e8428</code>; and <a href="https://github.com/safurrier/ai-config/pull/16">PR #16</a>, merge SHA <code>0218de2cd0f393a95a49557d1f2958a52a8145f9</code>.</p>
-<h2 id="native-codex-packages">Native Codex packages<a class="headerlink" href="#native-codex-packages" title="Permanent link">&para;</a></h2>
-<p>Codex conversion first emitted loose files. A feasibility spike preserved that behavior while package APIs were uncertain. Once package and marketplace contracts stabilized, ai-config changed to generated package sources plus Codex-managed installation, with strict identity, version, collision, and lifecycle checks.</p>
-<p>Evidence: <a href="https://github.com/safurrier/ai-config/pull/17">PR #17</a>, merge SHA <code>89dc84ad9f45c6c5c0da56ef86a026abaf4a021c</code>; superseded by <a href="https://github.com/safurrier/ai-config/pull/19">PR #19</a>, merge SHA <code>9983cc993795fb24871e3f62f19517066356b830</code>, on 2026-07-17.</p>
-<h2 id="ownership-becomes-a-destructive-boundary">Ownership becomes a destructive boundary<a class="headerlink" href="#ownership-becomes-a-destructive-boundary" title="Permanent link">&para;</a></h2>
-<p>Pi's loose runtime output could become stale, but deleting by expected path could destroy user files. A durable ledger and pending transaction made create, update, preserve, recover, and remove decisions evidence-based. Codex used the same principle through a different mechanism: reserved generated roots and recorded package ownership, while the runtime retained its own config/cache authority.</p>
-<p>Evidence: <a href="https://github.com/safurrier/ai-config/pull/24">PR #24</a>, merge SHA <code>f3543417abda9296a7ebe2080e019a4f315fc3a7</code>, on 2026-07-26; Codex boundary evidence in <a href="https://github.com/safurrier/ai-config/pull/19">PR #19</a>.</p>
-<h2 id="sync-becomes-observe-plan-apply">Sync becomes observe, plan, apply<a class="headerlink" href="#sync-becomes-observe-plan-apply" title="Permanent link">&para;</a></h2>
-<p>The final phase separated current-state observation, pure deterministic planning, precondition validation, execution, and reporting. Dry-run and real sync now consume the same action plan, while target-specific lifecycle and ownership modules keep their authority. This structure makes partial progress and stale evidence visible without erasing the differences between Claude, Codex, Pi, and file emitters.</p>
-<p>Evidence: <a href="https://github.com/safurrier/ai-config/pull/26">PR #26</a>, merge SHA <code>693442307dbd54b1c8e0f9bb4a17937f98539a2f</code>, on 2026-07-29.</p>
+<h1 id="bound-sync-convergence-across-prerequisite-and-conversion-stages">Bound sync convergence across prerequisite and conversion stages<a class="headerlink" href="#bound-sync-convergence-across-prerequisite-and-conversion-stages" title="Permanent link">&para;</a></h1>
+<p>Status: Accepted
+Date: 2026-08-21</p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>A configured remote Claude plugin may not have a readable conversion source in a fresh environment. The source becomes available only after Claude registers its marketplace and installs the plugin. A single immutable plan cannot both authorize that prerequisite mutation and precompute conversion artifacts from bytes that do not yet exist.</p>
+<p>Configured local marketplaces have a different authority contract: their configured source tree is already inspectable and must not be replaced by Claude's installed cache merely because installation occurred. Treating either installed paths or repeated whole-sync execution as a universal fallback produced path-sensitive cache misses and made fresh isolated verification require another invocation.</p>
+<p>ADR 0006 requires observation, immutable planning, precondition checks, and exact-plan execution. The convergence workflow must preserve those properties while acknowledging a real prerequisite boundary.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>Sync remains bounded and plan-driven, but may use two separately observed immutable plans:</p>
+<ol>
+<li>The initial observation materializes a complete plan.</li>
+<li>If an enabled non-local source is unavailable and the plan contains Claude marketplace or plugin prerequisites, sync projects and applies only that exact Claude prerequisite prefix.</li>
+<li>After successful prerequisite application, sync performs one explicit re-observation and materializes a new plan.</li>
+<li>The second plan is projected to conversion actions only. If it still requires any Claude marketplace or plugin action, conversion is blocked rather than retrying the prerequisite stage.</li>
+<li>Optional verification performs one final read-only plan only after the aggregate apply succeeds.</li>
+</ol>
+<p>Sync never recursively runs until quiet and never replans from inside an executor. Each applied stage has its own runtime, source, cache, and ownership snapshot and consumes only its materialized actions and target batches.</p>
+<p>Configured local marketplaces are strict conversion-source authorities. Missing or unsafe configured local sources remain unavailable and never trigger installed-cache fallback or staged re-observation. Remote and marketplace-less plugins may use safely observed installed sources.</p>
+<p>A dry run does not cross the prerequisite boundary. It reports exact Claude prerequisite actions and deferred source diagnostics without speculating about conversion artifacts that cannot yet be observed.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<p>Fresh remote bootstrap can converge Claude installation and target conversion in one bounded invocation when the prerequisite succeeds and the source becomes readable. If post-install parsing or conversion fails, completed Claude actions remain visible, target ownership is retained according to existing rules, and sync exits non-zero without verification. If the second observation still needs Claude reconciliation, the user must correct the runtime state or retry; the same invocation will not reinstall repeatedly.</p>
+<p>Conversion cache identity is the configured plugin selector plus conversion signature. Physical source path, provenance, source digest, and generated Codex digest remain observations required for a cache hit. Legacy path-keyed entries are discarded while validated tracked output roots remain available for ownership cleanup.</p>
 
 
 
@@ -1195,14 +1134,14 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "toc.follow", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "toc.follow", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="https://unpkg.com/mermaid@11.9.0/dist/mermaid.min.js"></script>
       
-        <script src="../javascripts/mermaid.js"></script>
+        <script src="../../javascripts/mermaid.js"></script>
       
     
   </body>

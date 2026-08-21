@@ -924,6 +924,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-bounded-sync-convergence-stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded sync convergence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1084,8 +1112,9 @@
 </tbody>
 </table>
 <h2 id="sync-flow">Sync flow<a class="headerlink" href="#sync-flow" title="Permanent link">&para;</a></h2>
-<p>Marketplace actions precede dependent Claude plugin actions. Conversion follows Claude reconciliation because conversion sources may come from installed or local marketplace plugins. The executor rechecks observed preconditions before mutation. It records completed and failed actions separately and commits cache or ownership checkpoints only where the plan permits them.</p>
-<p><code>--dry-run</code> renders the same materialized plan without runtime, cache, ownership, or filesystem mutation, except for a report explicitly requested with <code>convert --report PATH</code>. A real <code>--fresh</code> clears Claude's cache before observation; a fresh dry-run does not, because its mutation-free contract is stronger than simulating that altered observation.</p>
+<p>Marketplace actions precede dependent Claude plugin actions. Configured local marketplaces remain the strict conversion-source authority after installation; remote and marketplace-less plugins may use safely observed installed sources.</p>
+<p>When a fresh remote source does not exist until Claude installs it, the public operation coordinates two bounded immutable plans. It first applies only the exact Claude prerequisite prefix, re-observes once, then applies a conversion-only projection of the second plan. The second plan is blocked if it still requires Claude reconciliation. Executors never replan, and sync never recursively runs until quiet. Each executor rechecks its plan's runtime, source, cache, and ownership preconditions, records completed and failed actions separately, and commits checkpoints only where that plan permits them.</p>
+<p><code>--dry-run</code> renders the initial materialized plan without runtime, cache, ownership, or filesystem mutation, except for a report explicitly requested with <code>convert --report PATH</code>. Deferred remote conversion remains explicit because dry-run cannot inspect a source that installation has not materialized. A real <code>--fresh</code> clears Claude's plugin cache before observation and forces configured conversion; it does not clear target homes or ownership ledgers. A fresh dry-run does not clear anything because its mutation-free contract is stronger than simulating that altered observation. Optional verification performs one final read-only plan only after every apply stage succeeds.</p>
 <h2 id="conversion-flow">Conversion flow<a class="headerlink" href="#conversion-flow" title="Permanent link">&para;</a></h2>
 <p><code>ClaudePluginParser</code> normalizes the source bundle into <code>PluginIR</code>. Emitters independently transform that IR into target output:</p>
 <ul>

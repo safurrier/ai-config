@@ -929,6 +929,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../0008-bounded-sync-convergence-stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded sync convergence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1024,7 +1052,8 @@ Date: 2026-07-29</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <p>Sync first observes desired configuration, runtime state, source state, cache, and ownership. A pure transform produces an immutable, ordered <code>SyncPlan</code>. Validation checks blocking diagnostics and preconditions before an executor applies that exact plan and reports completed or failed actions.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<p>Dry-run and real execution share one authorization artifact, and target-specific planners remain responsible for their domains. The design adds explicit snapshot and action records, but makes state drift, partial progress, and checkpoint eligibility observable. Real <code>--fresh</code> cache clearing remains outside the pure transform because it changes subsequent observation; fresh dry-run remains mutation-free.</p>
+<p>Dry-run and each real execution stage share an immutable authorization artifact, and target-specific planners remain responsible for their domains. The design adds explicit snapshot and action records, but makes state drift, partial progress, and checkpoint eligibility observable. Real <code>--fresh</code> cache clearing remains outside the pure transform because it changes subsequent observation; fresh dry-run remains mutation-free.</p>
+<p><a href="../0008-bounded-sync-convergence-stages/">ADR 0008</a> permits one explicit re-observation barrier after a successfully applied Claude prerequisite plan. It does not permit apply-time replanning: the conversion stage receives a new snapshot and separately validated immutable plan, and the operation remains bounded.</p>
 
 
 

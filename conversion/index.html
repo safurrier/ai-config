@@ -1007,6 +1007,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adr/0008-bounded-sync-convergence-stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bounded sync convergence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1423,15 +1451,28 @@ For Codex, the natural root is the generated plugin package—not shared <code>.
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>ai-config<span class="w"> </span>doctor<span class="w"> </span>--target<span class="w"> </span>all<span class="w"> </span>./output-dir
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>ai-config<span class="w"> </span>sync<span class="w"> </span>--force-convert
 </code></pre></div>
-<p>Sync hashes plugin source, conversion settings, and owned generated marketplace bytes. A cache hit
-is accepted only while the package and marketplace still exist without symlinks and match the saved
-fingerprint, so normal sync repairs deleted or tampered output. Dry-run and JSON output distinguish
-planned, completed, and failed actions. <code>status --config ... --json</code> exits non-zero when lifecycle
-planning finds a non-no-op action or an inspection error.</p>
-<p>Configured sources are tracked separately as desired, temporarily unavailable, or disabled. A
-temporarily unavailable source retains prior ownership; a disabled/removed source is cleaned up.
-Removing or disabling the Codex target also reconciles prior owned roots, including a prior custom
-<code>output_dir</code> recorded in the conversion cache.</p>
+<p>Sync keys conversion cache entries by configured plugin selector and conversion settings. Source
+provenance, physical path, complete safe source digest, and owned generated Codex bytes remain
+required observations for a cache hit. A changed source path refreshes output because target files
+may contain resolved plugin-root paths. Legacy path-keyed entries are discarded while validated
+tracked output roots remain available for ownership cleanup. Normal sync therefore repairs deleted
+or tampered output without treating an incidental path as logical plugin identity.</p>
+<p>Configured local marketplaces are strict conversion-source authorities, including after Claude
+installs a cached copy. If that configured tree is missing or unsafe, sync retains prior ownership
+and reports it unavailable rather than converting stale installed bytes. Remote and
+marketplace-less plugins may use safely observed installed sources.</p>
+<p>A fresh remote plugin may require Claude installation before its source can be inspected. Real sync
+applies one immutable Claude prerequisite plan, re-observes once, and then applies a separately
+validated conversion-only plan. It never retries Claude actions or recursively syncs until quiet.
+Dry-run reports the exact prerequisite actions and deferred source without speculating about the
+second stage. If post-install parsing or conversion fails, completed Claude actions remain visible,
+conversion exits non-zero, and verification is skipped.</p>
+<p>Dry-run and JSON output distinguish planned, completed, and failed actions. <code>sync --verify</code> performs
+one read-only verification only after all apply stages succeed; an empty isolated <code>CODEX_HOME</code> is a
+supported initial state. <code>status --config ... --json</code> exits non-zero when lifecycle planning finds a
+non-no-op action or an inspection error. A temporarily unavailable source retains prior ownership;
+a disabled/removed source is cleaned up. Removing or disabling the Codex target also reconciles
+prior owned roots, including a prior custom <code>output_dir</code> recorded in the conversion cache.</p>
 <p>Every Codex subprocess has a finite timeout. On POSIX, each command starts in a separate process
 group; after a bounded SIGTERM grace period, timeout cleanup inspects and kills any remaining group
 even when the direct child exited first, then performs a bounded reap of the direct child. Non-POSIX
