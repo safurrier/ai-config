@@ -47,7 +47,9 @@ Marketplace actions precede dependent Claude plugin actions. Conversion follows 
 
 The parser and emit-time source support readers share the same fail-closed containment authority. The
 IR carries include bytes so emitters never reopen include source paths. Sync's source digest walks the
-same regular-file universe and becomes unreadable if a symlink or special file could bypass it. This
+same regular-file universe and additionally hashes metadata for the exact repository mirror
+`CLAUDE.md -> AGENTS.md` after proving the sibling target is a no-follow regular file. It never reads
+through the link; every other symlink and every special file still makes the source unreadable. This
 source-read boundary does not remove the separate pre-existing check-then-write race at the validated
 output path; output containment is not an atomic writer or additional ownership proof.
 
