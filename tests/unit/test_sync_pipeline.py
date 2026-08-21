@@ -339,6 +339,52 @@ def test_remote_source_converges_after_one_bounded_reobservation(tmp_path: Path)
     install.assert_called_once_with("demo@remote", "user")
 
 
+def test_remote_prerequisite_runs_before_unrelated_conversion_blocker(
+    tmp_path: Path,
+) -> None:
+    malformed = tmp_path / "malformed-plugin"
+    (malformed / ".claude-plugin").mkdir(parents=True)
+    (malformed / ".claude-plugin/plugin.json").write_text("{not-json")
+    deferred = tmp_path / "deferred-plugin"
+    (deferred / ".claude-plugin").mkdir(parents=True)
+    (deferred / ".claude-plugin/plugin.json").write_text('{"name":"deferred","version":"1.0.0"}')
+    target = TargetConfig(
+        type="claude",
+        config=ClaudeTargetConfig(
+            marketplaces={"remote": MarketplaceConfig(PluginSource.GITHUB, repo="owner/plugins")},
+            plugins=(PluginConfig("malformed@remote"), PluginConfig("deferred@remote")),
+            conversion=ConversionConfig(targets=("cursor",), output_dir=str(tmp_path / "output")),
+        ),
+    )
+    marketplace = InstalledMarketplace("remote", PluginSource.GITHUB, "owner/plugins", "")
+    malformed_installed = InstalledPlugin("malformed@remote", "1.0.0", "user", True, str(malformed))
+    deferred_installed = InstalledPlugin("deferred@remote", "1.0.0", "user", True, str(deferred))
+    cache = {"version": 9, "entries": {}, "codex_output_dirs": [], "pi_output_dirs": []}
+    command = CommandResult(True, "", "", 0)
+    with (
+        patch(
+            "ai_config.operations.claude.list_installed_marketplaces",
+            return_value=([marketplace], []),
+        ),
+        patch(
+            "ai_config.operations.claude.list_installed_plugins",
+            side_effect=[
+                ([malformed_installed], []),
+                ([malformed_installed], []),
+                ([malformed_installed, deferred_installed], []),
+            ],
+        ),
+        patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
+        patch("ai_config.operations.claude.install_plugin", return_value=command) as install,
+    ):
+        result = sync_target(target)
+
+    assert not result.success
+    assert [action.action for action in result.actions_taken] == ["install"]
+    assert any("Conversion failed for malformed@remote" in error for error in result.errors)
+    install.assert_called_once_with("deferred@remote", "user")
+
+
 def test_deferred_remote_dry_run_reports_only_exact_prerequisite_actions(
     tmp_path: Path,
 ) -> None:

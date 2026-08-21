@@ -431,6 +431,7 @@ def prerequisite_sync_plan(plan: SyncPlan) -> SyncPlan:
             plan,
             sources=sources,
             actions=tuple(item for item in plan.actions if item.phase != "conversion"),
+            diagnostics=tuple(item for item in plan.diagnostics if item.phase != "conversion"),
             reported_diagnostics=(),
             target_batches=(),
             checkpoints=(),
