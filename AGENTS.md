@@ -34,9 +34,7 @@ uv run --frozen --no-sync mkdocs build --strict
 
 ## Releases
 
-Before a release, move `[Unreleased]` entries to a new version section with the
-actual release date. Keep the version in `pyproject.toml` and the release notes
-aligned.
+Before a release, finalize the version and release notes together. Move `[Unreleased]` entries to a new version section with the actual release date. Keep the version in `pyproject.toml` and the release notes aligned.
 
 ## Related context
 
