@@ -121,7 +121,7 @@ from the content hash cache because it defines the destructive boundary.
 
 ## Core sync rules
 
-A sync has one fixed plan. The plan says what may change. Apply only that plan.
+Each sync stage has one fixed plan. The plan says what may change. Apply only that plan. When a remote source needs installation, apply its prerequisite projection, re-observe, and build a separate plan for the conversion stage.
 
 Read the source before a change. Check its path before a read. Keep all reads in the source boundary.
 Keep each target apart. One target must not change another target's files. Keep each result separate.
@@ -143,8 +143,7 @@ Use clear target work. Each target gets its own result. Each result lists its fi
 may write its own output. It may not write a peer target's output. A cleanup step needs a known owned
 path. If proof is not present, leave the path in place.
 
-Use a real dry run. It shows each step in the same order as a real run. It does not clear cache, write
-files, call a live lifecycle tool, or delete data. A real run checks the same state before each stage.
+Use a real dry run. It shows the observable first stage in the same order as a real run. For a deferred source, it reports diagnostics instead of guessing a later conversion plan. It does not clear cache, write files, call a live lifecycle tool, or delete data. A real run checks the same state before each stage.
 
 ## Fidelity and reports
 
