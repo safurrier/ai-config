@@ -37,3 +37,21 @@ Evidence: [PR #24](https://github.com/safurrier/ai-config/pull/24), merge SHA `f
 The final phase separated current-state observation, pure deterministic planning, precondition validation, execution, and reporting. Dry-run and real sync now consume the same action plan, while target-specific lifecycle and ownership modules keep their authority. This structure makes partial progress and stale evidence visible without erasing the differences between Claude, Codex, Pi, and file emitters.
 
 Evidence: [PR #26](https://github.com/safurrier/ai-config/pull/26), merge SHA `693442307dbd54b1c8e0f9bb4a17937f98539a2f`, on 2026-07-29.
+
+## Self-contained skills and fail-closed source reads
+
+Converted skills could refer to shared plugin files that were never emitted. Conversion now captures explicitly declared regular files, copies them into each consuming skill, and rewrites only the declared root references. The same change established descriptor-relative, no-follow reads for conversion inputs. It preserves existing ownership limits: Codex and Pi clean up only proven-owned output, while Cursor and OpenCode do not gain deletion authority.
+
+Evidence: [PR #35](https://github.com/safurrier/ai-config/pull/35), merge SHA `d9cd5b56158ae1e608573a730b84a92ec75a7b40`, on 2026-08-20.
+
+## Narrow context-mirror exception
+
+Plugin source hashing generally rejects symlinks. One repository convention needed a precise exception: a sibling `CLAUDE.md -> AGENTS.md` mirror whose target is a no-follow regular file. The hash records the link and target bytes without following the link. Alternate, absolute, escaping, and other symlink shapes remain unreadable.
+
+Evidence: [PR #36](https://github.com/safurrier/ai-config/pull/36), merge SHA `84fee140c5adba088c99b25da9eb87d47f1cbc23`, on 2026-08-21.
+
+## Bounded staged convergence
+
+A source may not exist until Claude installs a remote plugin. Sync therefore permits one Claude-only prerequisite plan, one re-observation, and one conversion-only plan. Configured local marketplaces remain the conversion-source authority, and cache identity uses the configured selector and conversion signature rather than an incidental installed path. The operation reports incomplete conversion instead of recursively syncing until quiet.
+
+Evidence: [PR #37](https://github.com/safurrier/ai-config/pull/37), merge SHA `22360adcd87716e88edd9469b9751f30a71c800d`, on 2026-08-21.

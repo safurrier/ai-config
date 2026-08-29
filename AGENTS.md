@@ -14,7 +14,11 @@ ai-config provides a YAML config file for declarative plugin management. Define 
 src/ai_config/
 ├── cli.py           # Click CLI entry point
 ├── config.py        # Config file parsing
-├── operations.py    # sync, update, status, sync-driven conversion
+├── operations.py    # Stable sync, update, and status entry points
+├── sync_pipeline.py # Immutable sync records and pure planning
+├── sync_orchestration.py # Runtime observation and plan execution
+├── sync_conversion.py # Conversion planning and application
+├── sync_state.py    # Cache, source, output-root, and ownership observation
 ├── init.py          # Interactive setup wizard
 ├── types.py         # Frozen dataclasses for config schema
 ├── watch.py         # File watcher for dev mode
@@ -31,9 +35,9 @@ src/ai_config/
     ├── plugin/      # plugin validators
     └── target/      # converted output validators (codex, cursor, opencode, pi)
 tests/
-├── unit/            # Fast unit tests (577 tests)
-├── integration/     # Integration tests (8 tests, marked)
-├── e2e/             # Docker-based E2E tests (79 tests)
+├── unit/            # Fast unit tests
+├── integration/     # Marked integration tests
+├── e2e/             # Docker-based E2E tests
 │   ├── conftest.py             # Docker fixtures + exec_in_container()
 │   ├── tmux_helper.py          # TmuxTestSession for interactive CLI testing
 │   ├── test_conversion.py      # Conversion CLI + per-target output
@@ -162,7 +166,7 @@ ai-config is designed to support multiple AI coding tools. Current installation 
 4. Create PR, merge to main
 5. Create GitHub release with tag `vX.Y.Z` (this auto-publishes to PyPI)
 
-Version is in `pyproject.toml` (currently `0.3.0`). Tags use `v` prefix (e.g., `v0.3.0`).
+`pyproject.toml` is the version source of truth. Tags use the `v` prefix (for example, `v0.6.2`).
 
 ### PyPI Publishing
 

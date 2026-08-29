@@ -14,39 +14,38 @@ fresh cache clear (real `--fresh` only)
     -> report ExecutionReport and commit ownership/cache checkpoints
 ```
 
-`sync_pipeline.py` owns the frozen, tool-independent records, the pure `plan_sync()` transform, and
-structural plan validation. `sync_orchestration.py` owns observation and the narrow executor;
-`sync_conversion.py` exposes separate typed conversion planning and application boundaries while
-retaining target-specific preflight and lifecycle logic; `sync_state.py` owns cache, source, output-root,
-and ownership observation helpers below orchestration; `operations.py` retains only stable command
-entry points. A `SyncPlan` contains phase-tagged, ordered public actions, blocking diagnostics, exact
-ownership-ledger snapshots, and a target-specific `ConversionPlan`. That conversion record carries
-resolved candidates and digests, package specifications, retained identities, retiring roots, Pi
-desired files, emitted bytes, target action batches, cache update intent, and planned checkpoints.
-Marketplace actions always precede dependent plugin actions; conversion actions follow
-them. Before any normal action, the executor verifies the observed Claude, cache, ownership, and
-source preconditions. It reports completed and failed actions explicitly and does not authorize cache
-or ownership checkpoints after a conversion error.
+`sync_pipeline.py` owns frozen, tool-independent records, the pure `plan_sync()` transform, and
+structural plan validation. `sync_orchestration.py` owns observation and the narrow executor.
+`sync_conversion.py` separates typed conversion planning from application while retaining
+target-specific preflight and lifecycle logic. `sync_state.py` observes cache, source, output-root,
+and ownership state. `operations.py` keeps only stable command entry points.
 
-Planning never performs filesystem writes, cache writes, destructive cleanup, or state-changing tool
-calls. Conversion observation may parse sources, emit artifacts in memory, and ask the Codex and Pi
-lifecycle authorities for dry-run actions. Those decisions are then included in the same materialized
-plan used by CLI dry-run rendering and real execution. During apply, target-specific lifecycle code
-may validate current preconditions, but the materialized action sequence remains the authorization
-boundary. The conversion executor accepts only `ConversionPlan`; it never invokes source parsers,
-emitters, cache-choice logic, retention logic, output-root discovery, or conversion planning.
+A `SyncPlan` contains phase-tagged public actions, blocking diagnostics, ownership-ledger snapshots,
+and a target-specific `ConversionPlan`. The conversion plan carries resolved candidates and digests,
+package specifications, retained identities, retiring roots, Pi desired files, emitted bytes, target
+action batches, cache update intent, and planned checkpoints. Marketplace actions precede dependent
+plugin actions, and conversion actions follow them. Before each normal action, the executor verifies
+Claude, cache, ownership, and source preconditions. It reports completed and failed actions
+explicitly. A conversion error prevents later cache or ownership checkpoints.
+
+Planning never writes the filesystem or cache, performs destructive cleanup, or calls a tool that
+changes state. Conversion observation may parse sources, emit artifacts in memory, and request
+Codex and Pi lifecycle dry-run actions. The resulting decisions enter the same materialized plan that
+CLI dry-run renders and real execution applies. Target-specific lifecycle code may validate current
+preconditions during apply, but the materialized action sequence remains the authorization boundary.
+The conversion executor accepts only `ConversionPlan`. It never invokes source parsers, emitters,
+cache-choice logic, retention logic, output-root discovery, or conversion planning.
 
 `--fresh` is intentionally outside the pure transform. For a real sync, Claude's cache is cleared
 before observation because that ordering changes what can be observed. A fresh dry-run does not clear
 the cache and remains mutation-free.
 
-Unavailable configured sources are represented separately from resolved sources. Their diagnostic is
-materialized as a reported (non-blocking) conversion error, so earlier independent marketplace and
-plugin actions retain historical progress while conversion mutation is skipped and prior proven-owned
-state is retained. Disabled or removed sources can request cleanup only through the existing Codex or
-Pi ownership ledgers. Cache version 8 invalidates content entries while preserving validated tracked
-Codex and Pi output roots so cleanup can still discover prior custom roots; ownership formats are
-unchanged.
+Unavailable configured sources remain separate from resolved sources. Their diagnostic becomes a
+reported, non-blocking conversion error. Earlier independent marketplace and plugin actions can keep
+their progress while sync skips conversion mutation and retains prior proven-owned state. Disabled or
+removed sources can request cleanup only through the existing Codex or Pi ownership ledgers. Cache
+version 9 invalidates content entries while preserving validated tracked Codex and Pi output roots, so
+cleanup can still find prior custom roots. Ownership formats are unchanged.
 
 ## Plugin conversion
 
@@ -75,7 +74,7 @@ walks the same regular-file universe and permits one metadata-only exception: th
 The digest includes the link path and target text without reading through it; every other symlink
 remains a hard failure. Sync rehashes that universe before conversion as a stale plan precondition,
 but digesting and conversion remain separate contained passes. Standalone `convert` does not compute
-a digest. Cache version 8 invalidates older content signatures while preserving validated tracked
+a digest. Cache version 9 invalidates older content signatures while preserving validated tracked
 Codex and Pi output roots.
 
 `skill_projection.py` is pure and shared by all four emitters. It rewrites only exact declared
