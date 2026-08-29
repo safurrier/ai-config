@@ -1,6 +1,6 @@
 # Architecture
 
-ai-config has two connected products: declarative Claude plugin reconciliation and Claude-plugin conversion for other coding tools. Both enter through the Click CLI, but mutation authority stays in narrower modules.
+ai-config has two connected products. It reconciles declarative Claude plugins. It also converts Claude plugins for other coding tools. Both use the Click CLI. Smaller modules control mutation.
 
 ```mermaid
 flowchart LR
@@ -18,41 +18,35 @@ flowchart LR
 
 | Boundary | Owner | Contract |
 |---|---|---|
-| Configuration | `config.py`, `types.py` | Parse config version 1 into frozen desired-state records; the only top-level target is Claude. |
+| Configuration | `config.py`, `types.py` | Parse config version 1 into frozen desired-state records. Claude is the only top-level target. |
 | Claude runtime access | [Claude adapter](https://github.com/safurrier/ai-config/blob/main/src/ai_config/adapters/claude.py) | List and mutate Claude marketplaces and plugins. |
 | Sync planning | `sync_pipeline.py` | Transform desired state, runtime snapshot, and resolved sources into an ordered immutable plan without mutation. |
 | Observation and execution | `sync_orchestration.py` | Collect state, validate plan preconditions, execute authorized actions, and report partial progress. |
-| Conversion source safety | `source_safety.py` | Traverse and read plugin-root-contained regular files through retained no-follow descriptors; source hashing uses the same boundary. |
+| Conversion source safety | `source_safety.py` | Traverse and read plugin-root-contained regular files with retained no-follow descriptors. Source hashing uses the same boundary. |
 | Conversion orchestration | [Sync conversion](https://github.com/safurrier/ai-config/blob/main/src/ai_config/sync_conversion.py), [conversion entry point](https://github.com/safurrier/ai-config/blob/main/src/ai_config/converters/convert.py) | Resolve source plugins, parse once, select emitters, and retain per-target results. |
-| Skill projection | `src/ai_config/converters/skill_projection.py` | Purely materialize immutable shared include records, exact instruction rewrites, and per-copy evidence for every target. |
+| Skill projection | `src/ai_config/converters/skill_projection.py` | Materialize immutable shared include records, exact instruction rewrites, and per-copy evidence for every target. |
 | Target semantics | [Target emitters](https://github.com/safurrier/ai-config/blob/main/src/ai_config/converters/emitters.py), target validators | Map IR components to each target and report native, transformed, degraded, or unsupported behavior. |
-| Codex lifecycle | [Codex lifecycle](https://github.com/safurrier/ai-config/blob/main/src/ai_config/codex_lifecycle.py), [Codex adapter](https://github.com/safurrier/ai-config/blob/main/src/ai_config/adapters/codex.py) | Own generated package metadata and call Codex's marketplace/plugin lifecycle without writing shared Codex config directly. |
-| Pi ownership | `pi_ownership.py` | Reconcile only ledger-proven output and preserve unowned or locally modified files. |
+| Codex lifecycle | [Codex lifecycle](https://github.com/safurrier/ai-config/blob/main/src/ai_config/codex_lifecycle.py), [Codex adapter](https://github.com/safurrier/ai-config/blob/main/src/ai_config/adapters/codex.py) | Own generated package metadata and call Codex's marketplace and plugin lifecycle. Never write shared Codex config directly. |
+| Pi ownership | `pi_ownership.py` | Reconcile only ledger-proven output and preserve unowned or locally changed files. |
 
 ## Sync flow
 
-Marketplace actions precede their dependent Claude plugin actions. Configured local marketplaces remain the conversion-source authority after installation. Remote and marketplace-less plugins may use safely observed installed sources.
+Marketplace actions precede their dependent Claude plugin actions. Configured local marketplaces remain the conversion-source authority after installation. Remote and marketplace-less plugins can use safely observed installed sources.
 
-A fresh remote source may not exist until Claude installs it. In that case, sync applies one immutable Claude prerequisite plan, re-observes once, and applies one conversion-only plan. The second plan is blocked if it still needs Claude reconciliation. Executors do not replan, and sync does not recursively run until quiet. Each executor rechecks its runtime, source, cache, and ownership preconditions. It records completed and failed actions separately and commits only the checkpoints that its plan allows.
+A fresh remote source may not exist until Claude installs it. Sync then applies one immutable Claude prerequisite plan, re-observes once, and applies one conversion-only plan. Sync blocks the second plan when it still needs Claude reconciliation. Executors never replan. Sync never repeats runs until quiet. Each executor checks its runtime, source, cache, and ownership preconditions again. It records completed and failed actions separately. It commits only the checkpoints that its plan permits.
 
-`--dry-run` renders the initial materialized plan without runtime, cache, ownership, or filesystem mutation. The exception is a report explicitly requested with `convert --report PATH`. Deferred remote conversion remains explicit because dry-run cannot inspect a source that installation has not materialized. A real `--fresh` clears Claude's plugin cache before observation and forces configured conversion. It does not clear target homes or ownership ledgers. A fresh dry-run clears nothing because its mutation-free contract is stronger than simulating an altered observation. Optional verification performs one final read-only plan only after every apply stage succeeds.
+`--dry-run` renders the first materialized plan. It makes no runtime, cache, ownership, or filesystem changes. One exception exists: `convert --report PATH` writes a report when explicitly requested. Deferred remote conversion stays explicit because dry-run has no way to inspect an unmade source. A real `--fresh` clears Claude's plugin cache before observation. It forces configured conversion. It never clears target homes or ownership ledgers. A fresh dry-run clears nothing. Its mutation-free contract is stronger than a simulated changed observation. Optional verification performs one final read-only plan only after every apply stage succeeds.
 
 ## Conversion flow
 
-`ClaudePluginParser` normalizes the source bundle into `PluginIR`. Emitters independently transform that IR into target output:
+`ClaudePluginParser` normalizes the source bundle into `PluginIR`. Emitters transform that IR into target output:
 
-- Codex receives an ai-config-owned local marketplace and package under `.ai-config/codex/`, then Codex's CLI owns installation and enablement.
-- Cursor and OpenCode receive path-contained target files. Containment prevents traversal but is not a general ownership ledger.
-- Pi receives project `.pi/` or user `.pi/agent/` files through ledger-backed reconciliation.
-- `targets/<target>/` files are copied last and may override generated bytes at the same target-relative path.
-- Skills declaring `x-ai-config-includes` receive byte-preserved `_shared/<plugin-relative-path>` copies through one target-neutral projection; generated `SKILL.md` strips the declaration and exact declared root references become skill-root-relative paths.
+- Codex gets an ai-config-owned local marketplace and package under `.ai-config/codex/`. Codex's CLI then owns installation and enablement.
+- Cursor and OpenCode get path-contained target files. Containment blocks traversal but never serves as a general ownership ledger.
+- Pi gets project `.pi/` or user `.pi/agent/` files through ledger-backed reconciliation.
+- `targets/<target>/` files copy last. They can override generated bytes at the same target-relative path.
+- Skills with `x-ai-config-includes` get byte-preserved `_shared/<plugin-relative-path>` copies through one target-neutral projection. Generated `SKILL.md` removes the declaration. Exact declared root references become skill-root-relative paths.
 
-The parser and emit-time source readers share one fail-closed containment authority. The IR carries
-include bytes, so emitters never reopen include source paths. Sync's source digest walks the same
-regular-file universe. It also hashes metadata for the exact repository mirror
-`CLAUDE.md -> AGENTS.md` after proving the sibling target is a no-follow regular file. It never reads
-through that link. Every other symlink and every special file still makes the source unreadable. This
-source-read boundary does not remove the separate check-then-write race at a validated output path.
-Output containment is not an atomic writer or additional ownership proof.
+The parser and emit-time source readers share one fail-closed containment authority. The IR carries include bytes, so emitters never reopen include source paths. Sync's source digest walks the same regular-file universe. It also hashes metadata for the exact repository mirror `CLAUDE.md -> AGENTS.md`. It first proves that the sibling target is a no-follow regular file. It never reads through that link. Every other symlink makes the source unreadable. So does every special file. This source-read boundary never removes the separate check-then-write race at a checked output path. Output containment is neither an atomic writer nor extra ownership proof.
 
-See [Sync and Conversion Pipelines](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/conversion-pipeline.md) for implementation detail and [Target Compatibility Baseline](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md) for runtime-specific evidence.
+See [Sync and Conversion Pipelines](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/conversion-pipeline.md) for implementation detail. See [Target Compatibility Baseline](https://github.com/safurrier/ai-config/blob/main/ai_agent_docs/target-compatibility-baseline.md) for runtime-specific evidence.

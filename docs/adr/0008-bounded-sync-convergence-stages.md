@@ -5,30 +5,30 @@ Date: 2026-08-21
 
 ## Context
 
-A configured remote Claude plugin may not have a readable conversion source in a fresh environment. The source becomes available only after Claude registers its marketplace and installs the plugin. A single immutable plan cannot both authorize that prerequisite mutation and precompute conversion artifacts from bytes that do not yet exist.
+A configured remote Claude plugin may lack a readable conversion source in a fresh environment. Claude must first register its marketplace and install the plugin. One immutable plan is unable to authorize that mutation. It lacks the bytes needed to prepare artifacts.
 
-Configured local marketplaces have a different authority contract: their configured source tree is already inspectable and must not be replaced by Claude's installed cache merely because installation occurred. Treating either installed paths or repeated whole-sync execution as a universal fallback produced path-sensitive cache misses and made fresh isolated verification require another invocation.
+Configured local marketplaces have a different authority contract. Their configured source tree is already inspectable. Claude's installed cache must never replace it after installation. Using installed paths as a universal fallback caused path-sensitive cache misses. So did repeated whole-sync runs. Both made fresh isolated verification need another invocation.
 
-ADR 0006 requires observation, immutable planning, precondition checks, and exact-plan execution. The convergence workflow must preserve those properties while acknowledging a real prerequisite boundary.
+ADR 0006 requires observation, immutable planning, precondition checks, and exact-plan execution. The convergence workflow retains these properties across a real prerequisite boundary.
 
 ## Decision
 
-Sync remains bounded and plan-driven, but may use two separately observed immutable plans:
+Sync stays bounded and plan-driven, but it can use two separately observed immutable plans:
 
-1. The initial observation materializes a complete plan.
-2. If an enabled non-local source is unavailable and the plan contains Claude marketplace or plugin prerequisites, sync projects and applies only that exact Claude prerequisite prefix.
-3. After successful prerequisite application, sync performs one explicit re-observation and materializes a new plan.
-4. The second plan is projected to conversion actions only. If it still requires any Claude marketplace or plugin action, conversion is blocked rather than retrying the prerequisite stage.
-5. Optional verification performs one final read-only plan only after the aggregate apply succeeds.
+1. Initial observation materializes a complete plan.
+2. If an enabled non-local source is unavailable, the plan may have Claude prerequisites. Sync then projects and applies only that exact Claude prerequisite prefix.
+3. After successful prerequisite application, sync re-observes once and materializes a new plan.
+4. The second plan contains only conversion actions. If it still requires a Claude marketplace or plugin action, sync stops conversion. It never retries the prerequisite stage.
+5. Optional verification runs one final read-only plan only after the aggregate apply succeeds.
 
-Sync never recursively runs until quiet and never replans from inside an executor. Each applied stage has its own runtime, source, cache, and ownership snapshot and consumes only its materialized actions and target batches.
+Sync never runs recursively until quiet. It never replans inside an executor. Each stage has its own runtime, source, cache, and ownership snapshot. Each stage uses only its materialized actions and target batches.
 
-Configured local marketplaces are strict conversion-source authorities. Missing or unsafe configured local sources remain unavailable and never trigger installed-cache fallback or staged re-observation. Remote and marketplace-less plugins may use safely observed installed sources.
+Configured local marketplaces strictly control their conversion sources. A missing or unsafe configured local source remains unavailable. It never triggers installed-cache fallback or staged re-observation. Remote and marketplace-less plugins can use safely observed installed sources.
 
-A dry run does not cross the prerequisite boundary. It reports exact Claude prerequisite actions and deferred source diagnostics without speculating about conversion artifacts that cannot yet be observed.
+A dry run never crosses the prerequisite boundary. It reports exact Claude prerequisite actions. It also reports deferred source diagnostics. It never guesses at conversion artifacts beyond observation.
 
 ## Consequences
 
-Fresh remote bootstrap can converge Claude installation and target conversion in one bounded invocation when the prerequisite succeeds and the source becomes readable. If post-install parsing or conversion fails, completed Claude actions remain visible, target ownership is retained according to existing rules, and sync exits non-zero without verification. If the second observation still needs Claude reconciliation, the user must correct the runtime state or retry; the same invocation will not reinstall repeatedly.
+Fresh remote bootstrap can complete Claude installation and target conversion in one bounded invocation. This needs a successful prerequisite and a readable source. If post-install parsing or conversion fails, completed Claude actions stay visible. Target ownership remains subject to existing rules. Sync exits non-zero without verification. If the second observation still needs Claude reconciliation, the user must correct the runtime state or retry. The same invocation never reinstalls repeatedly.
 
-Conversion cache identity is the configured plugin selector plus conversion signature. Physical source path, provenance, source digest, and generated Codex digest remain observations required for a cache hit. Legacy path-keyed entries are discarded while validated tracked output roots remain available for ownership cleanup.
+The conversion cache key uses the configured plugin selector and conversion signature. A cache hit also needs the observed physical source path. It needs provenance, source digest, and generated Codex digest. The system drops legacy path-keyed entries. Validated output roots remain for ownership cleanup.
