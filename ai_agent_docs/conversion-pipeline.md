@@ -24,9 +24,10 @@ A `SyncPlan` contains phase-tagged public actions, blocking diagnostics, ownersh
 and a target-specific `ConversionPlan`. The conversion plan carries resolved candidates and digests,
 package specifications, retained identities, retiring roots, Pi desired files, emitted bytes, target
 action batches, cache update intent, and planned checkpoints. Marketplace actions precede dependent
-plugin actions, and conversion actions follow them. Before each normal action, the executor verifies
-Claude, cache, ownership, and source preconditions. It reports completed and failed actions
-explicitly. A conversion error prevents later cache or ownership checkpoints.
+plugin actions, and conversion actions follow them. Before the normal action loop, the executor
+verifies Claude, cache, ownership, and source preconditions. It rechecks conversion preconditions
+before conversion begins. It reports completed and failed actions explicitly. A conversion error
+prevents later cache or ownership checkpoints.
 
 Planning never writes the filesystem or cache, performs destructive cleanup, or calls a tool that
 changes state. Conversion observation may parse sources, emit artifacts in memory, and request
