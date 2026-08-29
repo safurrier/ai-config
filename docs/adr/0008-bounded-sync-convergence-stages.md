@@ -5,15 +5,15 @@ Date: 2026-08-21
 
 ## Context
 
-A configured remote Claude plugin may lack a readable conversion source in a fresh environment. Claude must first register its marketplace and install the plugin. One immutable plan is unable to authorize that mutation. It lacks the bytes needed to prepare artifacts.
+A configured remote Claude plugin may lack a readable conversion source in a fresh environment. Claude must register its marketplace and install the plugin first. One immutable plan cannot authorize that mutation because it lacks the bytes needed to prepare artifacts.
 
-Configured local marketplaces have a different authority contract. Their configured source tree is already inspectable. Claude's installed cache must never replace it after installation. Using installed paths as a universal fallback caused path-sensitive cache misses. So did repeated whole-sync runs. Both made fresh isolated verification need another invocation.
+Configured local marketplaces have a different authority contract. Their configured source tree is already inspectable. Claude's installed cache must never replace it. Installed paths as a universal fallback caused path-sensitive cache misses. Repeated whole-sync runs did too. Both forced fresh isolated verification into another invocation.
 
-ADR 0006 requires observation, immutable planning, precondition checks, and exact-plan execution. The convergence workflow retains these properties across a real prerequisite boundary.
+ADR 0006 requires observation, immutable planning, precondition checks, and exact-plan execution. The convergence workflow retains those properties across a real prerequisite boundary.
 
 ## Decision
 
-Sync stays bounded and plan-driven, but it can use two separately observed immutable plans:
+Sync stays bounded and plan-driven. It can use two separately observed immutable plans:
 
 1. Initial observation materializes a complete plan.
 2. If an enabled non-local source is unavailable, the plan may have Claude prerequisites. Sync then projects and applies only that exact Claude prerequisite prefix.
@@ -23,12 +23,12 @@ Sync stays bounded and plan-driven, but it can use two separately observed immut
 
 Sync never runs recursively until quiet. It never replans inside an executor. Each stage has its own runtime, source, cache, and ownership snapshot. Each stage uses only its materialized actions and target batches.
 
-Configured local marketplaces strictly control their conversion sources. A missing or unsafe configured local source remains unavailable. It never triggers installed-cache fallback or staged re-observation. Remote and marketplace-less plugins can use safely observed installed sources.
+Configured local marketplaces strictly control their conversion sources. A missing or unsafe local source remains unavailable. It never triggers installed-cache fallback or staged re-observation. Remote and marketplace-less plugins can use safely observed installed sources.
 
 A dry run never crosses the prerequisite boundary. It reports exact Claude prerequisite actions. It also reports deferred source diagnostics. It never guesses at conversion artifacts beyond observation.
 
 ## Consequences
 
-Fresh remote bootstrap can complete Claude installation and target conversion in one bounded invocation. This needs a successful prerequisite and a readable source. If post-install parsing or conversion fails, completed Claude actions stay visible. Target ownership remains subject to existing rules. Sync exits non-zero without verification. If the second observation still needs Claude reconciliation, the user must correct the runtime state or retry. The same invocation never reinstalls repeatedly.
+Fresh remote bootstrap can complete Claude installation and target conversion in one bounded invocation. It needs a successful prerequisite and a readable source. If parsing or conversion fails after installation, completed Claude actions stay visible. Target ownership remains subject to existing rules. Sync exits non-zero without verification. If the second observation still needs Claude reconciliation, the user must correct runtime state or retry. The same invocation never reinstalls repeatedly.
 
-The conversion cache key uses the configured plugin selector and conversion signature. A cache hit also needs the observed physical source path. It needs provenance, source digest, and generated Codex digest. The system drops legacy path-keyed entries. Validated output roots remain for ownership cleanup.
+The conversion cache key uses the configured plugin selector and conversion signature. A cache hit also needs the observed physical source path, provenance, source digest, and generated Codex digest. The system drops legacy path-keyed entries. Validated output roots remain for ownership cleanup.

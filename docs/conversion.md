@@ -34,7 +34,7 @@ In 0.6.0, the `codex` target stopped writing loose `.codex/skills`, prompts, hoo
     └── hooks/hooks.json
 ```
 
-The package manifest declares supported MCP servers. ai-config copies referenced hook support scripts into the package. It changes `${CLAUDE_PLUGIN_ROOT}` to Codex's `${PLUGIN_ROOT}`. It copies target-native files from the source plugin's `targets/codex` directory into the package root.
+The package manifest declares supported MCP servers. ai-config copies referenced hook support scripts into the package. It changes `${CLAUDE_PLUGIN_ROOT}` to Codex's `${PLUGIN_ROOT}`. It copies target-native files from the source plugin's targets/codex directory into the package root.
 
 `ai-config convert` generates package sources only. A configured `ai-config sync` also registers generated local marketplaces. It installs or refreshes each plugin through `codex plugin`. Codex owns its installed cache and enablement in `CODEX_HOME`. ai-config does not copy that layout or rewrite unrelated Codex settings.
 
@@ -48,7 +48,7 @@ The package manifest declares supported MCP servers. ai-config copies referenced
 
 Each generated marketplace uses `ai-config-<normalized-plugin>`. Each installed selector uses `<normalized-plugin>@ai-config-<normalized-plugin>`. The normalized manifest identity controls package paths, both manifests, ownership, Codex CLI selectors, and drift checks. Two configured sources with the same normalized identity fail before files or runtime state change.
 
-Source package versions must follow SemVer 2.0.0, such as `1.2.3` or `1.2.3-rc.1`. ai-config allows same-version content refreshes and applies upgrades. It fails closed for ownership or runtime downgrades and provides remediation. It records owned entries only in `.ai-config/codex/ownership.json`. Removal and update use only that state. An unrelated marketplace or plugin collision fails without mutation.
+Source package versions must follow SemVer 2.0.0, such as 1.2.3 or 1.2.3-rc.1. ai-config allows same-version content refreshes and applies upgrades. It fails closed for ownership or runtime downgrades and provides remediation. It records owned entries only in `.ai-config/codex/ownership.json`. Removal and update use only that state. An unrelated marketplace or plugin collision fails without mutation.
 
 ## Sync-driven conversion
 

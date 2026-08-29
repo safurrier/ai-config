@@ -7,7 +7,7 @@ installed or local Claude Code plugins into a target-neutral intermediate
 representation, or IR. It emits compatible artifacts for Codex, Cursor, OpenCode,
 and Pi.
 
-## Goals and non-goals
+## Goals / Non-Goals
 
 ### Goals
 
@@ -87,7 +87,7 @@ and Pi.
 - **Scope.** A caller MAY request project or user conversion scope. A caller MAY
   provide an explicit output directory.
 
-## Interfaces and contracts
+## Interfaces & Contracts
 
 - `.ai-config/config.yaml` or `.ai-config/config.yml`: project configuration.
   User configuration falls back to the matching file under `~/.ai-config/`.
