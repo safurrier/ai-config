@@ -18,7 +18,7 @@ Sync stays bounded and plan-driven. It can use two separately observed immutable
 1. Initial observation materializes a complete plan.
 2. If an enabled non-local source is unavailable, the plan may have Claude prerequisites. Sync then projects and applies only that exact Claude prerequisite prefix.
 3. After successful prerequisite application, sync re-observes once and materializes a new plan.
-4. The second plan contains only conversion actions. If it still requires a Claude marketplace or plugin action, sync stops conversion. It never retries the prerequisite stage.
+4. Sync projects the complete second plan to a conversion-only stage. If that plan still requires a Claude marketplace or plugin action, the projection blocks conversion. It never retries the prerequisite stage.
 5. Optional verification runs one final read-only plan only after the aggregate apply succeeds.
 
 Sync never runs recursively until quiet. It never replans inside an executor. Each stage has its own runtime, source, cache, and ownership snapshot. Each stage uses only its materialized actions and target batches.

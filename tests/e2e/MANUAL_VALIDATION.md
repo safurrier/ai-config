@@ -48,7 +48,7 @@ codex
 codex plugin list --json
 ```
 
-Expected result: Codex starts without errors. The plugin list includes the converted plugin after sync registers its generated marketplace.
+Expected result: Codex starts without errors. The smoke test performs standalone conversion, so it does not register a generated marketplace or add a converted plugin to this list.
 
 ## OpenCode
 
@@ -74,7 +74,7 @@ Expected result: The converted plugin's MCP servers appear in the list.
 
 ## Sync-driven conversion
 
-After the smoke test runs `ai-config sync`, inspect the generated output:
+The smoke test does not configure conversion for `ai-config sync`. To inspect sync-generated output or Codex lifecycle state, first run sync with a conversion configuration that includes the relevant targets:
 
 ```bash
 # User scope output
