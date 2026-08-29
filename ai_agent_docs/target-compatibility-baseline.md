@@ -1,30 +1,33 @@
-# Target Compatibility Baseline
+# Target compatibility baseline
 
-This file records the runtime assumptions behind ai-config target conversion.
+This record states the runtime assumptions for ai-config conversion. It records tested facts. It makes no claims beyond the probes. The tests use clean homes. The tests remove credentials. Each result names
+its tool and version.
 
 Last checked: 2026-08-20
-Context: first-class Codex plugin packages, source-less Codex marketplace metadata, Codex compatibility, and Claude skill include metadata for shared-resource projection.
+
+It covers Codex packages, source-less Codex marketplace metadata, Codex compatibility, and Claude
+skill include metadata. It also records the evidence for shared-resource projection.
 
 ## Summary
 
 | Target | ai-config output | Runtime validation |
 |---|---|---|
 | Claude Code | Source plugin installed through Claude marketplaces | `claude plugin validate/list`, `claude mcp list` |
-| Codex | One installable package and local marketplace per source plugin under `.ai-config/codex/marketplaces/` | isolated marketplace/install/enable/discovery/update/remove probe |
+| Codex | One installable package and local marketplace per source plugin under `.ai-config/codex/marketplaces/` | Isolated marketplace, install, enable, discovery, update, and remove probe. |
 | Cursor | `.cursor/skills/`, `.cursor/mcp.json`, `.cursor/hooks.json` | JSON checks and `cursor-agent mcp list` |
 | OpenCode | `.opencode/skills/`, `opencode.json`, `opencode.lsp.json` | `opencode debug skill/config`, `opencode mcp list` |
-| Pi | project `.pi/` or user `.pi/agent/` skills, prompts, extensions | RPC `get_commands` and extension marker probe |
+| Pi | Project `.pi/` or user `.pi/agent/` skills, prompts, extensions | Remote procedure call (RPC) `get_commands` and extension-marker probe. |
 
 ## Claude 2.1.231 shared-skill metadata evidence
 
-Phase 0 froze the per-skill `x-ai-config-includes` contract only after strict validation and native
-plugin loading both accepted it. Run the isolated, credential-free probe with:
+Phase 0 froze the per-skill `x-ai-config-includes` contract after strict validation and native plugin
+loading accepted it. Run this isolated, credential-free probe:
 
 ```bash
 uv run python tests/probes/probe_claude_skill_includes.py
 ```
 
-Exact output captured on 2026-08-20 (temporary path suffixes vary):
+The probe captured this output on 2026-08-20. Temporary path suffixes vary.
 
 ```text
 $ /Users/alexfurrier/.local/share/mise/installs/node/24/bin/claude --version
@@ -59,20 +62,20 @@ Per-component (rounded)
 exit=0
 ```
 
-The probe's `SKILL.md` declares exactly:
+The probe `SKILL.md` declares:
 
 ```yaml
 x-ai-config-includes:
   - shared/data.txt
 ```
 
-This is ai-config build metadata, not a claim that Claude itself materializes the resource. Claude
-accepts and loads the source skill; ai-config strips the field while producing self-contained target
+This field is ai-config build metadata. It doesn't claim that Claude creates the resource. Claude
+accepts and loads the source skill. ai-config removes the field when it creates self-contained target
 skills.
 
-## Codex 0.144.5, 0.145.0, 0.146.0, 0.148.0, and 0.149.0 runtime evidence
+## Codex runtime evidence
 
-The latest lane resolved npm's `@openai/codex@latest` tag at execution time on 2026-07-16:
+The live-tag lane resolved `@openai/codex@latest` at execution time on 2026-07-16. It selected 0.144.5.
 
 ```text
 resolved package: @openai/codex@0.144.5
@@ -85,62 +88,29 @@ platform integrity: sha512-zcT6NfBCqLFt+BReNSETTZW6v6PdbH0dzNtm9j7l7mDGqwPbKZDGJ
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
-The same lane resolved and passed the complete package and public-sync probes for Codex 0.145.0 on
-2026-07-24:
+The same lane completed package and public-sync probes for 0.145.0 on 2026-07-24. It completed both
+probes for 0.146.0 on 2026-07-29. It completed both credential-free probes for 0.148.0 and 0.149.0 on
+2026-08-20.
 
 ```text
-resolved package: @openai/codex@0.145.0
-version output:   codex-cli 0.145.0
-main integrity:   sha512-/PSPSFujjjmiyVFvG2yu/grOFhsWdokTH8t2KGWhXSo/M5n/dIDsnbsnO82/7bLtIoDuzQf7ATBUMWqPWQINlQ==
-darwin-arm64 integrity: sha512-h6aQ0UxnaP8mIM/9/qPAH9MNkRliJo88toq1T36IxNM2L5JSU0TFamu+MZn7YkFgDsrp0RfiI+97Tm8AVVxqtA==
-install source:    integrity-verified direct npm registry tarball extraction
+0.145.0 main integrity: sha512-/PSPSFujjjmiyVFvG2yu/grOFhsWdokTH8t2KGWhXSo/M5n/dIDsnbsnO82/7bLtIoDuzQf7ATBUMWqPWQINlQ==
+0.145.0 darwin-arm64 integrity: sha512-h6aQ0UxnaP8mIM/9/qPAH9MNkRliJo88toq1T36IxNM2L5JSU0TFamu+MZn7YkFgDsrp0RfiI+97Tm8AVVxqtA==
+0.146.0 main integrity: sha512-yG3sPWNda/2YAIQIDq9MrrjoCTIQ7rxYM5IasrG3VBcuhCLTkgeg/JzqmJq1V98RE4MJ5jCxDXXQlOjrditFRw==
+0.146.0 darwin-arm64 integrity: sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+uv2hTBIVZ++fgXWV9yoeuNrNnNcn7GoTGOe2Tg==
+0.148.0 main tarball: https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz
+0.148.0 main integrity: sha512-bh5kH9+BMrFaHGmLeoSansPdfRksvr4UXzjQInns/KRO7r8VJ+6AAW+SqUsE8XcG3+OW/mI4EEy8Gpo9UDXGvQ==
+0.148.0 darwin-arm64: https://registry.npmjs.org/@openai/codex/-/codex-0.148.0-darwin-arm64.tgz
+0.148.0 platform integrity: sha512-xgBPFiF1fHUlRS7HE6wGB56LjBJh16kGD7b4TTbwdVBZNB4QDkTok+vdkAGrfpVkfKcwGNhPSKDgCw+KMZOVug==
+0.149.0 main tarball: https://registry.npmjs.org/@openai/codex/-/codex-0.149.0.tgz
+0.149.0 main integrity: sha512-i4dryj2Y1j+00Mb5n+0n71EYnTK9/KDc2cdFo/dXD0d1oTog2bhUssKDEIOnKmnEf51P0Z/HJTWvTKw/UHyOvQ==
+0.149.0 darwin-arm64: https://registry.npmjs.org/@openai/codex/-/codex-0.149.0-darwin-arm64.tgz
+0.149.0 platform integrity: sha512-GsZJbzBWiD48RETrO8VHGAQNgfSrUVxItXZFeD87wswatPi0+lKuQo8Dx4nMYmOZhZrVtwr3al/feRrZxnDV8Q==
+install source: integrity-verified direct npm registry tarball extraction
 ```
 
-The same lane resolved and passed both complete probes for Codex 0.146.0 on 2026-07-29:
-
-```text
-resolved package: @openai/codex@0.146.0
-version output:   codex-cli 0.146.0
-main integrity:   sha512-yG3sPWNda/2YAIQIDq9MrrjoCTIQ7rxYM5IasrG3VBcuhCLTkgeg/JzqmJq1V98RE4MJ5jCxDXXQlOjrditFRw==
-darwin-arm64 integrity: sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+uv2hTBIVZ++fgXWV9yoeuNrNnNcn7GoTGOe2Tg==
-install source:    integrity-verified direct npm registry tarball extraction
-```
-
-The latest lane resolved and passed both complete auth-free probes for Codex 0.148.0 on 2026-08-20:
-
-```text
-resolved package: @openai/codex@0.148.0
-version output:   codex-cli 0.148.0
-main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz
-main integrity:    sha512-bh5kH9+BMrFaHGmLeoSansPdfRksvr4UXzjQInns/KRO7r8VJ+6AAW+SqUsE8XcG3+OW/mI4EEy8Gpo9UDXGvQ==
-darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.148.0-darwin-arm64.tgz
-platform integrity: sha512-xgBPFiF1fHUlRS7HE6wGB56LjBJh16kGD7b4TTbwdVBZNB4QDkTok+vdkAGrfpVkfKcwGNhPSKDgCw+KMZOVug==
-install source:    integrity-verified direct npm registry tarball extraction
-```
-
-The latest lane resolved and passed both complete auth-free probes for Codex 0.149.0 on 2026-08-20:
-
-```text
-resolved package: @openai/codex@0.149.0
-version output:   codex-cli 0.149.0
-main tarball:      https://registry.npmjs.org/@openai/codex/-/codex-0.149.0.tgz
-main integrity:    sha512-i4dryj2Y1j+00Mb5n+0n71EYnTK9/KDc2cdFo/dXD0d1oTog2bhUssKDEIOnKmnEf51P0Z/HJTWvTKw/UHyOvQ==
-darwin-arm64:      https://registry.npmjs.org/@openai/codex/-/codex-0.149.0-darwin-arm64.tgz
-platform integrity: sha512-GsZJbzBWiD48RETrO8VHGAQNgfSrUVxItXZFeD87wswatPi0+lKuQo8Dx4nMYmOZhZrVtwr3al/feRrZxnDV8Q==
-install source:    integrity-verified direct npm registry tarball extraction
-```
-
-The 0.149.0 release notes do not describe plugin lifecycle contract changes. The runtime probes
-confirmed the same feature rows and help surfaces shown below, the typed marketplace/plugin JSON
-schemas and identities, lifecycle mutation semantics, and source-less catalog visibility as 0.148.0.
-
-The direct extraction in `tests/probes/probe_latest_codex.sh` is intentional. npm's configured
-install-date cutoff rejected a normal fresh install because 0.144.5 was newer than the cutoff.
-The lane still resolves the live tag, reads each registry URL and integrity value, verifies SHA-512,
-and recreates npm's main-plus-platform package layout. It does not call an older installed Codex
-"latest."
-
-Exact feature rows:
+The 0.149.0 release notes report no plugin lifecycle contract change. Its probes confirmed the same
+feature rows, help surfaces, JSON schemas, identities, lifecycle behavior, and source-less catalog
+visibility as 0.148.0.
 
 ```text
 hooks                                stable             true
@@ -149,22 +119,20 @@ plugins                              stable             true
 remote_plugin                        stable             true
 ```
 
-This differs from the 0.142.3 spike: `remote_plugin` moved from `under development false` to
-`stable true`. ai-config's local package implementation does not depend on remote plugin behavior.
+`remote_plugin` changed from `under development false` in 0.142.3 to `stable true`. ai-config's local
+package design doesn't rely on remote plugins.
 
-Observed help surfaces:
-
-| Command | First help line / contract |
+| Command | Contract |
 |---|---|
 | `codex plugin --help` | Manage Codex plugins |
 | `codex plugin add --help` | Install a plugin from a configured marketplace snapshot. |
-| `codex plugin list --help` | List plugins available from configured marketplace snapshots |
+| `codex plugin list --help` | List plugins available from configured marketplace snapshots. |
 | `codex plugin remove --help` | Remove an installed plugin from local config and cache. |
-| `codex plugin marketplace --help` | Add, list, upgrade, or remove configured plugin marketplaces |
-| `codex plugin marketplace add --help` | Add a local or Git marketplace to the configured marketplace sources |
-| `codex plugin marketplace list --help` | List plugin marketplaces Codex is currently considering and their roots |
+| `codex plugin marketplace --help` | Add, list, upgrade, or remove configured plugin marketplaces. |
+| `codex plugin marketplace add --help` | Add a local or Git marketplace to configured plugin marketplaces. |
+| `codex plugin marketplace list --help` | List marketplaces Codex considers and their roots. |
 | `codex plugin marketplace upgrade --help` | Refresh configured Git marketplace snapshots. |
-| `codex plugin marketplace remove --help` | Remove a configured marketplace source by name |
+| `codex plugin marketplace remove --help` | Remove a configured marketplace source by name. |
 
 Official sources checked through 2026-08-20:
 
@@ -179,47 +147,38 @@ Official sources checked through 2026-08-20:
 - [Hooks](https://learn.chatgpt.com/docs/hooks)
 - [Developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli)
 
-## Codex package contract used by ai-config
+## Codex package contract
 
 - `.codex-plugin/plugin.json` owns package metadata, `skills`, `hooks`, and `mcpServers`.
 - `.agents/plugins/marketplace.json` points to a local package source.
-- Package skills are native Agent Skills. Claude commands become package skills; commands using
-  `$ARGUMENTS` or positional variables are reported degraded because Codex skills do not provide
-  Claude slash-command substitution.
-- Supported command hooks become package `hooks/hooks.json`. `${CLAUDE_PLUGIN_ROOT}` becomes
-  `${PLUGIN_ROOT}`, and referenced support scripts are copied into the package. Missing support
-  files cause the handler to be omitted and diagnosed.
-- MCP servers become manifest `mcpServers` entries. Agents and LSP servers remain unsupported.
-- `targets/codex/**` files land inside the package root and can override generated package files.
-- No new `.codex/skills`, `.codex/prompts`, `.codex/hooks.json`, or direct generated
-  `[mcp_servers.*]` tables are emitted.
+- Package skills use the native Agent Skills format. Claude commands become package skills. Commands with `$ARGUMENTS` or positional variables have degraded support because Codex has no Claude slash-command substitution.
+- Supported command hooks use `hooks/hooks.json`. `${CLAUDE_PLUGIN_ROOT}` becomes `${PLUGIN_ROOT}`. The package copies referenced support scripts. Missing support files omit the handler and add a diagnostic.
+- MCP servers become manifest `mcpServers` entries. Agents and Language Server Protocol (LSP) servers remain unsupported.
+- `targets/codex/**` files land in the package root and can override generated package files.
+- ai-config emits no `.codex/skills`, `.codex/prompts`, `.codex/hooks.json`, or direct generated `[mcp_servers.*]` tables.
 
-`ai-config sync` uses the Codex CLI for marketplace and installed-cache state. ai-config owns only
-its generated marketplace directories and `.ai-config/codex/ownership.json`; Codex owns
-`$CODEX_HOME/config.toml`, enablement, and cache. Parsed source identity is the sole normalized key
-for package/marketplace manifests, ownership, CLI selectors, and drift checks. Normalized collisions,
-duplicate runtime records, source/path mismatches, and SemVer downgrades fail before mutation.
-Removal is limited to entries recorded in the ownership file. Possible old loose output is reported
-by `doctor` and never removed without proof of ownership.
+`ai-config sync` uses the Codex CLI for marketplace and installed-cache state. ai-config owns only its
+generated marketplace directories and `.ai-config/codex/ownership.json`. Codex owns `$CODEX_HOME/config.toml`,
+enablement, and cache. Parsed source identity is the sole normalized key for manifests, ownership, CLI
+selectors, and drift checks. Collisions, duplicates, source or path mismatches, and SemVer downgrades
+fail before mutation. Removal needs an ownership-file record. `doctor` reports old loose output but does
+not remove it without ownership proof.
 
-The adapter accepts Codex 0.144.x through 0.149.x contracts. Captured isolated runtime evidence in
-this document extends through 0.149.0. The adapter validates the CLI version plus typed schemas and
-semantic identity for marketplace list/add/remove and plugin list/add/remove responses. Malformed
-JSON, duplicate keys/records, partial output, unknown versions,
-and inconsistent success responses are errors. Every call uses a finite timeout and bounds/strips
-control characters from error output. POSIX calls start a separate process group; after a bounded
-SIGTERM grace period, timeout cleanup inspects and kills any remaining group even if the direct child
-already exited, then performs a bounded direct-child reap. Non-POSIX cleanup is limited to the direct
-child; 0.6.0 does not advertise descendant cleanup on those platforms.
+The adapter supports Codex 0.144.x through 0.149.x. It checks the CLI version, typed schemas, and
+semantic identity for marketplace and plugin list, add, and remove responses. Malformed JSON, duplicate
+keys or records, partial output, unknown versions, and inconsistent success responses are errors. Each
+call has a finite timeout. The adapter bounds error output and strips control characters. On POSIX, calls use a
+separate process group. Cleanup sends SIGTERM, checks for survivors, kills the group, and reaps the direct
+child. Non-POSIX cleanup handles only the direct child. Version 0.6.0 doesn't promise descendant cleanup
+on those platforms.
 
-Codex 0.144.5 can omit `marketplaceSource` from resolved marketplace and plugin catalog rows when no
-configured source corresponds to the resolved marketplace root. The adapter accepts only absence:
-a present value must remain a typed object with a known source type and non-empty source. Installed
-rows without this metadata retain their plugin source but have no inferred marketplace root, so
-desired or previously owned identity collisions still fail before mutation. Codex 0.148.0 and 0.149.0
-do not list the probe's directly seeded `$CODEX_HOME/.tmp/plugins` source-less catalog. The public-sync probe
-therefore records its initial CLI visibility and exact files, then requires both to remain unchanged;
-configured marketplace and plugin add/list/remove schemas and semantics remain compatible.
+Codex 0.144.5 can omit `marketplaceSource` when no configured source matches the marketplace root. The
+adapter accepts only absence. A present value must be a typed object with a known source type and a
+non-empty source. Installed rows without it retain the plugin source but infer no marketplace root.
+Desired or owned identity collisions still fail before mutation. Codex 0.148.0 and 0.149.0 don't list
+the probe's seeded `$CODEX_HOME/.tmp/plugins` source-less catalog. The public-sync probe records its
+initial CLI visibility and exact files, then requires both to remain unchanged. Configured marketplace
+and plugin schemas and behavior remain compatible.
 
 ## Isolated runtime probe
 
@@ -227,54 +186,42 @@ configured marketplace and plugin add/list/remove schemas and semantics remain c
 tests/probes/probe_latest_codex.sh
 ```
 
-The latest shell lane runs both `probe_codex_plugin_package.py` and
-`probe_ai_config_sync_codex.py`. Each creates fresh `HOME` and `CODEX_HOME`, removes
-`OPENAI_API_KEY`, `CODEX_API_KEY`, `CHATGPT_API_KEY`, `OPENAI_ORG_ID`, and
-`OPENAI_PROJECT_ID`.
+The shell lane runs `probe_codex_plugin_package.py` and `probe_ai_config_sync_codex.py`. Each creates
+fresh `HOME` and `CODEX_HOME`. Each removes `OPENAI_API_KEY`, `CODEX_API_KEY`, `CHATGPT_API_KEY`,
+`OPENAI_ORG_ID`, and `OPENAI_PROJECT_ID`.
 
-The isolated generated-package probe proves:
+The package probe proves generation and validation, marketplace and plugin lifecycle actions, enabled and
+disabled discovery through `debug prompt-input`, hooks and MCP ingestion, updates, idempotence, managed
+removal, unrelated-state preservation, and strict doctor loading. The public-command probe runs
+`python -m ai_config sync --config <isolated> --json` against a disposable marketplace and real Codex.
+It proves registration, no-op sync, repair, SemVer refresh, drift reporting, reinstall and removal, plus
+preservation of unrelated state and the source-less catalog. The all-tools E2E lane runs both probes.
 
-1. generated package and marketplace validation;
-2. marketplace add/list and plugin available/install/list;
-3. enabled, disabled, and re-enabled skill discovery through `debug prompt-input`;
-4. package hooks copied to the installed cache and package MCP visible through `mcp list`;
-5. content update followed by CLI remove/reinstall and updated discovery;
-6. repeated sync leaves Codex config byte-identical;
-7. managed removal leaves an unrelated marketplace, plugin, disabled/enabled state, and scalar config;
-8. strict Codex doctor still loads the resulting config.
-
-The public-command probe invokes `python -m ai_config sync --config <isolated> --json` against a
-disposable source marketplace and real Codex binary. It proves first registration/install,
-unchanged no-op, automatic repair of tampered generated output, SemVer refresh/update and
-discovery, status drift reporting, disabled-plugin reinstall, missing-plugin repair, owned removal,
-and preservation of unrelated marketplace, plugin enablement, scalar config, and source-less
-marketplace/plugin catalog state. The pinned all-tools E2E lane runs both probes.
-
-The Docker all-tools image pins `@openai/codex@0.145.0`. The separate workflow latest lane resolves
-and probes `@latest` so reproducibility and drift detection remain independent.
+The Docker all-tools image pins `@openai/codex@0.145.0`. A separate lane resolves and probes `@latest`.
+This keeps reproducibility and drift detection independent.
 
 ## Other target assumptions
 
 ### Pi
 
-- Project skills/prompts/extensions use `.pi/`; user scope uses `.pi/agent/`.
-- Hook commands are emulated with TypeScript extensions.
+- Project skills, prompts, and extensions use `.pi/`. User scope uses `.pi/agent/`.
+- Hook commands use TypeScript extensions.
 - RPC `get_commands` proves skill discovery without credentials.
 
 ### Cursor
 
 - Output includes `.cursor/skills/`, `.cursor/mcp.json`, and `.cursor/hooks.json`.
-- `cursor-agent mcp list` is the available real-tool MCP check; skill validation remains file based.
+- `cursor-agent mcp list` checks the Model Context Protocol (MCP). Skill validation stays file based.
 
-### OpenCode
+### OpenCode target
 
 - Output includes `.opencode/skills/`, `opencode.json`, and `opencode.lsp.json`.
-- `opencode debug skill/config/paths` and `opencode mcp list` are preferred auth-free probes.
+- Use `opencode debug skill/config/paths` and `opencode mcp list` for auth-free probes.
 
 ## Update checklist
 
-1. Resolve current versions and record exact binaries/install sources.
-2. Confirm named help/probe surfaces before using them.
+1. Resolve versions and record exact binaries and install sources.
+2. Confirm help and probe surfaces before use.
 3. Isolate runtime homes and credentials.
 4. Update emitters, validators, docs, and real-tool tests together.
-5. Pin a reproducible E2E version and retain an explicit latest lane.
+5. Pin a reproducible E2E version and retain a distinct latest lane.

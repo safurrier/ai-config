@@ -1,17 +1,19 @@
-# E2E Testing Infrastructure
+# E2E testing infrastructure
 
-Docker-based E2E tests that validate ai-config against real AI coding tool CLIs.
+Docker-based end-to-end tests validate ai-config against real AI coding-tool command-line interfaces.
 
-## Docker Images
+## Docker test images
 
 | Image | Tag | Dockerfile | Tools |
-|-------|-----|------------|-------|
+|---|---|---|---|
 | claude-only | `ai-config-test:claude-only` | `tests/docker/Dockerfile.claude-only` | Claude Code |
 | all-tools | `ai-config-test:all-tools` | `tests/docker/Dockerfile.all-tools` | Claude, Codex, OpenCode, Cursor |
 
-Images are session-scoped (built once per test run, cached across runs).
+The test session builds each image once and caches it for later tests.
 
-## Fixture Hierarchy (`tests/e2e/conftest.py`)
+## Fixture hierarchy
+
+`tests/e2e/conftest.py` defines this fixture hierarchy.
 
 ```
 docker_available (session)     ← checks Docker daemon
@@ -22,23 +24,24 @@ docker_available (session)     ← checks Docker daemon
             └─ all_tools_container (class) ← runs container, auto-remove on stop
 ```
 
-**Class-scoped containers**: Tests within one class share a container (state persists between methods). Different classes get fresh containers.
+Class-scoped containers share state among methods in one class. Each class gets a fresh container.
 
 Container environment:
-- User: `testuser`
-- Working dir: `/home/testuser/ai-config`
-- Repo mounted as copy (not volume)
 
-## Helper Functions
+- User: `testuser`
+- Working directory: `/home/testuser/ai-config`
+- Repository: copied into the container, not mounted as a volume
+
+## Helper functions
 
 ```python
 exec_in_container(container, command, user="testuser") -> (exit_code, output)
 check_tool_installed(container, tool_name, version_cmd) -> (bool, version_or_error)
 ```
 
-## Tmux Helper (`tests/e2e/tmux_helper.py`)
+## Tmux test helper
 
-`TmuxTestSession` drives interactive CLIs inside containers:
+`tests/e2e/tmux_helper.py` provides `TmuxTestSession` for interactive CLIs:
 
 ```python
 with TmuxTestSession() as session:
@@ -48,37 +51,35 @@ with TmuxTestSession() as session:
     output = session.capture_pane()
 ```
 
-Key methods: `send_keys()`, `capture_pane()`, `wait_for_output()`, `wait_for_prompt()`
+Its key methods are `send_keys()`, `capture_pane()`, `wait_for_output()`, and `wait_for_prompt()`. Use `is_tmux_available()` as a standalone check.
 
-Standalone check: `is_tmux_available() -> bool`
-
-## Test Suites
+## Test suites
 
 | File | Marker | Container | Purpose |
-|------|--------|-----------|---------|
+|---|---|---|---|
 | `test_conversion.py` | `e2e`, `docker` | claude | Convert command, per-target output, binary assets, reports, doctor |
 | `test_fresh_install.py` | `e2e`, `docker`, `slow` | all-tools | Sync, dry-run, config validation, status |
 | `test_integration_smoke.py` | `e2e`, `docker` | claude | Full workflow: preflight → convert → verify → sync |
 | `test_tool_validation.py` | `e2e`, `docker`, `slow` | all-tools | Interactive CLI introspection via tmux |
 
-## Writing New E2E Tests
+## Write E2E tests
 
-1. Choose container: `claude_container` (fast) or `all_tools_container` (needs multiple tools)
-2. Use `exec_in_container()` for non-interactive commands
-3. Use `TmuxTestSession` for interactive CLI testing
-4. Mark with `@pytest.mark.e2e` + `@pytest.mark.docker` (add `@pytest.mark.slow` for all-tools)
-5. Group related tests in a class (shares container state)
+1. Choose `claude_container` for fast Claude tests or `all_tools_container` for tests that need several tools.
+2. Use `exec_in_container()` for non-interactive commands.
+3. Use `TmuxTestSession` for interactive CLI tests.
+4. Add `@pytest.mark.e2e` and `@pytest.mark.docker`. Add `@pytest.mark.slow` for all-tools tests.
+5. Group related tests in one class to share container state.
 
-## Config Path Gotcha
+## Configuration path requirement
 
-Config written to `~/.ai-config/config.yaml` resolves relative paths from `/home/testuser/`, not the repo. Always use absolute paths:
+Configuration in `~/.ai-config/config.yaml` resolves relative paths from `/home/testuser/`, not from the repository. Use absolute paths:
 
 ```python
 REPO_DIR = "/home/testuser/ai-config"
 config = f"path: {REPO_DIR}/tests/fixtures/test-marketplace"
 ```
 
-## Running Locally
+## Run locally
 
 ```bash
 # All E2E tests (needs Docker)
