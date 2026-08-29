@@ -1,22 +1,22 @@
 # Commands
 
-Complete reference for all ai-config commands.
+This page lists ai-config commands. Use it before changing plugin state. Start with `--dry-run` when a command supports it. Read the reported actions. Check the paths. Check the scope. Then apply the change.
 
 ## Overview
 
-| Command | What it does |
-|---------|--------------|
-| `init` | Interactive config generator |
-| `sync` | Install/uninstall plugins to match config |
-| `status` | Show what's currently installed |
-| `watch` | Auto-sync on file changes |
-| `update` | Update plugins to latest versions |
-| `doctor` | Validate setup and show fix hints |
-| `convert` | Convert plugins to other AI tools |
-| `plugin create` | Scaffold a new plugin |
-| `cache clear` | Clear the plugin cache |
+| Command | Purpose |
+|---------|---------|
+| `init` | Create configuration interactively. |
+| `sync` | Make installed plugins match configuration. |
+| `status` | Show installed state. |
+| `watch` | Sync after file changes. |
+| `update` | Update plugins. |
+| `doctor` | Validate setup and show fixes. |
+| `convert` | Convert plugins for other AI tools. |
+| `plugin create` | Create a plugin skeleton. |
+| `cache clear` | Clear the plugin cache. |
 
-## Global Options
+## Global options
 
 ```bash
 ai-config [OPTIONS] COMMAND
@@ -27,249 +27,189 @@ Options:
   --help             Show help message
 ```
 
-## init
+## `init`
 
-Interactive wizard for creating or updating your config file.
+Create or update a configuration file interactively.
 
 ```bash
 ai-config init
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-o, --output PATH` | Output path for the config file |
-| `--non-interactive` | Create minimal config without prompts |
+| `-o, --output PATH` | Configuration file path. |
+| `--non-interactive` | Create a minimal configuration without prompts. |
 
-The wizard walks you through:
+The wizard adds GitHub or local marketplaces, selects their plugins, and chooses user or project scope. It creates `.ai-config/config.yaml` in the current directory unless `-o` provides another path.
 
-1. Adding marketplaces (GitHub repos or local directories with plugins)
-2. Selecting plugins from those marketplaces
-3. Choosing install scope (user or project)
+## `sync`
 
-Creates `.ai-config/config.yaml` in the current directory (or the path specified with `-o`).
-
-## sync
-
-Make installed plugins match your config file.
+Make installed plugins match configuration.
 
 ```bash
 ai-config sync
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-c, --config PATH` | Path to config file |
-| `--dry-run` | Show what would change without doing it |
-| `--fresh`, `--force` | Clear Claude's plugin cache and reconvert configured outputs; preserve target homes and ownership ledgers |
-| `--force-convert` | Reconvert only (without clearing plugin cache) |
-| `--verify` | Verify sync state after completion |
-| `--json` | Output planned/completed actions and reasons as JSON |
+| `-c, --config PATH` | Configuration file path. |
+| `--dry-run` | Show changes without writing them. |
+| `--fresh`, `--force` | Clear Claude's plugin cache and reconvert configured outputs. Target homes and ownership ledgers remain. |
+| `--force-convert` | Reconvert without clearing the plugin cache. |
+| `--verify` | Verify sync state after completion. |
+| `--json` | Write planned, completed, and failed actions with reasons as JSON. |
 
-What it does:
+Sync installs configured plugins. It removes unconfigured plugins. It updates plugin configuration. It runs configured conversion. See [Conversion](conversion.md).
 
-- Installs plugins listed in config but not installed
-- Uninstalls plugins installed but not in config
-- Updates plugin configurations
-- Runs conversion if `conversion` section is configured (see [Conversion](conversion.md))
+Codex conversion reports register, install, update, reinstall or repair, remove, and no-op actions with reasons. JSON separates `planned_actions`, `completed_actions`, and `failed_actions`. Sync exits non-zero if a target fails or lifecycle verification finds drift. Terminal output prints `No changes needed` only after a clean result.
 
-Codex conversion reports register, install, update, reinstall/repair, remove, and no-op actions with
-reasons. JSON distinguishes `planned_actions`, `completed_actions`, and `failed_actions`. Sync exits
-non-zero if any target fails or post-sync lifecycle verification finds drift, and terminal output only
-prints `No changes needed` after a clean result.
+## `status`
 
-## status
-
-Show current state of marketplaces and plugins.
+Show marketplace and plugin state.
 
 ```bash
 ai-config status
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-c, --config PATH` | Path to config file; also computes lifecycle drift |
-| `--verify` | Verify current state matches config |
-| `--json` | Output as JSON, including planned lifecycle actions and reasons |
+| `-c, --config PATH` | Configuration file path. It also calculates lifecycle drift. |
+| `--verify` | Verify that current state matches configuration. |
+| `--json` | Write planned lifecycle actions and reasons as JSON. |
 
-Displays:
+Status shows configured marketplaces, configured plugins, extra plugins, and sync issues. With `--config` or `--verify`, it uses the sync lifecycle planner. It exits non-zero for a non-no-op action or inspection error. It plans before it reports a clean state. It prints `No lifecycle actions needed` or `All in sync` only after clean inspection and planning. Claude-only state cannot justify those messages while Codex package drift remains.
 
-- Configured marketplaces and their status
-- Installed plugins (from config and extra)
-- Any sync issues
+## `watch`
 
-With `--config` or `--verify`, status uses the same lifecycle planner as sync and exits non-zero for
-any non-no-op action or inspection error. Terminal output only prints `No lifecycle actions needed`
-or `All in sync` after clean inspection and planning; it never derives those claims from Claude-only
-state while Codex package drift remains.
-
-## watch
-
-Auto-sync when config or plugin files change.
+Sync when configuration or plugin files change.
 
 ```bash
 ai-config watch
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-c, --config PATH` | Path to config file |
-| `--debounce SECONDS` | Wait time before syncing (default: 1.5) |
-| `--dry-run` | Show changes without syncing |
-| `-v, --verbose` | Show all file events |
+| `-c, --config PATH` | Configuration file path. |
+| `--debounce SECONDS` | Delay before sync. Default: `1.5`. |
+| `--dry-run` | Show changes without syncing. |
+| `-v, --verbose` | Show file events. |
 
-Useful during plugin development. Watches:
-
-- `.ai-config/config.yaml`
-- Plugin directories
-
-Press Ctrl+C to stop.
+Watch monitors `.ai-config/config.yaml` and plugin directories. Press Ctrl+C to stop.
 
 !!! warning "Claude Code reload required"
 
-    Claude Code only loads plugins at session start. After `watch` syncs your changes, you must restart Claude Code for them to take effect.
+    Claude Code loads plugins when a session starts. Restart it after `watch` syncs changes.
 
-    To continue your previous session after restarting:
+    To continue the prior session:
 
     ```bash
     claude --resume
     ```
 
-## update
+## `update`
 
-Update plugins to their latest versions.
+Update plugins.
 
 ```bash
 ai-config update --all
 ai-config update PLUGIN1 PLUGIN2
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `--all` | Update all plugins |
-| `--fresh` | Clear cache before updating |
-
-**Arguments:**
+| `--all` | Update every plugin. |
+| `--fresh` | Clear the cache before updating. |
 
 | Argument | Description |
 |----------|-------------|
-| `PLUGINS` | Specific plugin IDs to update (positional, space-separated) |
+| `PLUGINS` | Plugin IDs as space-separated positional arguments. |
 
-You must specify either `--all` or one or more plugin names.
+Specify `--all` or at least one plugin name.
 
-## doctor
+## `doctor`
 
-Validate your setup and find problems.
+Validate setup and identify problems.
 
 ```bash
 ai-config doctor
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-c, --config PATH` | Path to config file |
-| `--category CATEGORY` | Run only specific validation categories (can be repeated) |
-| `-t, --target TARGET` | Validate converted output: `codex`, `cursor`, `opencode`, `pi`, or `all` |
-| `--json` | Output as JSON |
-| `-v, --verbose` | Show all checks including passed |
-
-**Arguments (target mode only):**
+| `-c, --config PATH` | Configuration file path. |
+| `--category CATEGORY` | Run a validation category. Repeat this option as needed. |
+| `-t, --target TARGET` | Validate `codex`, `cursor`, `opencode`, `pi`, or `all` output. |
+| `--json` | Write JSON. |
+| `-v, --verbose` | Show passed checks. |
 
 | Argument | Description |
 |----------|-------------|
-| `OUTPUT_DIR` | Directory containing converted output (default: current dir) |
+| `OUTPUT_DIR` | Converted-output directory in target mode. Default: current directory. |
 
 ### Default mode
 
-Checks:
+Doctor checks marketplace URLs. It checks installed plugins, skill fields, executable hooks, and MCP server configuration.
 
-- Marketplace URLs are reachable
-- Plugins are properly installed
-- Skills have required fields
-- Hooks are executable
-- MCP server configs are valid
+### Target mode
 
-### Target validation mode
-
-When `--target` is specified, validates converted output instead of plugin config:
+Use `--target` to validate converted output:
 
 ```bash
 ai-config doctor --target codex ./output-dir
 ai-config doctor --target all ./output-dir
 ```
 
-Checks target-specific output directory structure, SKILL.md files, MCP/hooks/LSP config validity.
+It checks target output structure, `SKILL.md` files, and MCP, hooks, and LSP configuration.
 
-## convert
+## `convert`
 
-Convert a Claude Code plugin to other AI coding tools.
+Convert a Claude Code plugin for other AI coding tools.
 
 ```bash
 ai-config convert PLUGIN_PATH
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `-t, --target TARGET` | Target tool(s): `codex`, `cursor`, `opencode`, `pi`, `all` (default: `all`) |
-| `-o, --output DIR` | Output directory (default: based on `--scope`) |
-| `--scope SCOPE` | `user` or `project` — controls default output path |
-| `--dry-run` | Preview changes without writing files |
-| `--best-effort` | Continue even if some components fail to convert |
-| `--format FORMAT` | Console output: `summary`, `markdown`, or `json` |
-| `--report PATH` | Write conversion report to a file |
-| `--report-format FORMAT` | Report file format: `json` (default) or `markdown` |
-
-**Arguments:**
+| `-t, --target TARGET` | One or more targets: `codex`, `cursor`, `opencode`, `pi`, or `all`. Default: `all`. |
+| `-o, --output DIR` | Output directory. The default uses `--scope`. |
+| `--scope SCOPE` | `user` or `project`; selects the default output path. |
+| `--dry-run` | Preview without writing files. |
+| `--best-effort` | Continue when a component cannot convert. |
+| `--format FORMAT` | Console format: `summary`, `markdown`, or `json`. |
+| `--report PATH` | Report file path. |
+| `--report-format FORMAT` | Report format: `json` by default, or `markdown`. |
 
 | Argument | Description |
 |----------|-------------|
-| `PLUGIN_PATH` | Path to the Claude Code plugin directory to convert |
+| `PLUGIN_PATH` | Claude Code plugin directory. |
 
-Supported targets:
+Targets:
 
-- **codex** — OpenAI Codex (installable packages and local marketplaces under `.ai-config/codex/`; configured sync manages the Codex CLI lifecycle)
-- **cursor** — Cursor (`.cursor/` dir with skills, commands, hooks, and MCP config)
-- **opencode** — OpenCode (`opencode.json` + `.opencode/` skills dir)
-- **pi** — Pi (`.pi/` dir with skills, prompt templates, and extensions)
+- **codex:** Installable packages and local marketplaces under `.ai-config/codex/`. Configured sync manages the Codex CLI lifecycle.
+- **cursor:** `.cursor/` with skills, commands, hooks, and MCP configuration.
+- **opencode:** `opencode.json` and `.opencode/` skills.
+- **pi:** `.pi/` with skills, prompt templates, and extensions.
 
-Multiple targets can be specified: `-t codex -t cursor`
+Specify a target more than once, for example: `-t codex -t cursor`.
 
-See [Conversion](conversion.md) for a full guide.
+See [Conversion](conversion.md) for details.
 
-## plugin create
+## `plugin create`
 
-Scaffold a new plugin.
+Create a plugin skeleton.
 
 ```bash
 ai-config plugin create NAME
 ```
 
-**Options:**
-
 | Option | Description |
 |--------|-------------|
-| `--path PATH` | Base path for plugin directory |
+| `--path PATH` | Plugin directory base path. |
 
-Creates a plugin directory with:
+The command creates `manifest.yaml`, a skills directory, and a hooks directory.
 
-- `manifest.yaml` — Plugin metadata
-- skills directory — Skill files
-- hooks directory — Hook files
-
-## cache clear
+## `cache clear`
 
 Clear the plugin cache.
 
@@ -277,4 +217,4 @@ Clear the plugin cache.
 ai-config cache clear
 ```
 
-Forces fresh downloads on next sync. Use when plugins seem stale.
+The next sync downloads fresh plugin sources. Use this when plugins appear stale.

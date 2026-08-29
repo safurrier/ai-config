@@ -1,19 +1,19 @@
 # Configuration
 
-ai-config uses a YAML file to declare your plugins, marketplaces, and conversion settings.
+ai-config uses YAML to declare plugins, marketplaces, and conversion settings.
 
-## Config File Location
+## Configuration file location
 
-ai-config looks for config in this order:
+ai-config reads configuration in this order:
 
-1. `.ai-config/config.yaml` (project-local)
-2. `.ai-config/config.yml` (project-local, alternate extension)
-3. `~/.ai-config/config.yaml` (global)
-4. `~/.ai-config/config.yml` (global, alternate extension)
+1. `.ai-config/config.yaml` in the project
+2. `.ai-config/config.yml` in the project
+3. `~/.ai-config/config.yaml`
+4. `~/.ai-config/config.yml`
 
-Project-local config takes precedence over global config. You can also specify an explicit path with `-c /path/to/config.yaml`.
+A project file takes precedence over a global file. You can also provide a path with `-c /path/to/config.yaml`.
 
-## Config Structure
+## Structure
 
 ```yaml
 version: 1
@@ -25,25 +25,25 @@ targets:
       plugins:
         # Plugin references
       conversion:
-        # Conversion settings (optional)
+        # Optional conversion settings
 ```
 
-## Targets
+## Source target
 
-Currently only Claude Code is supported as a source target. Conversion to Codex, Cursor, OpenCode, and Pi is handled by the `conversion` config section or the `convert` command.
+Claude Code is the only source target. The `conversion` section and the `convert` command produce output for Codex, Cursor, OpenCode, and Pi.
 
 ```yaml
 targets:
   - type: claude
     config:
-      # Claude-specific config
+      # Claude-specific configuration
 ```
 
 ## Marketplaces
 
-Marketplaces are repositories containing plugins.
+A marketplace contains plugins.
 
-### GitHub Marketplaces
+### GitHub marketplace
 
 ```yaml
 marketplaces:
@@ -54,12 +54,12 @@ marketplaces:
   my-plugins:
     source: github
     repo: myorg/my-plugins
-    branch: main  # optional, defaults to main
+    branch: main  # Optional; defaults to main
 ```
 
-### Local Marketplaces
+### Local marketplace
 
-Local marketplaces point to a directory on disk. Useful for development or private plugins that aren't hosted on GitHub.
+A local marketplace points to a directory. This is useful for development or private plugins.
 
 ```yaml
 marketplaces:
@@ -71,13 +71,13 @@ marketplaces:
     path: $DOTS_REPO/config/ai-config/plugins
 ```
 
-Relative paths are resolved from the config file's parent directory (the repo root, not the `.ai-config/` directory). Absolute paths are used as-is. Environment variables (`$VAR` or `${VAR}`) and tilde (`~`) are expanded at load time — use them for portability across machines.
+ai-config resolves relative paths from the configuration file's parent directory. It uses absolute paths unchanged. At load time, it expands `$VAR`, `${VAR}`, and `~`. Use those forms to make paths portable.
 
-Each marketplace has a name (used to reference plugins) and a source config.
+Each marketplace has a name. Plugin entries use that name.
 
 ## Plugins
 
-Plugins reference items from marketplaces.
+A plugin entry names a marketplace item.
 
 ```yaml
 plugins:
@@ -90,16 +90,16 @@ plugins:
     enabled: true
 ```
 
-**Plugin ID format:** `plugin-name@marketplace-name`
+**Plugin ID:** `plugin-name@marketplace-name`
 
 **Scopes:**
 
-- `user` — Installed to `~/.claude/plugins/`, available everywhere
-- `project` — Installed to `.claude/plugins/`, only for current project
+- `user`: Install to `~/.claude/plugins/` for all projects.
+- `project`: Install to `.claude/plugins/` for this project.
 
 ## Conversion
 
-Configure automatic plugin conversion to other AI coding tools. When present, `ai-config sync` converts all synced plugins to the specified targets after installing them.
+The `conversion` section enables automatic conversion after sync installs plugins.
 
 ```yaml
 conversion:
@@ -110,27 +110,23 @@ conversion:
     - opencode
     - pi
   scope: project
-  output_dir: ./converted    # optional
+  output_dir: ./converted    # Optional
 ```
-
-**Fields:**
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable/disable conversion |
-| `targets` | list | *(required)* | Target tools: `codex`, `cursor`, `opencode`, `pi` |
-| `scope` | string | `"project"` | `"user"` (writes to home dir) or `"project"` (writes to cwd) |
-| `output_dir` | string | *(auto)* | Custom output directory. Relative paths resolve from config file location |
+| `enabled` | bool | `true` | Enables conversion. |
+| `targets` | list | Required | `codex`, `cursor`, `opencode`, or `pi`. |
+| `scope` | string | `"project"` | `"user"` writes to the home directory; `"project"` writes to the current directory. |
+| `output_dir` | string | Automatic | Custom output directory. Relative paths use the configuration file location. |
 
-When `output_dir` is not set, output goes to the home directory (`~`) for `user` scope or the current directory for `project` scope.
+Without `output_dir`, user scope writes under `~` and project scope writes under the current directory.
 
-For Codex conversion, the source plugin's `.claude-plugin/plugin.json` identity is normalized once
-and used for every generated path and runtime selector. Source `version` values must use SemVer
-2.0.0. Configured sources that normalize to the same Codex identity fail before mutation.
+For Codex, ai-config normalizes the source plugin's `.claude-plugin/plugin.json` identity once. It uses that identity for generated paths and runtime selectors. Source `version` values must follow SemVer 2.0.0. Configured sources with the same normalized Codex identity fail before mutation.
 
-See [Conversion](conversion.md) for a full guide on what gets converted and how.
+See [Conversion](conversion.md) for conversion details.
 
-## Full Example
+## Full example
 
 ```yaml
 version: 1
@@ -161,7 +157,7 @@ targets:
           scope: user
           enabled: true
 
-        # Project-specific tooling (only in this repo)
+        # Project-specific tooling
         - id: project-tools@company-plugins
           scope: project
           enabled: true
@@ -181,25 +177,25 @@ targets:
         scope: project
 ```
 
-## Environment Variables
+## Environment variables
 
-You can use environment variables in local marketplace paths and conversion output directories:
+Use environment variables in local marketplace paths and conversion output directories:
 
 ```yaml
 marketplaces:
   my-plugins:
     source: local
-    path: $MY_REPO/plugins        # expanded at load time
-    # also works: ${MY_REPO}/plugins, ~/plugins
+    path: $MY_REPO/plugins        # Expanded at load time
+    # ${MY_REPO}/plugins and ~/plugins also work
 conversion:
-  output_dir: $PROJECT_ROOT/output  # also expanded
+  output_dir: $PROJECT_ROOT/output  # Expanded at load time
 ```
 
-Variables are expanded at load time using `os.path.expandvars`. If a variable is undefined, the literal `$VAR` string is kept (and the path will likely fail to resolve). The `ai-config init` wizard preserves env var strings in the config file for portability.
+ai-config calls `os.path.expandvars` at load time. If a variable is undefined, its literal `$VAR` text remains. The resulting path can fail to resolve. `ai-config init` preserves environment-variable text for portability.
 
 ## Validation
 
-Run `ai-config doctor` to validate your config:
+Validate configuration with:
 
 ```bash
 ai-config doctor --verbose
@@ -207,7 +203,7 @@ ai-config doctor --verbose
 
 This checks:
 
-- YAML syntax is valid
-- Required fields are present
-- Marketplace repos are accessible
-- Plugin references resolve
+- YAML syntax
+- Required fields
+- Marketplace repository access
+- Plugin references

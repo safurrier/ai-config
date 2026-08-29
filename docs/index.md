@@ -1,18 +1,16 @@
 # ai-config
 
-Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.
+ai-config manages Claude Code plugins from declarative YAML. It can also convert plugins for Codex, Cursor, OpenCode, and Pi.
 
-## Why This Exists
+## Why use it
 
-You've spent time customizing your AI coding setup — skills, MCP servers, hooks, workflows. Then you want to try a different tool, and you're starting from scratch. Or you set up a new machine and can't remember what you installed.
+AI coding setups often include skills, MCP servers, hooks, and workflows. Moving to another tool or machine can mean rebuilding that setup. ai-config keeps the setup in one YAML file.
 
-ai-config solves both problems:
+- **Reproducible setup:** Define plugins once, then run `ai-config sync`. The same configuration works on each machine.
+- **Cross-tool conversion:** Convert customizations for Codex, Cursor, OpenCode, and Pi.
+- **Version control:** Store `.ai-config/config.yaml` in Git and share it with a team.
 
-- **Reproducible setup** — define your plugins in one YAML file, run `ai-config sync`, done. Works the same on every machine.
-- **No tool lock-in** — your customizations convert automatically to Codex, Cursor, OpenCode, and Pi. Try a new tool without re-doing your config.
-- **Version-controlled** — check your `.ai-config/config.yaml` into git and share it with your team.
-
-Or more simply, run `ai-config init` and it writes the config for you.
+Run `ai-config init` to create the file.
 
 ## Installation
 
@@ -20,9 +18,9 @@ Or more simply, run `ai-config init` and it writes the config for you.
 uv tool install git+https://github.com/safurrier/ai-config
 ```
 
-This installs `ai-config` globally. Run `ai-config --help` to verify.
+This installs `ai-config` globally. Verify the installation with `ai-config --help`.
 
-### For Development
+### Development setup
 
 ```bash
 git clone https://github.com/safurrier/ai-config.git
@@ -31,45 +29,45 @@ just setup    # Install dependencies
 just check    # Run lint, type check, tests
 ```
 
-## Quick Start
+## Quick start
 
-**1. Create your config**
+### Create a configuration
 
 ```bash
 ai-config init
 ```
 
-Interactive wizard walks you through adding marketplaces and plugins. Creates `.ai-config/config.yaml`.
+The interactive wizard adds marketplaces and plugins. It creates `.ai-config/config.yaml`.
 
-**2. Sync to install plugins**
+### Sync plugins
 
 ```bash
 ai-config sync
 ```
 
-Installs/uninstalls plugins to match your config. Run this after editing `config.yaml`.
+This installs and removes plugins to match the configuration. Run it after editing `config.yaml`.
 
-**3. Convert to other tools** (optional)
+### Convert a plugin
 
 ```bash
 ai-config convert ./my-plugin --target codex
 ```
 
-Converts a Claude Code plugin to work with Codex, Cursor, OpenCode, or Pi. You can also set up automatic conversion on sync via the `conversion` config section.
+This optional command converts a Claude Code plugin for Codex, Cursor, OpenCode, or Pi. The `conversion` configuration section can also convert plugins during sync.
 
-**4. Check status**
+### Check status
 
 ```bash
 ai-config status
 ```
 
-Shows what's installed vs what's in config.
+This shows installed plugins and the configured state.
 
-## The idea
+## The model
 
-You define your setup once. `ai-config sync` installs your Claude plugins and generates equivalent config for every other tool:
+Define a setup once. `ai-config sync` installs Claude plugins and generates matching output for other tools:
 
-```
+```text
 ai-config sync
   → Claude Code: plugins installed
   → Codex:       ~/.ai-config/codex/ packages, installed via codex plugin CLI
@@ -78,10 +76,10 @@ ai-config sync
   → Pi:          ~/.pi/agent/skills/, ~/.pi/agent/prompts/, ~/.pi/agent/extensions/
 ```
 
-Check your `.ai-config/config.yaml` into your dotfiles. Run `ai-config sync` on any machine. Want to try a new tool? Add it to `conversion.targets` and re-sync — your skills are already there.
+Store `.ai-config/config.yaml` in dotfiles. Run `ai-config sync` on each machine. To use another tool, add it to `conversion.targets` and sync again.
 
-## What's Next
+## Next steps
 
-- [Commands](commands.md) — Full command reference
-- [Configuration](config.md) — Config file format and examples
-- [Conversion](conversion.md) — Converting plugins to other AI tools
+- [Commands](commands.md): Command reference.
+- [Configuration](config.md): Configuration format and examples.
+- [Conversion](conversion.md): Plugin conversion details.

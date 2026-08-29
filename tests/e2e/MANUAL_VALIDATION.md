@@ -1,6 +1,6 @@
-# Manual Validation Guide
+# Manual validation
 
-Step-by-step guide for validating ai-config integration with real AI coding tools. These checks require interactive TUI access or API keys that can't be automated.
+Use this guide to validate ai-config with real AI coding tools. These checks need an interactive terminal interface or API keys, so automated tests cannot run them.
 
 ## Prerequisites
 
@@ -11,15 +11,15 @@ just docker-dev-up && just docker-dev-attach
 # Inside container: install dependencies
 uv sync --all-extras
 
-# Run the automated smoke test first (covers non-interactive checks)
+# Run the automated smoke test first
 uv run pytest tests/e2e/test_integration_smoke.py -v
 ```
 
-If the smoke test fails, fix those issues before proceeding with manual validation.
+Fix smoke-test failures before manual validation.
 
-## 1. Claude Code
+## Claude Code
 
-**Requires**: `ANTHROPIC_API_KEY`
+**Required environment variable:** `ANTHROPIC_API_KEY`
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -28,84 +28,85 @@ export ANTHROPIC_API_KEY=sk-...
 claude
 
 # Inside Claude session:
-/skills          # Should list test-plugin skills (test-skill)
+/skills          # Lists test-plugin skills, including test-skill
 # Ctrl+C to exit
 ```
 
-**Expected**: `test-skill` appears in the skills list with description "A test skill for marketplace validation".
+Expected result: `test-skill` appears with the description `A test skill for marketplace validation`.
 
-## 2. OpenAI Codex
+## OpenAI Codex
 
-**Requires**: `OPENAI_API_KEY`
+**Required environment variable:** `OPENAI_API_KEY`
 
 ```bash
 export OPENAI_API_KEY=sk-...
 
-# Start Codex - should start without skill directory errors
+# Start Codex
 codex
 
-# Verify skills directory exists
-ls ~/.codex/skills/
+# List registered plugins
+codex plugin list --json
 ```
 
-**Expected**: Codex starts without errors. Skills directory contains converted skill files.
+Expected result: Codex starts without errors. The plugin list includes the converted plugin after sync registers its generated marketplace.
 
-## 3. OpenCode
+## OpenCode
 
-**No API key needed** for debug commands.
+No API key is required for these debug commands.
 
 ```bash
-opencode debug skill    # Should list converted skills
-opencode debug config   # Should show MCP config
-opencode debug paths    # Should show correct paths
+opencode debug skill    # Lists converted skills
+opencode debug config   # Shows MCP configuration
+opencode debug paths    # Shows paths
 ```
 
-**Expected**: Debug commands show converted skills, MCP servers, and correct path configuration.
+Expected result: The commands show converted skills, MCP servers, and the expected paths.
 
-## 4. Cursor
+## Cursor
 
-**No API key needed** for CLI commands.
+No API key is required for this command.
 
 ```bash
-cursor-agent mcp list   # Should list MCP servers from conversion
+cursor-agent mcp list   # Lists MCP servers from conversion
 ```
 
-**Expected**: MCP servers from the converted plugin appear in the list.
+Expected result: The converted plugin's MCP servers appear in the list.
 
-## 5. Sync-Driven Conversion
+## Sync-driven conversion
 
-After the automated smoke test runs `ai-config sync`, verify the cross-tool outputs:
+After the smoke test runs `ai-config sync`, inspect the generated output:
 
 ```bash
-# User scope outputs
-ls ~/.codex/skills/       # Codex skills
-ls ~/.cursor/skills/      # Cursor skills
-ls ~/.opencode/skills/    # OpenCode skills
+# User scope output
+ls ~/.ai-config/codex/marketplaces/  # Generated Codex package sources
+ls ~/.cursor/skills/                 # Cursor skills
+ls ~/.opencode/skills/               # OpenCode skills
 
-# MCP config files
-cat ~/.cursor/mcp.json    # Should use ${env:VAR} syntax for env vars
-cat ~/opencode.json       # Should use {env:VAR} syntax for env vars
-cat ~/opencode.lsp.json   # OpenCode LSP config
+# MCP configuration files
+cat ~/.cursor/mcp.json    # Uses ${env:VAR} syntax for environment variables
+cat ~/opencode.json       # Uses {env:VAR} syntax for environment variables
+cat ~/opencode.lsp.json   # OpenCode LSP configuration
+
+# Codex lifecycle state
+codex plugin list --json
 ```
 
-## 6. Plugin Marketplace Verification
+## Plugin marketplace
 
 ```bash
-# Verify marketplace is registered
+# Registered Claude marketplaces
 claude plugin marketplace list --json
 
-# Verify plugin is installed
+# Installed Claude plugins
 claude plugin list --json
-
-# Expected output should include:
-#   - "test-marketplace" in marketplace list
-#   - "test-plugin" in plugin list
 ```
+
+Expected output includes `test-marketplace` in the marketplace list and `test-plugin` in the plugin list.
 
 ## Troubleshooting
 
-**`ai-config sync` fails with source error**: The marketplace fixture `source` field must be a string path (`"./test-plugin"`), not an object. Run the unit tests to verify: `uv run pytest tests/unit/test_marketplace_fixtures.py -v`
+**`ai-config sync` reports a source error:** The marketplace fixture `source` field must be a string path such as `"./test-plugin"`, not an object. Verify the fixture with `uv run pytest tests/unit/test_marketplace_fixtures.py -v`.
 
-**Claude plugin commands fail**: Ensure Claude Code is installed (`claude --version`) and the plugin directory exists (`ls ~/.claude/plugins/`).
+**Claude plugin commands fail:** Check the installation with `claude --version`. Also check that `~/.claude/plugins/` exists.
 
-**Skills not showing up**: After `ai-config sync`, restart Claude Code. Plugins are loaded at session start. Use `claude --resume` to continue your previous session.
+**Skills do not appear:** Restart Claude Code after `ai-config sync`. Claude Code loads plugins when a session starts. Use `claude --resume` to continue the prior session.
