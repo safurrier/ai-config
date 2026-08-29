@@ -88,6 +88,7 @@ nav:
       - Observe-plan-apply sync: adr/0006-observe-plan-apply-sync.md
       - Shared skill resources: adr/0007-materialize-shared-skill-resources.md
       - Bounded sync convergence: adr/0008-bounded-sync-convergence-stages.md
+      - Contained plugin source reads: adr/0009-contained-plugin-source-reads.md
 
 extra:
   social:

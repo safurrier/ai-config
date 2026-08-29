@@ -1,33 +1,32 @@
 # Documentation routing
 
-MkDocs owns this directory's public structure. Keep `docs/index.md` as the human landing page and update `mkdocs.yml` when adding a public page.
+Public documentation is built by MkDocs. Keep `docs/index.md` as the reader entry point and update `mkdocs.yml` when a public page is added or renamed.
 
-## Explanation
+## Gotchas
 
-| Doc | Description |
+- **DO** put current behavior in architecture, commands, config, or conversion pages. **NOT** duplicate it in ADRs or project evolution. **BECAUSE** those documents preserve decisions and history, not live reference.
+- **DO** cite a commit or merged PR URL and merge SHA for historical claims. **NOT** turn a retrospective into an unsupported narrative. **BECAUSE** project evolution and ADRs require immutable provenance.
+- **DO** preserve exact command names, paths, safety boundaries, and ownership limits. **NOT** simplify them into weaker claims. **BECAUSE** this documentation describes destructive and compatibility-sensitive behavior.
+
+## Related Context
+
+| Path | Purpose |
 |---|---|
-| `architecture.md` | Current component, lifecycle, conversion, and ownership boundaries. |
-| `project-evolution.md` | Evidence-backed phases and superseded architectural directions. |
-| `conversion.md` | User-facing conversion behavior and target mappings. |
+| `index.md` | Public navigation and shortest path. |
+| `architecture.md` | Current structure and boundaries. |
+| `commands.md` | CLI reference. |
+| `config.md` | Configuration schema and paths. |
+| `conversion.md` | Target mappings and conversion limits. |
+| `adr/README.md` | Decision index. |
+| `adr/0001-claude-plugin-source-model.md` | Claude plugin source model. |
+| `adr/0002-target-neutral-plugin-ir.md` | Shared conversion IR. |
+| `adr/0003-target-native-overrides.md` | Explicit target exceptions. |
+| `adr/0004-codex-plugin-packages.md` | Codex package output. |
+| `adr/0005-proven-output-ownership.md` | Destructive ownership proof. |
+| `adr/0006-observe-plan-apply-sync.md` | Immutable sync stages. |
+| `adr/0007-materialize-shared-skill-resources.md` | Self-contained skills. |
+| `adr/0008-bounded-sync-convergence-stages.md` | One prerequisite and conversion stage. |
+| `adr/0009-contained-plugin-source-reads.md` | Fail-closed source reads. |
+| `project-evolution.md` | Evidence-backed history. |
 
-## Reference
-
-| Doc | Description |
-|---|---|
-| `commands.md` | CLI command and option reference. |
-| `config.md` | YAML schema, paths, scopes, and examples. |
-| `adr/README.md` | Architecture decision index and retrospective records. |
-| `adr/0001-claude-plugin-source-model.md` | Why Claude plugins are the source model. |
-| `adr/0002-target-neutral-plugin-ir.md` | Why conversion passes through an IR. |
-| `adr/0003-target-native-overrides.md` | Why explicit target-native files may override generated output. |
-| `adr/0004-codex-plugin-packages.md` | Why Codex output uses packages and local marketplaces. |
-| `adr/0005-proven-output-ownership.md` | Why destructive cleanup requires target-specific ownership proof. |
-| `adr/0006-observe-plan-apply-sync.md` | Why sync separates observation, planning, and application. |
-| `adr/0007-materialize-shared-skill-resources.md` | Why shared plugin files are materialized into self-contained generated skills. |
-| `adr/0008-bounded-sync-convergence-stages.md` | Why fresh remote sync uses at most one prerequisite plan and one conversion plan. |
-
-## Entry point
-
-| Doc | Description |
-|---|---|
-| `index.md` | MkDocs home and user navigation. |
+<!-- generated-by: context-engineering@2.6.5 | last-updated: 2026-08-22 -->

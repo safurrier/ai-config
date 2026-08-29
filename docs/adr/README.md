@@ -12,5 +12,6 @@ These records explain lasting choices whose rationale is established in reposito
 | [Separate sync observation, planning, and application](0006-observe-plan-apply-sync.md) | Accepted | 2026-07-29 |
 | [Materialize shared plugin resources into generated skills](0007-materialize-shared-skill-resources.md) | Accepted | 2026-08-20 |
 | [Bound sync convergence across prerequisite and conversion stages](0008-bounded-sync-convergence-stages.md) | Accepted | 2026-08-21 |
+| [Read plugin sources through a fail-closed boundary](0009-contained-plugin-source-reads.md) | Accepted | 2026-08-20 |
 
 Retrospective records use the date the decision entered `main`, not the date this index was written.
