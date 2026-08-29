@@ -1,14 +1,21 @@
 # Documentation routing
 
-Public documentation is built by MkDocs. Keep `docs/index.md` as the reader entry point and update `mkdocs.yml` when a public page is added or renamed.
+MkDocs builds the public documentation. Keep `docs/index.md` as the reader
+entry point. Update `mkdocs.yml` when you add or rename a public page.
 
 ## Gotchas
 
-- **DO** put current behavior in architecture, commands, config, or conversion pages. **NOT** duplicate it in ADRs or project evolution. **BECAUSE** those documents preserve decisions and history, not live reference.
-- **DO** cite a commit or merged PR URL and merge SHA for historical claims. **NOT** turn a retrospective into an unsupported narrative. **BECAUSE** project evolution and ADRs require immutable provenance.
-- **DO** preserve exact command names, paths, safety boundaries, and ownership limits. **NOT** simplify them into weaker claims. **BECAUSE** this documentation describes destructive and compatibility-sensitive behavior.
+- **DO** put current behavior in architecture, commands, config, or conversion
+  pages. **NOT** duplicate it in ADRs or project evolution. **BECAUSE** those
+  documents preserve decisions and history, not live reference.
+- **DO** cite a commit or merged PR URL and merge SHA for historical claims.
+  **NOT** turn a retrospective into an unsupported narrative. **BECAUSE** project
+  evolution and ADRs need immutable provenance.
+- **DO** preserve exact command names, paths, safety boundaries, and ownership
+  limits. **NOT** simplify them into weaker claims. **BECAUSE** this documentation
+  describes destructive and compatibility-sensitive behavior.
 
-## Related Context
+## Related context
 
 | Path | Purpose |
 |---|---|

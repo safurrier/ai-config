@@ -1,26 +1,26 @@
 # ai-config
 
-Declarative plugin manager for Claude Code — with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.
+Declarative plugin manager for Claude Code, with cross-tool conversion to Codex, Cursor, OpenCode, and Pi.
 
 ## Why this exists
 
-You've spent time building up your AI coding setup: custom skills, MCP servers, hooks, workflows. Then you want to try Codex or Pi, and you're starting from scratch. Or you get a new machine and have to remember what you installed.
+You've built an AI coding setup with custom skills, Model Context Protocol (MCP) servers, hooks, and workflows. Then you try Codex or Pi and start from scratch. Or you get a new machine and need to remember what you installed.
 
 ai-config solves both problems. You define your setup in one YAML file, then use it to:
 
 1. **Install your Claude Code plugins reproducibly** across machines with `ai-config sync`.
-2. **Convert those plugins** for other tools — same skills, same config, less manual porting.
+2. **Convert those plugins** for other tools with the same skills and config.
 
-No more vendor lock-in because your customizations are trapped in one tool's config directory. No more hand-maintaining Claude plugins, Codex packages, Cursor/OpenCode config, and Pi extensions.
+Keep your customizations out of one tool's config directory. Avoid hand-maintaining Claude plugins, Codex packages, Cursor and OpenCode config, and Pi extensions.
 
 Or more simply: run `ai-config init` and it walks you through the config.
 
 ## What this isn't
 
-This README does not have:
+This README avoids:
 
 - 14 shields.io badges declaring build status, coverage, npm downloads, discord members, twitter followers, and mass-to-charge ratio
-- A mass of emojis to make it look "friendly" and "approachable"
+- A mass of emojis that make it look "friendly" and "approachable"
 - Claims about revolutionizing your development workflow
 - A "Quick Start" that's actually 73 steps
 - Screenshots of a dashboard that doesn't exist
@@ -36,7 +36,7 @@ pip install ai-config-cli
 uv tool install ai-config-cli
 ```
 
-This installs the `ai-config` command. Check that it resolves before changing any tool config:
+This installs the `ai-config` command. Confirm that it resolves before changing tool config:
 
 ```bash
 ai-config --help
@@ -64,7 +64,7 @@ The wizard adds marketplaces and plugins, then writes `.ai-config/config.yaml` u
 ai-config sync --dry-run
 ```
 
-This is the safe checkpoint. It shows what would be installed, removed, or converted without writing plugin output.
+This is the safe checkpoint. It shows planned installs, removals, and conversions without writing plugin output.
 
 **3. Apply the sync**
 
@@ -107,12 +107,12 @@ targets:
 With conversion enabled, `ai-config sync` can write outputs such as:
 
 - **Claude Code**: plugins installed through Claude Code's plugin system
-- **Codex**: installable plugin packages and ai-config-owned local marketplaces under `.ai-config/codex/`; sync manages them through `codex plugin`
-- **Cursor**: skills, commands, hooks, and MCP config under `.cursor/` or `~/.cursor/`
+- **Codex**: installable plugin packages and ai-config-owned local marketplaces under `.ai-config/codex/`. Sync manages them through `codex plugin`.
+- **Cursor**: skills, commands, hooks, and Model Context Protocol (MCP) config under `.cursor/` or `~/.cursor/`
 - **OpenCode**: skills plus `opencode.json` / `opencode.lsp.json`
 - **Pi**: skills, prompt templates, and hook extensions under `.pi/` or `~/.pi/`
 
-The exact paths depend on conversion `scope` and `output_dir`. Codex 0.6.0 is a breaking migration from loose `.codex` output; review the [Codex migration guide](docs/conversion.md#migration-from-05x) before syncing. See [Configuration](docs/config.md) and [Conversion](docs/conversion.md) for full rules.
+The exact paths depend on conversion `scope` and `output_dir`. Codex 0.6.0 is a breaking migration from loose `.codex` output. Review the [Codex migration guide](docs/conversion.md#migration-from-05x) before syncing. See [Configuration](docs/config.md) and [Conversion](docs/conversion.md) for full rules.
 
 ## Config lookup
 
@@ -125,7 +125,7 @@ By default, commands look for config in this order:
 
 Project-local config wins over global config. Pass `-c /path/to/config.yaml` to use a specific file.
 
-Relative local marketplace paths and conversion output paths are resolved from the config's project root. Environment variables and `~` are expanded at load time, so paths like `$DOTS_REPO/plugins` can stay portable in dotfiles.
+The config's project root resolves relative local marketplace and conversion-output paths. The loader expands environment variables and `~`, so paths like `$DOTS_REPO/plugins` can stay portable in dotfiles.
 
 ## Common workflows
 
@@ -162,19 +162,19 @@ just check
 
 ## Troubleshooting
 
-**DO preview first, NOT blind sync, BECAUSE sync can install/uninstall plugins and write converted tool config.**
+**Preview before sync. Sync can install or uninstall plugins and write converted tool config.**
 
 ```bash
 ai-config sync --dry-run
 ```
 
-**DO use `--fresh` when Claude's cached plugins or converted output look stale, NOT hand-delete random target files first, BECAUSE sync preserves and reconciles its target ownership state.**
+**Use `--fresh` when Claude's cached plugins or converted output look stale. Leave target files in place because sync preserves and reconciles target ownership state.**
 
 ```bash
 ai-config sync --fresh
 ```
 
-**DO validate converted output with target doctor, NOT assume every Claude feature maps 1:1, BECAUSE some hooks, MCP settings, commands, and agents degrade or skip depending on the target.**
+**Validate converted output with target doctor. Each Claude feature may map differently because hooks, Model Context Protocol settings, commands, and agents can degrade or skip by target.**
 
 ```bash
 ai-config doctor --target all ./output-dir
@@ -182,9 +182,9 @@ ai-config doctor --target all ./output-dir
 
 ## Further reading
 
-- [Commands](docs/commands.md) — complete CLI reference
-- [Configuration](docs/config.md) — config schema, path resolution, scopes, and examples
-- [Conversion](docs/conversion.md) — target mappings, dry runs, reports, and validation
+- [Commands](docs/commands.md): complete CLI reference
+- [Configuration](docs/config.md): config schema, path resolution, scopes, and examples
+- [Conversion](docs/conversion.md): target mappings, dry runs, reports, and validation
 
 ## License
 

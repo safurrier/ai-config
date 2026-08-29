@@ -1,6 +1,8 @@
-# ai-config source
+# Source guidance
 
-`src/ai_config/` implements configuration parsing, Claude lifecycle orchestration, and cross-tool conversion. Start at `cli.py`; keep command handlers thin and place behavior behind typed boundaries.
+`src/ai_config/` parses configuration, runs the Claude lifecycle, and converts
+plugins for other tools. Start at `cli.py`. Keep command handlers thin and put
+behavior behind typed boundaries.
 
 ## Commands
 
@@ -12,13 +14,23 @@ uv run --frozen --no-sync pytest tests/unit/ -v
 
 ## Gotchas
 
-- **DO** use frozen dataclasses and tuples for configuration and sync records. **NOT** put mutable collections in frozen contracts. **BECAUSE** planning depends on immutable, comparable inputs.
-- **DO** observe state, materialize a `SyncPlan`, then apply that plan. **NOT** parse sources, choose cache state, or create replacement actions during execution. **BECAUSE** the plan is the mutation authorization boundary.
-- **DO** use `source_safety.py` for every plugin-source read. **NOT** add a direct `Path.read_*` path for conversion input. **BECAUSE** source containment rejects links, traversal, and special files before bytes are read.
-- **DO** keep target behavior in emitters, validators, and lifecycle modules. **NOT** encode a target-specific exception in `PluginIR`. **BECAUSE** the IR remains the shared source contract.
-- **DO** delete only through target ownership evidence. **NOT** treat a contained Cursor or OpenCode path as owned. **BECAUSE** path containment does not prove provenance.
+- **DO** use frozen dataclasses and tuples for configuration and sync records.
+  **NOT** put mutable collections in frozen contracts. **BECAUSE** planning needs
+  immutable, comparable inputs.
+- **DO** observe state, materialize a `SyncPlan`, then apply that plan. **NOT**
+  parse sources, choose cache state, or create replacement actions during
+  execution. **BECAUSE** the plan authorizes mutation.
+- **DO** use `source_safety.py` for every plugin-source read. **NOT** add a direct
+  `Path.read_*` path for conversion input. **BECAUSE** source containment rejects
+  links, traversal, and special files before it reads bytes.
+- **DO** keep target behavior in emitters, validators, and lifecycle modules.
+  **NOT** encode a target-specific exception in `PluginIR`. **BECAUSE** the IR is
+  the shared source contract.
+- **DO** delete only through target ownership evidence. **NOT** treat a contained
+  Cursor or OpenCode path as owned. **BECAUSE** path containment does not prove
+  provenance.
 
-## Related Context
+## Related context
 
 | Path | Purpose |
 |---|---|
