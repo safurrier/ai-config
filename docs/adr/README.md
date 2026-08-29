@@ -1,6 +1,6 @@
 # Architecture decisions
 
-These records explain lasting choices whose rationale is established in repository history. They complement the current contract in [SPEC.md](https://github.com/safurrier/ai-config/blob/main/SPEC.md), the [architecture overview](../architecture.md), and the [project evolution](../project-evolution.md).
+These records explain lasting choices with rationale in repository history. They complement the current contract in [the specification](https://github.com/safurrier/ai-config/blob/main/SPEC.md), the [architecture overview](../architecture.md), and the [project evolution](../project-evolution.md).
 
 | Decision | Status | Effective date |
 |---|---|---|
@@ -14,4 +14,4 @@ These records explain lasting choices whose rationale is established in reposito
 | [Bound sync convergence across prerequisite and conversion stages](0008-bounded-sync-convergence-stages.md) | Accepted | 2026-08-21 |
 | [Read plugin sources through a fail-closed boundary](0009-contained-plugin-source-reads.md) | Accepted | 2026-08-20 |
 
-Retrospective records use the date the decision entered `main`, not the date this index was written.
+Retrospective records use the date when the decision entered `main`, not the date the team wrote this index.
