@@ -21,6 +21,10 @@ uv run --frozen --no-sync mkdocs build --strict
 - **DO** treat configured local marketplaces as the conversion source authority. **NOT** silently use an installed cache when that local source is missing or unsafe. **BECAUSE** stale installed bytes are not the configured source.
 - **DO** use `uv run --frozen --no-sync` for validation in this worktree. **NOT** run lock-updating dependency commands. **BECAUSE** `uv.lock` is not part of documentation work.
 
+## Releases
+
+Before a release, Move `[Unreleased]` entries to a new version section with the actual release date. Keep the version in `pyproject.toml` and the release notes aligned.
+
 ## Related Context
 
 | Path | Purpose |
