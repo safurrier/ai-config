@@ -48,7 +48,7 @@ Identify the target tool's:
 
 | # | File | Change |
 |---|---|---|
-| 15 | `AGENTS.md` | Update the multi-tool table and gitignore note. |
+| 15 | `AGENTS.md`, `.gitignore` | Update the project summary's target list and add target-specific generated paths to `.gitignore` when needed. |
 | 16 | `README.md` | Update the conversion-target table. |
 | 17 | `docs/conversion.md` | Update the target table, configuration fields, component mapping, and option reference. |
 | 18 | `CHANGELOG.md` | Add the release entry. |

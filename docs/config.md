@@ -71,7 +71,7 @@ marketplaces:
     path: $DOTS_REPO/config/ai-config/plugins
 ```
 
-ai-config resolves relative paths from the configuration file's parent directory. It uses absolute paths unchanged. At load time, it expands `$VAR`, `${VAR}`, and `~`. Use those forms to make paths portable.
+ai-config resolves relative paths from the project root, which contains `.ai-config/config.yaml`. It uses absolute paths unchanged. At load time, it expands `$VAR`, `${VAR}`, and `~`. Use those forms to make paths portable.
 
 Each marketplace has a name. Plugin entries use that name.
 
