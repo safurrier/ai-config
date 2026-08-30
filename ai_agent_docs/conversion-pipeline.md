@@ -137,7 +137,7 @@ Use small steps. First, read state. Next, make the plan. Then, check the plan. L
 mix these steps. A plan can be read and saved. It must not change while it runs.
 
 Use safe paths. A path must stay in the plugin root. A link must pass the source check. A file must be a
-safe regular file. Read its bytes once. Pass those bytes to the target. Do not open the source again.
+safe regular file. During conversion, read its bytes once and pass those bytes to the target. Separate planning and stale-plan hashing re-read sources to verify current state.
 
 Use clear target work. Each target gets its own result. Each result lists its files and warnings. A target
 may write its own output. It may not write a peer target's output. A cleanup step needs a known owned
