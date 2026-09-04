@@ -1064,9 +1064,6 @@ def test_cli_mutation_schema_rejects_semantically_wrong_success(
         "0.147.0",
         "0.148.0",
         "0.149.0",
-        "0.150.0",
-        "0.151.0",
-        "0.152.0",
         "0.153.3",
     ],
 )
@@ -1082,9 +1079,10 @@ def test_cli_supported_versions_accept_observed_contract(tmp_path: Path, version
     assert CodexCLI(str(executable)).list_marketplaces() == []
 
 
-def test_cli_unknown_version_fails_closed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["0.150.0", "0.151.0", "0.152.0", "0.154.0"])
+def test_cli_unknown_version_fails_closed(tmp_path: Path, version: str) -> None:
     executable = tmp_path / "codex-version"
-    executable.write_text("#!/bin/sh\necho 'codex-cli 0.154.0'\n")
+    executable.write_text(f"#!/bin/sh\necho 'codex-cli {version}'\n")
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
 
     with pytest.raises(CodexCommandError, match="unsupported Codex CLI response contract"):

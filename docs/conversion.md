@@ -219,8 +219,9 @@ Every Codex subprocess has a finite timeout. On POSIX, each command starts in a 
 group; after a bounded SIGTERM grace period, timeout cleanup inspects and kills any remaining group
 even when the direct child exited first, then performs a bounded reap of the direct child. Non-POSIX
 platforms receive direct-child timeout cleanup only; ai-config 0.6.0 does not claim descendant
-cleanup there. The adapter accepts the repository-supported Codex 0.144.x through 0.153.x JSON
-contracts. Runtime probe evidence in the compatibility baseline currently extends through 0.153.3.
+cleanup there. The adapter accepts the repository-supported Codex 0.144.x through 0.149.x and 0.153.x JSON
+contracts. Unverified 0.150.x through 0.152.x releases remain fail-closed. Runtime probe evidence in
+the compatibility baseline currently includes 0.153.3.
 Malformed, partial, duplicate, inconsistent, or unknown version responses fail closed. Lifecycle
 failures retain ownership for retry, sanitize child output, name the exact stage and command,
 include remediation, and report completed and failed actions.
