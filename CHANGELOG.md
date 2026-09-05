@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Codex 0.153.x available-plugin validation now accepts typed remote catalog identities reported as `source.id` and tolerates duplicate identities only within that unowned remote catalog. Local and Git marketplace duplicates remain fail-closed, and malformed remote rows are still rejected.
 - Sync source hashing now accepts the repository-standard `CLAUDE.md -> AGENTS.md`
   sibling mirror while continuing to reject every other symlink, allowing safe local
   plugin marketplaces to participate in immutable observe-plan-apply snapshots.

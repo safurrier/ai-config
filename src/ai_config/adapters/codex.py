@@ -504,7 +504,7 @@ class CodexCLI:
         args: list[str],
         payload: dict[str, object],
         remediation: str,
-    ) -> str:
+    ) -> tuple[str, str]:
         object_entry = _as_object_dict(entry)
         if object_entry is None:
             raise self._schema_error(
@@ -558,10 +558,20 @@ class CodexCLI:
         if source_type not in _KNOWN_SOURCE_TYPES:
             detail = f"available[{index}].source has an unknown source type"
             raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        assert isinstance(source_type, str)
         if source_type == "local" and (not isinstance(source_path, str) or not source_path):
             detail = f"available[{index}].source.path must be a non-empty string"
             raise self._schema_error("list-plugins", args, payload, detail, remediation)
-        if source_type != "local" and (
+        if source_type == "remote":
+            remote_id = source.get("id") if source is not None else None
+            remote_url = source.get("url") if source is not None else None
+            if not (
+                (isinstance(remote_id, str) and remote_id)
+                or (isinstance(remote_url, str) and remote_url)
+            ):
+                detail = f"available[{index}].source.id or .url must be a non-empty string"
+                raise self._schema_error("list-plugins", args, payload, detail, remediation)
+        elif source_type != "local" and (
             source is None or not isinstance(source.get("url"), str) or not source.get("url")
         ):
             detail = f"available[{index}].source.url must be a non-empty string"
@@ -587,7 +597,7 @@ class CodexCLI:
             if marketplace_root not in source_root.parents:
                 detail = f"available[{index}] plugin source is outside its marketplaceSource root"
                 raise self._schema_error("list-plugins", args, payload, detail, remediation)
-        return plugin_id
+        return plugin_id, source_type
 
     def list_plugins(self) -> list[CodexInstalledPlugin]:
         self._ensure_supported_version()
@@ -606,14 +616,14 @@ class CodexCLI:
             )
         available_seen: set[str] = set()
         for index, entry in enumerate(available):
-            plugin_id = self._validate_available_plugin(
+            plugin_id, source_type = self._validate_available_plugin(
                 entry,
                 index=index,
                 args=args,
                 payload=payload,
                 remediation=remediation,
             )
-            if plugin_id in available_seen:
+            if plugin_id in available_seen and source_type != "remote":
                 raise self._schema_error(
                     "list-plugins",
                     args,

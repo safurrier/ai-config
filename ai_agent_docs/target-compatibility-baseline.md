@@ -142,10 +142,13 @@ platform integrity: sha512-cIJh2xhww3ZBXmgBt6e9gQjrdL2c9xiiq7yimDHtTGdg3wiUOADD/
 install source:    integrity-verified direct npm registry tarball extraction
 ```
 
-The 0.153.3 runtime probes confirmed the same stable feature rows, typed marketplace/plugin JSON
-schemas and identities, lifecycle mutation semantics, source-less catalog behavior, and public-sync
-convergence contract previously observed through 0.149.0. Help copy changed in several commands but
-preserved the parsed command and JSON surfaces used by the adapter.
+The 0.153.3 runtime probes confirmed the same stable feature rows, lifecycle mutation semantics,
+source-less catalog behavior, and public-sync convergence contract previously observed through
+0.149.0. A logged-in catalog probe additionally found remote available rows using typed
+`{"source":"remote","id":"..."}` identities instead of URLs, plus a small number of duplicate
+remote plugin identities with distinct remote IDs and versions. The adapter validates and preserves
+that unowned remote catalog while keeping local and Git duplicate identities fail-closed. Help copy
+changed in several commands but preserved the parsed command and JSON surfaces used by the adapter.
 
 The direct extraction in `tests/probes/probe_latest_codex.sh` is intentional. npm's configured
 install-date cutoff rejected a normal fresh install because 0.144.5 was newer than the cutoff.
