@@ -733,6 +733,14 @@ def test_cli_available_rows_require_complete_typed_identity(
     assert cli.list_plugins() == []
     assert "--available" in captured_args
 
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda *_args, **_kwargs: {"installed": [], "available": [available, available]},
+    )
+    with pytest.raises(CodexCommandError, match="duplicate available plugin"):
+        cli.list_plugins()
+
     for mutation in (
         {"pluginId": "other@market"},
         {"version": "latest"},
@@ -751,6 +759,52 @@ def test_cli_available_rows_require_complete_typed_identity(
         )
         with pytest.raises(CodexCommandError, match=r"available\[0\]"):
             cli.list_plugins()
+
+
+def test_cli_accepts_remote_available_source_id_and_rejects_missing_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = CodexCLI("/bin/codex")
+    monkeypatch.setattr(cli, "_ensure_supported_version", lambda: "0.153.3")
+    available = {
+        "pluginId": "demo@openai-curated-remote",
+        "name": "demo",
+        "marketplaceName": "openai-curated-remote",
+        "version": "1.0.0",
+        "installed": False,
+        "enabled": False,
+        "source": {"source": "remote", "id": "plugin_remote_123"},
+        "installPolicy": "AVAILABLE",
+        "authPolicy": "ON_INSTALL",
+    }
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda *args, **kwargs: {"installed": [], "available": [available]},
+    )
+
+    assert cli.list_plugins() == []
+
+    duplicate = {
+        **available,
+        "version": "2.0.0",
+        "source": {"source": "remote", "id": "plugin_remote_456"},
+    }
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda *args, **kwargs: {"installed": [], "available": [available, duplicate]},
+    )
+    assert cli.list_plugins() == []
+
+    malformed = {**available, "source": {"source": "remote", "id": ""}}
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda *args, **kwargs: {"installed": [], "available": [malformed]},
+    )
+    with pytest.raises(CodexCommandError, match=r"source\.id or \.url"):
+        cli.list_plugins()
 
 
 def test_cli_accepts_absent_marketplace_source_metadata(
