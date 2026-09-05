@@ -1480,8 +1480,10 @@ platforms receive direct-child timeout cleanup only; ai-config 0.6.0 does not cl
 cleanup there. The adapter accepts the repository-supported Codex 0.144.x through 0.149.x and 0.153.x JSON
 contracts. Unverified 0.150.x through 0.152.x releases remain fail-closed. Runtime probe evidence in
 the compatibility baseline currently includes 0.153.3.
-Malformed, partial, duplicate, inconsistent, or unknown version responses fail closed. Lifecycle
-failures retain ownership for retry, sanitize child output, name the exact stage and command,
+Malformed, partial, inconsistent, or unknown-version responses fail closed. Duplicate local and Git
+identities also fail closed; duplicate available identities in Codex's unowned remote catalog are
+validated but tolerated because 0.153.x can report distinct remote IDs and versions for one display
+identity. Lifecycle failures retain ownership for retry, sanitize child output, name the exact stage and command,
 include remediation, and report completed and failed actions.</p>
 
 
