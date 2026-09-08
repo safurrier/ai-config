@@ -601,6 +601,13 @@ def _emit_projected_skill(
     cache_directories: set[Path] = set()
     for relative_path in skill.excluded_generated_paths:
         parts = Path(relative_path).parts
+        if "__pycache__" not in parts:
+            result.add_diagnostic(
+                Severity.ERROR,
+                f"Invalid excluded generated path: {relative_path}",
+                component_ref=f"skill:{skill.name}",
+            )
+            return False
         cache_index = parts.index("__pycache__")
         cache_directories.add(Path(*parts[: cache_index + 1]))
     for cache_directory in sorted(cache_directories, key=lambda path: path.as_posix()):

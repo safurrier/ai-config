@@ -1284,6 +1284,10 @@ class TestStandalonePiOwnership:
         assert (output / ".pi/skills/alpha-plugin-alpha/SKILL.md").is_file()
         assert load_pi_ownership(output)
 
+    def test_skill_rejects_invalid_excluded_generated_path(self) -> None:
+        with pytest.raises(ValueError, match="must be canonical and beneath __pycache__"):
+            Skill(name="alpha", excluded_generated_paths=("cli/generated.pyc",))
+
     def test_generated_python_artifacts_are_excluded_from_all_conversion_outputs(
         self, tmp_path: Path
     ) -> None:
