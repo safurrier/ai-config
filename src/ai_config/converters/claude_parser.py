@@ -795,6 +795,8 @@ class ClaudePluginParser:
 
 def parse_claude_plugin_with_ignored_generated_paths(
     plugin_path: Path | str,
+    *,
+    target_native_targets: frozenset[TargetTool] | None = None,
 ) -> tuple[PluginIR, frozenset[PurePosixPath]]:
     """Parse a plugin and return only generated paths omitted from skill contents."""
     parser = ClaudePluginParser(Path(plugin_path))
@@ -823,12 +825,18 @@ def parse_claude_plugin_with_ignored_generated_paths(
         ]
         for reference in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", value)
     }
+    selected_target_names = {
+        target.value
+        for target in (
+            frozenset(TargetTool) if target_native_targets is None else target_native_targets
+        )
+    }
     target_native_paths = {
         path
         for path in parser.ignored_generated_paths
         if len(path.parts) >= 2
         and path.parts[0] == "targets"
-        and path.parts[1] in {target.value for target in TargetTool}
+        and path.parts[1] in selected_target_names
     }
     consumed_generated_paths = (
         explicit_includes

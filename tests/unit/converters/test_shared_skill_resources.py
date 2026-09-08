@@ -588,6 +588,14 @@ def test_conversion_hash_tracks_independent_inputs_also_selected_as_skill_files(
     target_native.write_bytes(b"second target-native bytes")
     assert compute_plugin_conversion_hash(plugin, ignored_paths=ignored) != after_child_change
 
+    _ir, cursor_ignored = parse_claude_plugin_with_ignored_generated_paths(
+        plugin, target_native_targets=frozenset({TargetTool.CURSOR})
+    )
+    assert target_native_relative in cursor_ignored
+    cursor_before = compute_plugin_conversion_hash(plugin, ignored_paths=cursor_ignored)
+    target_native.write_bytes(b"third target-native bytes")
+    assert compute_plugin_conversion_hash(plugin, ignored_paths=cursor_ignored) == cursor_before
+
 
 def test_hash_accepts_exact_agent_context_mirror_and_tracks_it(tmp_path: Path) -> None:
     plugin = _plugin(tmp_path, [])
