@@ -31,6 +31,7 @@ from ai_config.converters.ir import (
     Severity,
     Skill,
     SkillInclude,
+    TargetTool,
     TextFile,
 )
 from ai_config.converters.skill_projection import project_skill
@@ -817,7 +818,14 @@ def parse_claude_plugin_with_ignored_generated_paths(
         ]
         for reference in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", value)
     }
-    consumed_generated_paths = explicit_includes | referenced_support
+    target_native_paths = {
+        path
+        for path in parser.ignored_generated_paths
+        if len(path.parts) >= 2
+        and path.parts[0] == "targets"
+        and path.parts[1] in {target.value for target in TargetTool}
+    }
+    consumed_generated_paths = explicit_includes | referenced_support | target_native_paths
     return ir, frozenset(parser.ignored_generated_paths - consumed_generated_paths)
 
 
