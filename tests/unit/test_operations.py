@@ -983,6 +983,10 @@ class TestSyncTarget:
                 "ai_config.sync_state.compute_plugin_conversion_hash",
                 return_value="abc123",
             ),
+            patch(
+                "ai_config.sync_conversion.parse_claude_plugin_with_ignored_generated_paths",
+                side_effect=ValueError("malformed metadata"),
+            ),
             patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
             patch(
                 "ai_config.sync_conversion.convert_plugin",

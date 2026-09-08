@@ -289,9 +289,14 @@ def _plan_conversion_pipeline(
                 reported_errors.append(message)
                 continue
 
-            _metadata_ir, ignored_generated_paths = (
-                parse_claude_plugin_with_ignored_generated_paths(plugin_path)
-            )
+            try:
+                _metadata_ir, ignored_generated_paths = (
+                    parse_claude_plugin_with_ignored_generated_paths(plugin_path)
+                )
+            except (OSError, ValueError):
+                # Existing guarded conversion paths own user-facing diagnostics.
+                # A full fingerprint is the conservative fallback when metadata fails.
+                ignored_generated_paths = frozenset()
             spec: CodexPackageSpec | None = None
             if codex_enabled:
                 try:
