@@ -62,6 +62,7 @@ class ClaudePluginParser:
         self.diagnostics: list[Diagnostic] = []
         self.source: ContainedSource | None = None
         self.ignored_generated_paths: set[PurePosixPath] = set()
+        self.independently_consumed_paths: set[PurePosixPath] = set()
 
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
@@ -502,6 +503,7 @@ class ClaudePluginParser:
             content = self.source.read_file(
                 cmd_path, context=f"command:{cmd_path.stem}"
             ).content.decode("utf-8")
+            self.independently_consumed_paths.add(cmd_path)
         except (SourceSafetyError, UnicodeDecodeError) as error:
             self._add_diagnostic(
                 Severity.ERROR, str(error), component_ref=f"command:{cmd_path.stem}"
@@ -565,6 +567,7 @@ class ClaudePluginParser:
             content = self.source.read_file(
                 agent_path, context=f"agent:{agent_path.stem}"
             ).content.decode("utf-8")
+            self.independently_consumed_paths.add(agent_path)
         except (SourceSafetyError, UnicodeDecodeError) as error:
             self._add_diagnostic(
                 Severity.ERROR, str(error), component_ref=f"agent:{agent_path.stem}"
@@ -625,6 +628,7 @@ class ClaudePluginParser:
                 component_ref=f"manifest:{context}",
             )
             return None
+        self.independently_consumed_paths.add(relative)
         try:
             parsed = json.loads(source_file.content.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -825,7 +829,12 @@ def parse_claude_plugin_with_ignored_generated_paths(
         and path.parts[0] == "targets"
         and path.parts[1] in {target.value for target in TargetTool}
     }
-    consumed_generated_paths = explicit_includes | referenced_support | target_native_paths
+    consumed_generated_paths = (
+        explicit_includes
+        | referenced_support
+        | target_native_paths
+        | parser.independently_consumed_paths
+    )
     return ir, frozenset(parser.ignored_generated_paths - consumed_generated_paths)
 
 
