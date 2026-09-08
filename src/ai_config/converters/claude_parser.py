@@ -798,7 +798,27 @@ def parse_claude_plugin_with_ignored_generated_paths(
         for skill in ir.skills()
         for include in skill.includes
     }
-    return ir, frozenset(parser.ignored_generated_paths - explicit_includes)
+    referenced_support = {
+        PurePosixPath(reference)
+        for value in [
+            *(
+                handler.command
+                for hook in ir.hooks()
+                for event in hook.events
+                for handler in event.handlers
+                if handler.command
+            ),
+            *(
+                value
+                for server in ir.mcp_servers()
+                for value in [server.command, server.cwd, *server.args, *server.env.values()]
+                if value
+            ),
+        ]
+        for reference in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", value)
+    }
+    consumed_generated_paths = explicit_includes | referenced_support
+    return ir, frozenset(parser.ignored_generated_paths - consumed_generated_paths)
 
 
 def parse_claude_plugin(plugin_path: Path | str) -> PluginIR:

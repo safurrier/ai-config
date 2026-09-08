@@ -476,6 +476,32 @@ def test_conversion_hash_ignores_only_parser_excluded_python_artifacts(
     intentional.write_bytes(b"first intentional bytes")
     included = plugin / "skills/bad/intentional.pyc"
     included.write_bytes(b"first included bytes")
+    referenced = plugin / "skills/good/__pycache__/referenced.pyc"
+    referenced.write_bytes(b"first referenced bytes")
+    manifest_path = plugin / ".claude-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["hooks"] = "./hooks/hooks.json"
+    manifest_path.write_text(json.dumps(manifest))
+    hooks = plugin / "hooks/hooks.json"
+    hooks.parent.mkdir()
+    hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "${CLAUDE_PLUGIN_ROOT}/skills/good/__pycache__/referenced.pyc",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
 
     _ir, ignored = parse_claude_plugin_with_ignored_generated_paths(plugin)
     full_before = compute_plugin_hash(plugin)
@@ -490,9 +516,11 @@ def test_conversion_hash_ignores_only_parser_excluded_python_artifacts(
     assert after_target_native_change != conversion_before
 
     included.write_bytes(b"second included bytes")
-    assert (
-        compute_plugin_conversion_hash(plugin, ignored_paths=ignored) != after_target_native_change
-    )
+    after_include_change = compute_plugin_conversion_hash(plugin, ignored_paths=ignored)
+    assert after_include_change != after_target_native_change
+
+    referenced.write_bytes(b"second referenced bytes")
+    assert compute_plugin_conversion_hash(plugin, ignored_paths=ignored) != after_include_change
 
 
 def test_hash_accepts_exact_agent_context_mirror_and_tracks_it(tmp_path: Path) -> None:
