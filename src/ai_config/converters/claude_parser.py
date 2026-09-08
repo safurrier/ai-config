@@ -340,6 +340,7 @@ class ClaudePluginParser:
                     self.ignored_generated_paths.add(source_path)
                     continue
                 source_file = self.source.read_file(source_path, context=f"skill:{name}")
+                self.independently_consumed_paths.add(source_path)
                 relpath = relative_path.as_posix()
                 try:
                     text = source_file.content.decode("utf-8")
