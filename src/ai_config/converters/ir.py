@@ -150,6 +150,7 @@ class Skill(BaseModel):
     entrypoint: str = "SKILL.md"
     files: list[AnyFile] = Field(default_factory=list)
     includes: tuple[SkillInclude, ...] = ()
+    excluded_generated_paths: tuple[str, ...] = ()
 
     # Claude-specific fields that may not convert
     allowed_tools: list[str] | None = None

@@ -1308,9 +1308,18 @@ class TestStandalonePiOwnership:
         assert {path.relative_to(skill_dir).as_posix() for path in intentional_paths} <= ir_paths
 
         output = tmp_path / "output"
+        stale_relative = Path("cli/src/package/__pycache__/module.pyc")
+        stale_outputs = [
+            output / ".cursor/skills/alpha-plugin-alpha" / stale_relative,
+            output / ".opencode/skills/alpha-plugin-alpha" / stale_relative,
+        ]
+        for stale in stale_outputs:
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_bytes(b"previously emitted cache")
         targets = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI]
         convert_plugin(plugin, targets, output)
 
+        assert not any(path.exists() for path in stale_outputs)
         assert not [path for path in output.rglob("*") if "__pycache__" in path.parts]
         assert any(path.suffix in {".pyc", ".pyo"} for path in output.rglob("*"))
         pi_owned = load_pi_ownership(output)

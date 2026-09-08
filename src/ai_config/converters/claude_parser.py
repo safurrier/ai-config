@@ -332,12 +332,14 @@ class ClaudePluginParser:
             )
 
         files: list[TextFile | BinaryFile] = []
+        excluded_generated_paths: list[str] = []
         try:
             skill_files = list(self.source.walk_files(skill_dir, context=f"skill:{name}"))
             for source_path in skill_files:
                 relative_path = source_path.relative_to(skill_dir)
                 if is_generated_python_artifact(relative_path):
                     self.ignored_generated_paths.add(source_path)
+                    excluded_generated_paths.append(relative_path.as_posix())
                     continue
                 source_file = self.source.read_file(source_path, context=f"skill:{name}")
                 self.independently_consumed_paths.add(source_path)
@@ -378,6 +380,7 @@ class ClaudePluginParser:
                 description=description,
                 files=files,
                 includes=includes,
+                excluded_generated_paths=tuple(excluded_generated_paths),
                 allowed_tools=self._parse_allowed_tools(meta.get("allowed-tools")),
                 model=meta.get("model"),
                 context=meta.get("context"),
