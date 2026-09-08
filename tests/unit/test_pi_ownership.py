@@ -168,6 +168,41 @@ def test_modified_owned_file_is_not_removed(tmp_path: Path) -> None:
     assert Path(".pi/a") in state
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".pi/agent/skills/demo/__pycache__/tool.cpython-313.pyc",
+        ".pi/agent/skills/demo/loose.pyc",
+        ".pi/agent/skills/demo/legacy.pyo",
+    ],
+)
+def test_modified_owned_python_bytecode_is_retired_on_upgrade(
+    tmp_path: Path, relative: str
+) -> None:
+    owner = "demo@marketplace"
+    apply_pi_reconciliation(tmp_path, [desired(relative, "generated", owner=owner)])
+    path = tmp_path / relative
+    path.write_bytes(b"regenerated locally")
+
+    actions, state = plan_pi_reconciliation(
+        tmp_path,
+        [],
+        retained_sources={owner},
+    )
+
+    assert actions == [
+        ownership.PiAction(
+            "remove_pi_output",
+            Path(relative),
+            "Retiring interpreter-generated owned output",
+        )
+    ]
+    assert Path(relative) not in state
+    apply_pi_reconciliation(tmp_path, [], retained_sources={owner})
+    assert not path.exists()
+    assert Path(relative) not in load_pi_ownership(tmp_path)
+
+
 def test_rejects_traversal_and_symlink(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Invalid Pi owned"):
         plan_pi_reconciliation(tmp_path, [desired("../outside")])
