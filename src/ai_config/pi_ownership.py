@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Literal, TypeAlias, cast
 
 from ai_config.output_safety import validated_output_path
-from ai_config.path_policy import is_generated_python_artifact
 
 _PI_STATE = Path(".ai-config") / "pi-ownership.json"
 _PI_PENDING = Path(".ai-config") / "pi-ownership.pending.json"
@@ -508,15 +507,7 @@ def plan_pi_reconciliation(
         if relative in desired_by_path:
             continue
         current = _disk_state(root, relative)
-        if is_generated_python_artifact(relative):
-            actions.append(
-                PiAction(
-                    "remove_pi_output",
-                    relative,
-                    "Retiring interpreter-generated owned output",
-                )
-            )
-        elif old.source_plugin in retained_sources:
+        if old.source_plugin in retained_sources:
             actions.append(
                 PiAction("preserve_pi_output", relative, "Pi source is temporarily unavailable")
             )
