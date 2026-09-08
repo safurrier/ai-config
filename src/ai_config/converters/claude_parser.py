@@ -60,6 +60,7 @@ class ClaudePluginParser:
         self.plugin_path = plugin_path.expanduser().absolute()
         self.diagnostics: list[Diagnostic] = []
         self.source: ContainedSource | None = None
+        self.ignored_generated_paths: set[PurePosixPath] = set()
 
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
@@ -334,6 +335,7 @@ class ClaudePluginParser:
             for source_path in skill_files:
                 relative_path = source_path.relative_to(skill_dir)
                 if is_generated_python_artifact(relative_path):
+                    self.ignored_generated_paths.add(source_path)
                     continue
                 source_file = self.source.read_file(source_path, context=f"skill:{name}")
                 relpath = relative_path.as_posix()
@@ -785,6 +787,20 @@ class ClaudePluginParser:
         )
 
 
+def parse_claude_plugin_with_ignored_generated_paths(
+    plugin_path: Path | str,
+) -> tuple[PluginIR, frozenset[PurePosixPath]]:
+    """Parse a plugin and return only generated paths omitted from skill contents."""
+    parser = ClaudePluginParser(Path(plugin_path))
+    ir = parser.parse()
+    explicit_includes = {
+        PurePosixPath(include.source_relative_path)
+        for skill in ir.skills()
+        for include in skill.includes
+    }
+    return ir, frozenset(parser.ignored_generated_paths - explicit_includes)
+
+
 def parse_claude_plugin(plugin_path: Path | str) -> PluginIR:
     """Parse a Claude Code plugin directory into IR.
 
@@ -794,5 +810,5 @@ def parse_claude_plugin(plugin_path: Path | str) -> PluginIR:
     Returns:
         PluginIR with parsed components and diagnostics
     """
-    parser = ClaudePluginParser(Path(plugin_path))
-    return parser.parse()
+    ir, _ignored_generated_paths = parse_claude_plugin_with_ignored_generated_paths(plugin_path)
+    return ir

@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import stat
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from ai_config.adapters import claude
 from ai_config.converters.codex_package import CodexPackageSpec
@@ -146,16 +146,18 @@ def conversion_signature(conversion: ConversionConfig, output_dir: Path) -> str:
     )
 
 
-def compute_plugin_hash(plugin_path: Path) -> str | None:
-    """Hash every safely readable plugin byte, failing closed on unsafe entries."""
+def _compute_plugin_hash(
+    plugin_path: Path, *, ignored_paths: frozenset[PurePath] = frozenset()
+) -> str | None:
     hasher = hashlib.sha256()
+    context = "plugin conversion hash" if ignored_paths else "plugin hash"
     try:
         with ContainedSource(plugin_path) as source:
-            files, context_mirrors = source.snapshot_files_and_context_mirrors(
-                context="plugin hash"
-            )
+            files, context_mirrors = source.snapshot_files_and_context_mirrors(context=context)
             for relative in files:
-                item = source.read_file(relative, context="plugin hash")
+                if relative in ignored_paths:
+                    continue
+                item = source.read_file(relative, context=context)
                 hasher.update(os.fsencode(relative.as_posix()))
                 hasher.update(b"\0")
                 hasher.update(b"x" if item.executable else b"-")
@@ -170,6 +172,18 @@ def compute_plugin_hash(plugin_path: Path) -> str | None:
         return hasher.hexdigest()
     except (OSError, SourceSafetyError, UnicodeError):
         return None
+
+
+def compute_plugin_hash(plugin_path: Path) -> str | None:
+    """Hash every safely readable plugin byte for source-staleness checks."""
+    return _compute_plugin_hash(plugin_path)
+
+
+def compute_plugin_conversion_hash(
+    plugin_path: Path, *, ignored_paths: frozenset[PurePath]
+) -> str | None:
+    """Hash conversion inputs while omitting parser-confirmed generated artifacts."""
+    return _compute_plugin_hash(plugin_path, ignored_paths=ignored_paths)
 
 
 def _lexical_regular_directory(path: Path) -> Path | None:
