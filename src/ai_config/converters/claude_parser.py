@@ -801,6 +801,9 @@ def parse_claude_plugin_with_ignored_generated_paths(
     """Parse a plugin and return only generated paths omitted from skill contents."""
     parser = ClaudePluginParser(Path(plugin_path))
     ir = parser.parse()
+    selected_targets = (
+        frozenset(TargetTool) if target_native_targets is None else target_native_targets
+    )
     explicit_includes = {
         PurePosixPath(include.source_relative_path)
         for skill in ir.skills()
@@ -824,13 +827,9 @@ def parse_claude_plugin_with_ignored_generated_paths(
             ),
         ]
         for reference in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", value)
+        if TargetTool.CODEX in selected_targets
     }
-    selected_target_names = {
-        target.value
-        for target in (
-            frozenset(TargetTool) if target_native_targets is None else target_native_targets
-        )
-    }
+    selected_target_names = {target.value for target in selected_targets}
     target_native_paths = {
         path
         for path in parser.ignored_generated_paths

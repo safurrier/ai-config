@@ -522,6 +522,15 @@ def test_conversion_hash_ignores_only_parser_excluded_python_artifacts(
     referenced.write_bytes(b"second referenced bytes")
     assert compute_plugin_conversion_hash(plugin, ignored_paths=ignored) != after_include_change
 
+    _ir, cursor_ignored = parse_claude_plugin_with_ignored_generated_paths(
+        plugin, target_native_targets=frozenset({TargetTool.CURSOR})
+    )
+    referenced_relative = referenced.relative_to(plugin)
+    assert referenced_relative in cursor_ignored
+    cursor_before = compute_plugin_conversion_hash(plugin, ignored_paths=cursor_ignored)
+    referenced.write_bytes(b"third referenced bytes")
+    assert compute_plugin_conversion_hash(plugin, ignored_paths=cursor_ignored) == cursor_before
+
 
 def test_conversion_hash_tracks_independent_inputs_also_selected_as_skill_files(
     tmp_path: Path,
