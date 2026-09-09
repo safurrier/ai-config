@@ -18,7 +18,7 @@ from ai_config.pi_ownership import load_pi_ownership
 from ai_config.source_safety import ContainedSource, SourceSafetyError
 from ai_config.types import ClaudeTargetConfig, ConversionConfig, PluginConfig, PluginSource
 
-_CONVERSION_CACHE_VERSION = 10
+_CONVERSION_CACHE_VERSION = 9
 
 
 def conversion_cache_path() -> Path:
@@ -112,10 +112,9 @@ def load_conversion_cache() -> dict:
         raise ValueError(f"Invalid conversion cache object at {cache_path}; clear it and retry")
     codex_dirs = _validated_cached_output_dirs(raw, "codex_output_dirs", cache_path)
     pi_dirs = _validated_cached_output_dirs(raw, "pi_output_dirs", cache_path)
-    if raw.get("version") in {7, 8, 9}:
-        # v8 content hashes remain valid, but v9 keys entries by configured plugin identity.
-        # v10 invalidates hashes that could otherwise bypass generated-cache migration cleanup.
-        # Ownership cleanup still needs prior roots.
+    if raw.get("version") in {7, 8}:
+        # v8 content hashes remain valid, but v9 keys entries by configured plugin identity
+        # instead of an incidental source path. Ownership cleanup still needs prior roots.
         return {
             "version": _CONVERSION_CACHE_VERSION,
             "entries": {},

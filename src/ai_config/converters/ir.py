@@ -150,7 +150,6 @@ class Skill(BaseModel):
     entrypoint: str = "SKILL.md"
     files: list[AnyFile] = Field(default_factory=list)
     includes: tuple[SkillInclude, ...] = ()
-    excluded_generated_paths: tuple[str, ...] = ()
 
     # Claude-specific fields that may not convert
     allowed_tools: list[str] | None = None
@@ -159,20 +158,6 @@ class Skill(BaseModel):
     agent: str | None = None  # subagent type
     user_invocable: bool = True
     disable_model_invocation: bool = False
-
-    @field_validator("excluded_generated_paths")
-    @classmethod
-    def validate_excluded_generated_paths(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """Require canonical paths beneath interpreter-generated cache directories."""
-        for value in values:
-            normalized = normalize_source_relative(
-                value, context="excluded generated skill path"
-            ).as_posix()
-            if normalized != value or "__pycache__" not in Path(value).parts:
-                raise ValueError(
-                    f"excluded generated skill path must be canonical and beneath __pycache__: {value!r}"
-                )
-        return values
 
     @field_validator("name")
     @classmethod

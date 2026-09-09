@@ -1284,10 +1284,6 @@ class TestStandalonePiOwnership:
         assert (output / ".pi/skills/alpha-plugin-alpha/SKILL.md").is_file()
         assert load_pi_ownership(output)
 
-    def test_skill_rejects_invalid_excluded_generated_path(self) -> None:
-        with pytest.raises(ValueError, match="must be canonical and beneath __pycache__"):
-            Skill(name="alpha", excluded_generated_paths=("cli/generated.pyc",))
-
     def test_generated_python_artifacts_are_excluded_from_all_conversion_outputs(
         self, tmp_path: Path
     ) -> None:
@@ -1312,18 +1308,9 @@ class TestStandalonePiOwnership:
         assert {path.relative_to(skill_dir).as_posix() for path in intentional_paths} <= ir_paths
 
         output = tmp_path / "output"
-        stale_relative = Path("cli/src/package/__pycache__/module.pyc")
-        stale_outputs = [
-            output / ".cursor/skills/alpha-plugin-alpha" / stale_relative,
-            output / ".opencode/skills/alpha-plugin-alpha" / stale_relative,
-        ]
-        for stale in stale_outputs:
-            stale.parent.mkdir(parents=True, exist_ok=True)
-            stale.write_bytes(b"previously emitted cache")
         targets = [TargetTool.CODEX, TargetTool.CURSOR, TargetTool.OPENCODE, TargetTool.PI]
         convert_plugin(plugin, targets, output)
 
-        assert not any(path.exists() for path in stale_outputs)
         assert not [path for path in output.rglob("*") if "__pycache__" in path.parts]
         assert any(path.suffix in {".pyc", ".pyo"} for path in output.rglob("*"))
         pi_owned = load_pi_ownership(output)

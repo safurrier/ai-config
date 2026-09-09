@@ -598,20 +598,6 @@ def _emit_projected_skill(
             result.add_binary_file(target, item.content, item.executable)
         else:
             result.add_file(target, item.content, item.executable)
-    cache_directories: set[Path] = set()
-    for relative_path in skill.excluded_generated_paths:
-        parts = Path(relative_path).parts
-        if "__pycache__" not in parts:
-            result.add_diagnostic(
-                Severity.ERROR,
-                f"Invalid excluded generated path: {relative_path}",
-                component_ref=f"skill:{skill.name}",
-            )
-            return False
-        cache_index = parts.index("__pycache__")
-        cache_directories.add(Path(*parts[: cache_index + 1]))
-    for cache_directory in sorted(cache_directories, key=lambda path: path.as_posix()):
-        result.add_cleanup_path(skill_dir / cache_directory)
     for evidence in projection.include_evidence:
         include_target = skill_dir / evidence.projected_path
         result.include_evidence.append(
