@@ -99,7 +99,10 @@ class ContainedSource:
     required descriptor APIs fail closed rather than falling back to pathname reads.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, *, excluded_directory_names: frozenset[str] = frozenset()
+    ) -> None:
+        self.excluded_directory_names = excluded_directory_names
         try:
             supplied = root.expanduser().absolute()
             _validate_platform_path(os.fspath(supplied), context="Plugin source root")
@@ -199,6 +202,11 @@ class ContainedSource:
                     child = os.open(part, flags, dir_fd=current)
                 except OSError as error:
                     self._raise_open_error(error, context=context, relative=relative)
+                if part in self.excluded_directory_names and stat.S_ISDIR(os.fstat(child).st_mode):
+                    os.close(child)
+                    raise SourceSafetyError(
+                        f"{context} path is excluded generated content: {relative}"
+                    )
                 os.close(current)
                 current = child
             return current
@@ -327,6 +335,7 @@ class ContainedSource:
         errors: list[str],
         context_mirrors: list[SourceContextMirror] | None = None,
         allow_context_mirrors: bool = False,
+        excluded_directory_names: frozenset[str] = frozenset(),
     ) -> None:
         try:
             names = sorted(os.listdir(directory_fd))
@@ -340,6 +349,8 @@ class ContainedSource:
             child = directory / name
             try:
                 item_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(item_stat.st_mode) and name in excluded_directory_names:
+                    continue
                 if stat.S_ISLNK(item_stat.st_mode):
                     if not allow_context_mirrors or context_mirrors is None:
                         raise SourceSafetyError(f"{context} contains a symlink: {child}")
@@ -364,6 +375,7 @@ class ContainedSource:
                             errors=errors,
                             context_mirrors=context_mirrors,
                             allow_context_mirrors=allow_context_mirrors,
+                            excluded_directory_names=excluded_directory_names,
                         )
                     finally:
                         os.close(child_fd)
@@ -393,7 +405,13 @@ class ContainedSource:
                     continue
                 raise SourceSafetyError(message) from error
 
-    def walk_files(self, relative: PurePosixPath, *, context: str) -> Iterator[PurePosixPath]:
+    def walk_files(
+        self,
+        relative: PurePosixPath,
+        *,
+        context: str,
+        excluded_directory_names: frozenset[str] = frozenset(),
+    ) -> Iterator[PurePosixPath]:
         """Yield regular files below a descriptor-opened directory."""
         relative = self._validated_relative(relative, context=context)
         directory_fd = self._open_entry(relative, context=context, directory=True)
@@ -406,13 +424,18 @@ class ContainedSource:
                 isolate_errors=False,
                 files=files,
                 errors=[],
+                excluded_directory_names=excluded_directory_names,
             )
         finally:
             os.close(directory_fd)
         yield from files
 
     def scan_files(
-        self, relative: PurePosixPath, *, context: str
+        self,
+        relative: PurePosixPath,
+        *,
+        context: str,
+        excluded_directory_names: frozenset[str] = frozenset(),
     ) -> tuple[list[PurePosixPath], list[str]]:
         """Collect safe files while isolating unsafe sibling entries."""
         relative = self._validated_relative(relative, context=context)
@@ -427,6 +450,7 @@ class ContainedSource:
                 isolate_errors=True,
                 files=files,
                 errors=errors,
+                excluded_directory_names=excluded_directory_names,
             )
         finally:
             os.close(directory_fd)
@@ -450,7 +474,10 @@ class ContainedSource:
         yield from files
 
     def snapshot_files_and_context_mirrors(
-        self, *, context: str
+        self,
+        *,
+        context: str,
+        excluded_directory_names: frozenset[str] = frozenset(),
     ) -> tuple[tuple[PurePosixPath, ...], tuple[SourceContextMirror, ...]]:
         """Collect regular files plus exact repository context mirror metadata."""
         files: list[PurePosixPath] = []
@@ -466,6 +493,7 @@ class ContainedSource:
                 errors=[],
                 context_mirrors=mirrors,
                 allow_context_mirrors=True,
+                excluded_directory_names=excluded_directory_names,
             )
         finally:
             os.close(root_fd)

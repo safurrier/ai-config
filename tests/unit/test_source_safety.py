@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 import ai_config.source_safety as source_safety
+from ai_config.path_policy import GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
 from ai_config.source_safety import ContainedSource, SourceSafetyError, normalize_source_relative
 
 
@@ -79,6 +80,71 @@ def test_static_final_and_ancestor_symlinks_and_special_files_fail_closed(
         os.mkfifo(root / "pipe")
         with pytest.raises(SourceSafetyError, match="regular"):
             source.read_file(PurePosixPath("pipe"), context="hostile")
+
+
+def test_generated_environment_exclusion_only_skips_real_directories(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "payload").write_bytes(b"inside")
+    venv = root / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin/python").symlink_to(tmp_path / "outside-python")
+
+    with ContainedSource(root) as source:
+        files, _mirrors = source.snapshot_files_and_context_mirrors(
+            context="snapshot",
+            excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+        )
+    assert files == (PurePosixPath("payload"),)
+
+    (venv / "bin/python").unlink()
+    (venv / "bin").rmdir()
+    venv.rmdir()
+    # A same-named symlink is not generated content and must fail closed.
+    venv.symlink_to(tmp_path / "outside", target_is_directory=True)
+    with ContainedSource(root) as source, pytest.raises(SourceSafetyError, match="symlink: .venv"):
+        source.snapshot_files_and_context_mirrors(
+            context="snapshot",
+            excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+        )
+
+    venv.unlink()
+    venv.write_bytes(b"ordinary file")
+    with ContainedSource(root) as source:
+        files, _mirrors = source.snapshot_files_and_context_mirrors(
+            context="snapshot",
+            excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+        )
+    assert PurePosixPath(".venv") in files
+    with ContainedSource(
+        root, excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
+    ) as source:
+        assert (
+            source.read_file(PurePosixPath(".venv"), context="direct").content == b"ordinary file"
+        )
+    with (
+        ContainedSource(
+            root, excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
+        ) as source,
+        pytest.raises(SourceSafetyError, match="non-directory ancestor"),
+    ):
+        source.read_file(PurePosixPath(".venv/child"), context="direct")
+
+    if hasattr(os, "mkfifo"):
+        venv.unlink()
+        os.mkfifo(venv)
+        with ContainedSource(root) as source, pytest.raises(SourceSafetyError, match="non-regular"):
+            source.snapshot_files_and_context_mirrors(
+                context="snapshot",
+                excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+            )
+        with (
+            ContainedSource(
+                root, excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
+            ) as source,
+            pytest.raises(SourceSafetyError, match="regular"),
+        ):
+            source.read_file(PurePosixPath(".venv"), context="direct")
 
 
 def test_retained_root_descriptor_defeats_ancestor_swap(tmp_path: Path) -> None:

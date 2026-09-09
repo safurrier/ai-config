@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Conversion source snapshots and component traversal now exclude generated `.venv` trees at any depth, preventing development-environment interpreter symlinks from blocking conversion while retaining fail-closed rejection for all non-generated symlinks.
 - Conversion now excludes Python `__pycache__` contents from Claude plugin skills before constructing the target-neutral IR or conversion-cache fingerprint. Interpreter-generated cache bytes therefore don't enter target output, Codex package hashes, Pi ownership state, or recurring refresh decisions. Full-tree source digests still guard against stale sources during apply, intentional compiled-only skill files and other consumed bytecode remain significant, and existing locally modified owned cache files require deliberate one-time cleanup.
 - Codex 0.153.x available-plugin validation now accepts typed remote catalog identities reported as `source.id` and tolerates duplicate identities only within that unowned remote catalog. Local and Git marketplace duplicates remain fail-closed, and malformed remote rows are still rejected.
 - Sync source hashing now accepts the repository-standard `CLAUDE.md -> AGENTS.md`

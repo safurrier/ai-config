@@ -39,6 +39,7 @@ from ai_config.converters.ir import (
 from ai_config.converters.report import IncludeResult
 from ai_config.converters.skill_projection import project_skill
 from ai_config.output_safety import validated_output_path
+from ai_config.path_policy import GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
 from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
 from ai_config.validators.target.skill_invariants import generated_skill_bytes_invariant_errors
 
@@ -235,12 +236,21 @@ class EmitResult:
         original_rewrite_evidence = list(self._markdown_rewrite_evidence)
         original_mapping_count = len(self.mappings)
         try:
-            with ContainedSource(plugin_root) as source_root:
+            with ContainedSource(
+                plugin_root,
+                excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+            ) as source_root:
                 target_source = source_root.relative(
                     target_relative.as_posix(), context="target-native"
                 )
                 source_root.kind(target_source, context="target-native")
-                source_paths = list(source_root.walk_files(target_source, context="target-native"))
+                source_paths = list(
+                    source_root.walk_files(
+                        target_source,
+                        context="target-native",
+                        excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+                    )
+                )
                 sources = []
                 for source_relative in source_paths:
                     try:
@@ -953,7 +963,10 @@ class CodexEmitter:
         if source_root is None:
             return False
         try:
-            with ContainedSource(source_root) as contained:
+            with ContainedSource(
+                source_root,
+                excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+            ) as contained:
                 return self._copy_referenced_support_files_from_source(
                     result, package_root, contained, references
                 )
