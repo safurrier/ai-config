@@ -14,6 +14,7 @@ from pathlib import Path, PurePath
 
 from ai_config.adapters import claude
 from ai_config.converters.codex_package import CodexPackageSpec
+from ai_config.path_policy import GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
 from ai_config.pi_ownership import load_pi_ownership
 from ai_config.source_safety import ContainedSource, SourceSafetyError
 from ai_config.types import ClaudeTargetConfig, ConversionConfig, PluginConfig, PluginSource
@@ -152,8 +153,14 @@ def _compute_plugin_hash(
     hasher = hashlib.sha256()
     context = "plugin conversion hash" if ignored_paths else "plugin hash"
     try:
-        with ContainedSource(plugin_path) as source:
-            files, context_mirrors = source.snapshot_files_and_context_mirrors(context=context)
+        with ContainedSource(
+            plugin_path,
+            excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+        ) as source:
+            files, context_mirrors = source.snapshot_files_and_context_mirrors(
+                context=context,
+                excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+            )
             for relative in files:
                 if relative in ignored_paths:
                     continue

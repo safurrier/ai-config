@@ -35,7 +35,10 @@ from ai_config.converters.ir import (
     TextFile,
 )
 from ai_config.converters.skill_projection import project_skill
-from ai_config.path_policy import is_generated_python_artifact
+from ai_config.path_policy import (
+    GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+    is_generated_python_artifact,
+)
 from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
 
 CODEX_SUPPORTED_HOOK_EVENTS = frozenset(
@@ -78,7 +81,10 @@ class ClaudePluginParser:
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
         try:
-            source = ContainedSource(self.plugin_path)
+            source = ContainedSource(
+                self.plugin_path,
+                excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+            )
         except SourceSafetyError as error:
             return self._error_ir(f"Could not find plugin.json manifest: {error}")
         with source:
@@ -265,7 +271,11 @@ class ClaudePluginParser:
                     candidates = [skill_path] if skill_path.name == "SKILL.md" else []
                     scan_errors: list[str] = []
                 else:
-                    scanned, scan_errors = self.source.scan_files(skill_path, context="skills")
+                    scanned, scan_errors = self.source.scan_files(
+                        skill_path,
+                        context="skills",
+                        excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+                    )
                     candidates = [item for item in scanned if item.name == "SKILL.md"]
                 for error in scan_errors:
                     self._add_diagnostic(
@@ -344,7 +354,13 @@ class ClaudePluginParser:
 
         files: list[TextFile | BinaryFile] = []
         try:
-            skill_files = list(self.source.walk_files(skill_dir, context=f"skill:{name}"))
+            skill_files = list(
+                self.source.walk_files(
+                    skill_dir,
+                    context=f"skill:{name}",
+                    excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+                )
+            )
             for source_path in skill_files:
                 relative_path = source_path.relative_to(skill_dir)
                 if is_generated_python_artifact(relative_path):
@@ -492,7 +508,11 @@ class ClaudePluginParser:
                     files = [cmd_path]
                     scan_errors: list[str] = []
                 else:
-                    scanned, scan_errors = self.source.scan_files(cmd_path, context="commands")
+                    scanned, scan_errors = self.source.scan_files(
+                        cmd_path,
+                        context="commands",
+                        excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+                    )
                     files = [item for item in scanned if item.parent == cmd_path]
                 for error in scan_errors:
                     self._add_diagnostic(
@@ -556,7 +576,11 @@ class ClaudePluginParser:
                     files = [agent_path]
                     scan_errors: list[str] = []
                 else:
-                    scanned, scan_errors = self.source.scan_files(agent_path, context="agents")
+                    scanned, scan_errors = self.source.scan_files(
+                        agent_path,
+                        context="agents",
+                        excluded_directory_names=GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+                    )
                     files = [item for item in scanned if item.parent == agent_path]
                 for error in scan_errors:
                     self._add_diagnostic(
