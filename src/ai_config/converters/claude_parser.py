@@ -31,10 +31,23 @@ from ai_config.converters.ir import (
     Severity,
     Skill,
     SkillInclude,
+    TargetTool,
     TextFile,
 )
 from ai_config.converters.skill_projection import project_skill
+from ai_config.path_policy import is_generated_python_artifact
 from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
+
+CODEX_SUPPORTED_HOOK_EVENTS = frozenset(
+    {
+        "SessionStart",
+        "PreToolUse",
+        "PermissionRequest",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "Stop",
+    }
+)
 
 
 def normalize_portable_name(value: str, fallback_prefix: str, max_len: int | None = None) -> str:
@@ -59,6 +72,8 @@ class ClaudePluginParser:
         self.plugin_path = plugin_path.expanduser().absolute()
         self.diagnostics: list[Diagnostic] = []
         self.source: ContainedSource | None = None
+        self.ignored_generated_paths: set[PurePosixPath] = set()
+        self.independently_consumed_paths: set[PurePosixPath] = set()
 
     def parse(self) -> PluginIR:
         """Parse the plugin and return IR."""
@@ -331,8 +346,13 @@ class ClaudePluginParser:
         try:
             skill_files = list(self.source.walk_files(skill_dir, context=f"skill:{name}"))
             for source_path in skill_files:
+                relative_path = source_path.relative_to(skill_dir)
+                if is_generated_python_artifact(relative_path):
+                    self.ignored_generated_paths.add(source_path)
+                    continue
                 source_file = self.source.read_file(source_path, context=f"skill:{name}")
-                relpath = source_path.relative_to(skill_dir).as_posix()
+                self.independently_consumed_paths.add(source_path)
+                relpath = relative_path.as_posix()
                 try:
                     text = source_file.content.decode("utf-8")
                 except UnicodeDecodeError:
@@ -495,6 +515,7 @@ class ClaudePluginParser:
             content = self.source.read_file(
                 cmd_path, context=f"command:{cmd_path.stem}"
             ).content.decode("utf-8")
+            self.independently_consumed_paths.add(cmd_path)
         except (SourceSafetyError, UnicodeDecodeError) as error:
             self._add_diagnostic(
                 Severity.ERROR, str(error), component_ref=f"command:{cmd_path.stem}"
@@ -558,6 +579,7 @@ class ClaudePluginParser:
             content = self.source.read_file(
                 agent_path, context=f"agent:{agent_path.stem}"
             ).content.decode("utf-8")
+            self.independently_consumed_paths.add(agent_path)
         except (SourceSafetyError, UnicodeDecodeError) as error:
             self._add_diagnostic(
                 Severity.ERROR, str(error), component_ref=f"agent:{agent_path.stem}"
@@ -618,6 +640,7 @@ class ClaudePluginParser:
                 component_ref=f"manifest:{context}",
             )
             return None
+        self.independently_consumed_paths.add(relative)
         try:
             parsed = json.loads(source_file.content.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -781,6 +804,60 @@ class ClaudePluginParser:
         )
 
 
+def parse_claude_plugin_with_ignored_generated_paths(
+    plugin_path: Path | str,
+    *,
+    target_native_targets: frozenset[TargetTool] | None = None,
+) -> tuple[PluginIR, frozenset[PurePosixPath]]:
+    """Parse a plugin and return only generated paths omitted from skill contents."""
+    parser = ClaudePluginParser(Path(plugin_path))
+    ir = parser.parse()
+    selected_targets = (
+        frozenset(TargetTool) if target_native_targets is None else target_native_targets
+    )
+    explicit_includes = {
+        PurePosixPath(include.source_relative_path)
+        for skill in ir.skills()
+        for include in skill.includes
+    }
+    referenced_support = {
+        PurePosixPath(reference)
+        for value in [
+            *(
+                handler.command
+                for hook in ir.hooks()
+                for event in hook.events
+                if event.name in CODEX_SUPPORTED_HOOK_EVENTS
+                for handler in event.handlers
+                if handler.type == HookHandlerType.COMMAND and handler.command
+            ),
+            *(
+                value
+                for server in ir.mcp_servers()
+                for value in [server.command, server.cwd, *server.args, *server.env.values()]
+                if value
+            ),
+        ]
+        for reference in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'\";|&]+)", value)
+        if TargetTool.CODEX in selected_targets
+    }
+    selected_target_names = {target.value for target in selected_targets}
+    target_native_paths = {
+        path
+        for path in parser.ignored_generated_paths
+        if len(path.parts) >= 2
+        and path.parts[0] == "targets"
+        and path.parts[1] in selected_target_names
+    }
+    consumed_generated_paths = (
+        explicit_includes
+        | referenced_support
+        | target_native_paths
+        | parser.independently_consumed_paths
+    )
+    return ir, frozenset(parser.ignored_generated_paths - consumed_generated_paths)
+
+
 def parse_claude_plugin(plugin_path: Path | str) -> PluginIR:
     """Parse a Claude Code plugin directory into IR.
 
@@ -790,5 +867,5 @@ def parse_claude_plugin(plugin_path: Path | str) -> PluginIR:
     Returns:
         PluginIR with parsed components and diagnostics
     """
-    parser = ClaudePluginParser(Path(plugin_path))
-    return parser.parse()
+    ir, _ignored_generated_paths = parse_claude_plugin_with_ignored_generated_paths(plugin_path)
+    return ir

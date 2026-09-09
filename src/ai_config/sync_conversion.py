@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from ai_config import sync_state as state
@@ -21,7 +21,11 @@ from ai_config.codex_lifecycle import (
     validate_codex_transitions,
 )
 from ai_config.converters import InstallScope, TargetTool, convert_plugin
-from ai_config.converters.claude_parser import normalize_portable_name, parse_claude_plugin
+from ai_config.converters.claude_parser import (
+    normalize_portable_name,
+    parse_claude_plugin,
+    parse_claude_plugin_with_ignored_generated_paths,
+)
 from ai_config.converters.codex_package import CodexPackageSpec, codex_package_spec
 from ai_config.converters.emitters import EmitResult, EmittedFile, PiEmitter, get_emitter
 from ai_config.pi_ownership import (
@@ -52,6 +56,7 @@ class _ConversionCandidate:
     config_id: str
     plugin_path: Path
     codex_spec: CodexPackageSpec | None
+    ignored_generated_paths: frozenset[PurePosixPath]
 
 
 @dataclass(frozen=True)
@@ -284,6 +289,16 @@ def _plan_conversion_pipeline(
                 reported_errors.append(message)
                 continue
 
+            try:
+                _metadata_ir, ignored_generated_paths = (
+                    parse_claude_plugin_with_ignored_generated_paths(
+                        plugin_path, target_native_targets=frozenset(targets)
+                    )
+                )
+            except (OSError, ValueError):
+                # Existing guarded conversion paths own user-facing diagnostics.
+                # A full fingerprint is the conservative fallback when metadata fails.
+                ignored_generated_paths = frozenset()
             spec: CodexPackageSpec | None = None
             if codex_enabled:
                 try:
@@ -335,7 +350,9 @@ def _plan_conversion_pipeline(
                     continue
                 codex_sources[spec.plugin_id] = plugin_config.id
                 codex_specs.append(spec)
-            candidates.append(_ConversionCandidate(plugin_config.id, plugin_path, spec))
+            candidates.append(
+                _ConversionCandidate(plugin_config.id, plugin_path, spec, ignored_generated_paths)
+            )
 
     if has_blocking_errors:
         return [], [], errors
@@ -404,10 +421,15 @@ def _plan_conversion_pipeline(
             return [], [], errors
     candidates_to_convert: list[tuple[_ConversionCandidate, str | None]] = []
     candidate_hashes: dict[str, str | None] = {}
+    candidate_conversion_hashes: dict[str, str | None] = {}
     for candidate in candidates:
         source = resolved_sources[candidate.config_id]
-        plugin_hash = source.digest
-        candidate_hashes[candidate.config_id] = plugin_hash
+        plugin_hash = state.compute_plugin_conversion_hash(
+            candidate.plugin_path,
+            ignored_paths=candidate.ignored_generated_paths,
+        )
+        candidate_hashes[candidate.config_id] = source.digest
+        candidate_conversion_hashes[candidate.config_id] = plugin_hash
         cache_valid = False
         if not force_convert and plugin_hash is not None:
             signature_map = cache_entries.get(candidate.config_id)
@@ -587,6 +609,7 @@ def _plan_conversion_pipeline(
                     source_plugin_id=candidate.config_id,
                     source_path=candidate.plugin_path,
                     source_digest=candidate_hashes.get(candidate.config_id),
+                    conversion_digest=candidate_conversion_hashes.get(candidate.config_id),
                     source_provenance=resolved_sources[candidate.config_id].provenance,
                     refresh=candidate.config_id in refresh_ids,
                     codex_spec=candidate.codex_spec,
@@ -805,13 +828,13 @@ def apply_conversion_plan(
                 )
                 continue
             refreshed_codex_ids.add(candidate.codex_spec.plugin_id)
-        if candidate.source_digest is not None:
+        if candidate.conversion_digest is not None:
             signature_map = cache_entries.setdefault(candidate.source_plugin_id, {})
             if not isinstance(signature_map, dict):
                 signature_map = {}
                 cache_entries[candidate.source_plugin_id] = signature_map
             cache_value: dict[str, str] = {
-                "hash": candidate.source_digest,
+                "hash": candidate.conversion_digest,
                 "source_path": str(candidate.source_path),
                 "source_provenance": candidate.source_provenance,
                 "updated_at": datetime.now(timezone.utc).isoformat(),

@@ -207,6 +207,7 @@ class ConversionCandidatePlan:
     source_plugin_id: str
     source_path: Path
     source_digest: str | None
+    conversion_digest: str | None
     source_provenance: SourceProvenance
     refresh: bool
     codex_spec: CodexPackageSpec | None = None

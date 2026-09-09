@@ -919,6 +919,10 @@ class TestSyncTarget:
             patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
             patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
             patch(
+                "ai_config.sync_state.compute_plugin_conversion_hash",
+                return_value="abc123",
+            ),
+            patch(
                 "ai_config.sync_state.compute_owned_codex_hash",
                 return_value="generated123",
             ),
@@ -975,6 +979,14 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.sync_state.compute_plugin_conversion_hash",
+                return_value="abc123",
+            ),
+            patch(
+                "ai_config.sync_conversion.parse_claude_plugin_with_ignored_generated_paths",
+                side_effect=ValueError("malformed metadata"),
+            ),
             patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
             patch(
                 "ai_config.sync_conversion.convert_plugin",
@@ -1036,6 +1048,10 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.sync_state.compute_plugin_conversion_hash",
+                return_value="abc123",
+            ),
             patch("ai_config.sync_state.compute_owned_codex_hash", return_value="generated"),
             patch(
                 "ai_config.sync_conversion.convert_plugin", return_value={TargetTool.CODEX: report}
@@ -1379,6 +1395,10 @@ class TestSyncTarget:
                 return_value={"version": 1, "entries": {}},
             ),
             patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.sync_state.compute_plugin_conversion_hash",
+                return_value="abc123",
+            ),
             patch("ai_config.sync_conversion.convert_plugin", return_value={TargetTool.PI: report}),
         ):
             result = sync_target(target, force_convert=True)
@@ -1723,6 +1743,10 @@ class TestSyncTarget:
             ),
             patch("ai_config.sync_state.load_conversion_cache", return_value=cache),
             patch("ai_config.sync_state.compute_plugin_hash", return_value="abc123"),
+            patch(
+                "ai_config.sync_state.compute_plugin_conversion_hash",
+                return_value="abc123",
+            ),
             patch(
                 "ai_config.sync_state.compute_owned_codex_hash",
                 side_effect=[None, "generated123"],
