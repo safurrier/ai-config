@@ -1013,12 +1013,13 @@ class CodexEmitter:
                 for value in [server.command, server.cwd, *server.args, *server.env.values()]
                 if value
             ]
-            if not all(
+            support_results = [
                 self._copy_referenced_support_files(
                     result, package_root, source_root, referenced_value
                 )
                 for referenced_value in referenced_values
-            ):
+            ]
+            if not all(support_results):
                 result.add_mapping(
                     "mcp_server",
                     server.name,

@@ -349,6 +349,36 @@ class TestCodexEmitter:
         assert manifest["mcpServers"]["local"]["args"] == ["${PLUGIN_ROOT}/scripts/server.py"]
         assert (package / "scripts/server.py").read_text() == "print('server')\n"
 
+    def test_mcp_support_checks_do_not_short_circuit_after_missing_reference(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "source"
+        support = source / "skills/demo/__pycache__/later.pyc"
+        support.parent.mkdir(parents=True)
+        support.write_bytes(b"later")
+        ir = PluginIR(
+            identity=PluginIdentity(plugin_id="mcp-files", name="mcp-files"),
+            source_path=source,
+            components=[
+                McpServer(
+                    name="local",
+                    transport=McpTransport.STDIO,
+                    command="${CLAUDE_PLUGIN_ROOT}/missing",
+                    args=["${CLAUDE_PLUGIN_ROOT}/skills/demo/__pycache__/later.pyc"],
+                )
+            ],
+        )
+
+        result = CodexEmitter().emit(ir)
+        result.write_to(tmp_path / "out")
+
+        package = (
+            tmp_path / "out/.ai-config/codex/marketplaces/ai-config-mcp-files/plugins/mcp-files"
+        )
+        assert (package / "skills/demo/__pycache__/later.pyc").read_bytes() == b"later"
+        mapping = next(item for item in result.mappings if item.component_kind == "mcp_server")
+        assert mapping.status == MappingStatus.UNSUPPORTED
+
     def test_binary_skill_assets_stay_in_package(self, tmp_path: Path) -> None:
         ir = PluginIR(
             identity=PluginIdentity(plugin_id="binary", name="binary"),
