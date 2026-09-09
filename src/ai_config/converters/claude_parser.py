@@ -38,6 +38,17 @@ from ai_config.converters.skill_projection import project_skill
 from ai_config.path_policy import is_generated_python_artifact
 from ai_config.source_safety import ContainedSource, SourceMissingError, SourceSafetyError
 
+CODEX_SUPPORTED_HOOK_EVENTS = frozenset(
+    {
+        "SessionStart",
+        "PreToolUse",
+        "PermissionRequest",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "Stop",
+    }
+)
+
 
 def normalize_portable_name(value: str, fallback_prefix: str, max_len: int | None = None) -> str:
     """Normalize one source identity to the converter's portable kebab-case key."""
@@ -816,8 +827,9 @@ def parse_claude_plugin_with_ignored_generated_paths(
                 handler.command
                 for hook in ir.hooks()
                 for event in hook.events
+                if event.name in CODEX_SUPPORTED_HOOK_EVENTS
                 for handler in event.handlers
-                if handler.command
+                if handler.type == HookHandlerType.COMMAND and handler.command
             ),
             *(
                 value

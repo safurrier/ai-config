@@ -497,7 +497,17 @@ def test_conversion_hash_ignores_only_parser_excluded_python_artifacts(
                                 }
                             ]
                         }
-                    ]
+                    ],
+                    "Notification": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "${CLAUDE_PLUGIN_ROOT}/skills/good/__pycache__/tool.cpython-313.pyc",
+                                }
+                            ]
+                        }
+                    ],
                 }
             }
         )

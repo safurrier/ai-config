@@ -16,7 +16,10 @@ from typing import Any
 
 import yaml
 
-from ai_config.converters.claude_parser import normalize_portable_name
+from ai_config.converters.claude_parser import (
+    CODEX_SUPPORTED_HOOK_EVENTS,
+    normalize_portable_name,
+)
 from ai_config.converters.codex_package import codex_package_spec
 from ai_config.converters.ir import (
     Command,
@@ -875,18 +878,10 @@ class CodexEmitter:
         package_root: Path,
         source_root: Path | None,
     ) -> dict[str, list[dict[str, object]]]:
-        supported_events = {
-            "SessionStart",
-            "PreToolUse",
-            "PermissionRequest",
-            "PostToolUse",
-            "UserPromptSubmit",
-            "Stop",
-        }
         converted: dict[str, list[dict[str, object]]] = {}
         for hook in hooks:
             for event in hook.events:
-                if event.name not in supported_events:
+                if event.name not in CODEX_SUPPORTED_HOOK_EVENTS:
                     result.add_mapping(
                         "hook",
                         event.name,
