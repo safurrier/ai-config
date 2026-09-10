@@ -8,8 +8,25 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 import ai_config.source_safety as source_safety
-from ai_config.path_policy import GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES
+from ai_config.path_policy import (
+    GENERATED_PYTHON_ENVIRONMENT_DIRECTORY_NAMES,
+    is_generated_python_artifact,
+)
 from ai_config.source_safety import ContainedSource, SourceSafetyError, normalize_source_relative
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (PurePosixPath("package/__pycache__/module.py"), True),
+        (PurePosixPath("package/module.pyc"), True),
+        (PurePosixPath("legacy.pyo"), True),
+        (PurePosixPath("package/module.so"), False),
+        (PurePosixPath("package/module.py"), False),
+    ],
+)
+def test_generated_python_artifact_policy(path: PurePosixPath, expected: bool) -> None:
+    assert is_generated_python_artifact(path) is expected
 
 
 def test_normalization_rejects_nul_before_filesystem_use() -> None:

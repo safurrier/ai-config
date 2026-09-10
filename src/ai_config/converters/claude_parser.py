@@ -354,6 +354,10 @@ class ClaudePluginParser:
 
         files: list[TextFile | BinaryFile] = []
         try:
+            includes = self._parse_skill_includes(meta, name)
+            if includes is None:
+                return None
+            included_sources = {PurePosixPath(include.source_relative_path) for include in includes}
             skill_files = list(
                 self.source.walk_files(
                     skill_dir,
@@ -363,7 +367,10 @@ class ClaudePluginParser:
             )
             for source_path in skill_files:
                 relative_path = source_path.relative_to(skill_dir)
-                if is_generated_python_artifact(relative_path):
+                if (
+                    is_generated_python_artifact(relative_path)
+                    and source_path not in included_sources
+                ):
                     self.ignored_generated_paths.add(source_path)
                     continue
                 source_file = self.source.read_file(source_path, context=f"skill:{name}")
@@ -387,7 +394,6 @@ class ClaudePluginParser:
                             executable=source_file.executable,
                         )
                     )
-            includes = self._parse_skill_includes(meta, name)
         except SourceSafetyError as error:
             self._add_diagnostic(
                 Severity.ERROR,
@@ -395,8 +401,6 @@ class ClaudePluginParser:
                 component_ref=f"skill:{name}",
                 source_path=self.plugin_path / skill_md,
             )
-            return None
-        if includes is None:
             return None
 
         try:
